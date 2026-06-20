@@ -1,0 +1,1051 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ggboi dashboard</title>
+<style>
+  :root {
+    --bg: #1e1f22; --panel: #2b2d31; --panel2: #313338; --accent: #5865f2;
+    --green: #00c776; --red: #ed4245; --yellow: #fee75c; --text: #dbdee1; --muted: #949ba4;
+    --border: #3f4147;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "gg sans", "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--text); }
+  button { cursor: pointer; font-family: inherit; }
+  input, textarea, select {
+    font-family: inherit; background: var(--panel2); border: 1px solid var(--border);
+    color: var(--text); border-radius: 6px; padding: 8px 10px; font-size: 14px;
+  }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+  textarea { width: 100%; min-height: 280px; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 13px; resize: vertical; }
+  .btn { background: var(--accent); border: none; color: #fff; padding: 8px 16px; border-radius: 6px; font-weight: 600; font-size: 14px; }
+  .btn:hover { filter: brightness(1.1); }
+  .btn.secondary { background: var(--panel2); border: 1px solid var(--border); }
+  .btn.danger { background: var(--red); }
+  .btn.green { background: var(--green); }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+  /* Login */
+  #login { display: flex; min-height: 100vh; align-items: center; justify-content: center; flex-direction: column; gap: 16px; }
+  #login .card { background: var(--panel); padding: 32px; border-radius: 12px; width: 320px; display: flex; flex-direction: column; gap: 14px; }
+  #login h1 { margin: 0 0 8px; font-size: 22px; }
+
+  /* App */
+  #app { display: none; }
+  header { background: var(--panel); padding: 14px 24px; display: flex; align-items: center; gap: 16px; border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 18px; margin: 0; }
+  header .status-pill { font-size: 12px; color: var(--muted); }
+  header .spacer { flex: 1; }
+  nav { display: flex; gap: 4px; padding: 12px 24px 0; background: var(--panel); }
+  nav button { background: none; border: none; color: var(--muted); padding: 10px 16px; font-size: 14px; font-weight: 600; border-radius: 8px 8px 0 0; }
+  nav button.active { color: #fff; background: var(--bg); }
+  main { padding: 24px; max-width: 980px; }
+  .tab { display: none; }
+  .tab.active { display: block; }
+  .panel { background: var(--panel); border-radius: 12px; padding: 20px; margin-bottom: 18px; }
+  .panel h2 { margin: 0 0 14px; font-size: 16px; }
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 12px; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; letter-spacing: .04em; }
+  .field .row input { flex: 1; min-width: 200px; }
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+  .stat { background: var(--panel2); border-radius: 8px; padding: 14px; }
+  .stat .num { font-size: 22px; font-weight: 700; }
+  .stat .lbl { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .mod-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+  .mod-item { display: flex; align-items: center; gap: 10px; background: var(--panel2); padding: 10px 12px; border-radius: 8px; }
+  .mod-item .name { flex: 1; font-weight: 600; }
+  .mod-item small { color: var(--muted); }
+  pre { background: var(--panel2); border-radius: 8px; padding: 14px; overflow: auto; font-size: 13px; max-height: 480px; }
+  /* Command category cards */
+  .feature-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+  .feature-card { background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+  .feature-card .fc-head { display: flex; align-items: center; gap: 10px; }
+  .feature-card .fc-name { font-weight: 700; font-size: 15px; flex: 1; }
+  .feature-card .fc-desc { color: var(--muted); font-size: 13px; line-height: 1.4; }
+  .feature-card .fc-cmds { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .feature-card .fc-cmds code { background: var(--bg); padding: 1px 5px; border-radius: 4px; margin: 0 2px 2px 0; display: inline-block; }
+  /* toggle switch */
+  .switch { position: relative; width: 42px; height: 24px; flex: 0 0 auto; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch .slider { position: absolute; inset: 0; background: #4a4d55; border-radius: 24px; transition: .2s; }
+  .switch .slider::before { content: ""; position: absolute; height: 18px; width: 18px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: .2s; }
+  .switch input:checked + .slider { background: var(--green); }
+  .switch input:checked + .slider::before { transform: translateX(18px); }
+  /* Per-command rows */
+  .cmd-row { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; overflow: hidden; }
+  .cmd-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; }
+  .cmd-head .cmd-name { font-weight: 700; }
+  .cmd-head .cmd-desc { color: var(--muted); font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cmd-head .badge { font-size: 11px; padding: 2px 7px; border-radius: 10px; background: var(--bg); color: var(--muted); }
+  .cmd-head .badge.off { background: var(--red); color: #fff; }
+  .cmd-head .badge.cat { background: var(--accent); color: #fff; }
+  .cmd-body { display: none; padding: 14px; border-top: 1px solid var(--border); }
+  .cmd-row.open .cmd-body { display: block; }
+  .cmd-body .field { margin-bottom: 12px; }
+  .chip-pick { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { font-size: 12px; padding: 4px 9px; border-radius: 14px; background: var(--bg); border: 1px solid var(--border); cursor: pointer; user-select: none; }
+  .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .chip.block.on { background: var(--red); border-color: var(--red); }
+  .toast { position: fixed; bottom: 20px; right: 20px; background: var(--panel2); border: 1px solid var(--border); border-left: 4px solid var(--green); padding: 12px 18px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+  .toast.err { border-left-color: var(--red); }
+  .muted { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+
+<!-- ─── Login ─── -->
+<div id="login">
+  <div class="card">
+    <h1>🤖 ggboi</h1>
+    <div class="muted">Enter the dashboard password.</div>
+    <input id="pw" type="password" placeholder="Password" autocomplete="current-password" />
+    <button class="btn" onclick="login()">Log in</button>
+    <div id="loginErr" style="color:var(--red); font-size:13px; min-height:16px;"></div>
+  </div>
+</div>
+
+<!-- ─── App ─── -->
+<div id="app">
+  <header>
+    <h1>🤖 ggboi dashboard</h1>
+    <span class="status-pill" id="headerStatus">—</span>
+    <div class="spacer"></div>
+    <button class="btn secondary" onclick="logout()">Log out</button>
+  </header>
+  <nav>
+    <button class="active" data-tab="status" onclick="showTab('status')">Status</button>
+    <button data-tab="commands" onclick="showTab('commands')">Commands</button>
+    <button data-tab="automod" onclick="showTab('automod')">Automod</button>
+    <button data-tab="greet" onclick="showTab('greet')">Welcome &amp; Logs</button>
+    <button data-tab="roles" onclick="showTab('roles')">Roles</button>
+    <button data-tab="settings" onclick="showTab('settings')">Settings</button>
+    <button data-tab="ai" onclick="showTab('ai')">AI</button>
+    <button data-tab="modules" onclick="showTab('modules')">Modules</button>
+    <button data-tab="data" onclick="showTab('data')">Data</button>
+  </nav>
+  <main>
+    <!-- Status -->
+    <div class="tab active" id="tab-status">
+      <div class="panel">
+        <h2>Live Status</h2>
+        <div class="stat-grid" id="statGrid"></div>
+      </div>
+      <div class="panel">
+        <h2>Presence</h2>
+        <div class="field">
+          <label>Activity Text</label>
+          <div class="row">
+            <input id="presText" placeholder="$help | mambo" />
+            <select id="presType">
+              <option value="0">Playing</option>
+              <option value="1">Streaming</option>
+              <option value="2">Listening</option>
+              <option value="3" selected>Watching</option>
+              <option value="5">Competing</option>
+            </select>
+            <button class="btn" onclick="setPresence()">Set</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Commands -->
+    <div class="tab" id="tab-commands">
+      <div class="panel">
+        <h2>Command Categories</h2>
+        <p class="muted" style="margin-bottom:16px">Toggle whole command groups on or off. Disabled commands stop responding in Discord. Core utility &amp; real-moderation commands are always on.</p>
+        <div class="feature-grid" id="featureGrid"></div>
+      </div>
+      <div class="panel">
+        <h2>Per-Command Settings</h2>
+        <p class="muted" id="cmdGuildHint" style="margin-bottom:12px"></p>
+        <div class="row" style="margin-bottom:14px">
+          <input id="cmdSearch" placeholder="Search commands…" style="flex:1; min-width:200px" oninput="renderCommands()" />
+        </div>
+        <div id="commandList"></div>
+      </div>
+    </div>
+
+    <!-- Automod -->
+    <div class="tab" id="tab-automod">
+      <div class="panel">
+        <h2>Automod</h2>
+        <p class="muted" id="amGuildHint" style="margin-bottom:14px"></p>
+        <div class="field">
+          <label>Master switch</label>
+          <div class="row"><label class="switch"><input type="checkbox" id="amEnabled"/><span class="slider"></span></label><span class="muted">Enable automod for this server</span></div>
+        </div>
+        <div class="field">
+          <label>Log channel</label>
+          <select id="amLogChannel"><option value="">— none —</option></select>
+        </div>
+        <div class="field">
+          <label>Ignored channels (automod skips these)</label>
+          <div class="chip-pick" id="amIgnoredChannels"></div>
+        </div>
+        <div class="field">
+          <label>Ignored roles</label>
+          <div class="chip-pick" id="amIgnoredRoles"></div>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Rules</h2>
+        <div id="amRules"></div>
+        <button class="btn green" onclick="saveAutomod()" style="margin-top:8px">Save automod settings</button>
+      </div>
+    </div>
+
+    <!-- Welcome & Logs -->
+    <div class="tab" id="tab-greet">
+      <div class="panel">
+        <h2>Welcome Message</h2>
+        <p class="muted" id="greetGuildHint" style="margin-bottom:12px"></p>
+        <div class="muted" style="margin-bottom:12px">Placeholders: <code>{user}</code> <code>{tag}</code> <code>{username}</code> <code>{server}</code> <code>{count}</code></div>
+        <div class="field"><label>Enabled</label><div class="row"><label class="switch"><input type="checkbox" id="wcEnabled"/><span class="slider"></span></label></div></div>
+        <div class="field"><label>Channel</label><select id="wcChannel"><option value="">— none —</option></select></div>
+        <div class="field"><label>Message</label><textarea id="wcMessage" style="min-height:70px"></textarea></div>
+      </div>
+      <div class="panel">
+        <h2>Leave Message</h2>
+        <div class="field"><label>Enabled</label><div class="row"><label class="switch"><input type="checkbox" id="lvEnabled"/><span class="slider"></span></label></div></div>
+        <div class="field"><label>Channel</label><select id="lvChannel"><option value="">— none —</option></select></div>
+        <div class="field"><label>Message</label><textarea id="lvMessage" style="min-height:70px"></textarea></div>
+      </div>
+      <div class="panel">
+        <h2>Audit Logs</h2>
+        <div class="field"><label>Enabled</label><div class="row"><label class="switch"><input type="checkbox" id="logEnabled"/><span class="slider"></span></label></div></div>
+        <div class="field"><label>Log channel</label><select id="logChannel"><option value="">— none —</option></select></div>
+        <div class="field"><label>Log member joins/leaves</label><div class="row"><label class="switch"><input type="checkbox" id="logMember"/><span class="slider"></span></label></div></div>
+        <div class="field"><label>Log message edits/deletes</label><div class="row"><label class="switch"><input type="checkbox" id="logMessage"/><span class="slider"></span></label></div></div>
+        <button class="btn green" onclick="saveGreet()">Save welcome &amp; log settings</button>
+      </div>
+    </div>
+
+    <!-- Roles -->
+    <div class="tab" id="tab-roles">
+      <div class="panel">
+        <h2>Autoroles</h2>
+        <p class="muted" id="rolesGuildHint" style="margin-bottom:12px"></p>
+        <p class="muted" style="margin-bottom:10px">Click roles to toggle. Selected roles are granted to every new member on join.</p>
+        <div class="chip-pick" id="autoroleChips"></div>
+        <button class="btn green" onclick="saveAutoroles()" style="margin-top:12px">Save autoroles</button>
+      </div>
+      <div class="panel">
+        <h2>Reaction Roles</h2>
+        <p class="muted" style="margin-bottom:10px">Set these up in Discord with <code>$reactionrole add &lt;messageId&gt; &lt;emoji&gt; &lt;@role&gt;</code>. Existing bindings are listed here.</p>
+        <div id="reactionRoleList"></div>
+      </div>
+    </div>
+
+    <!-- Settings -->
+    <div class="tab" id="tab-settings">
+      <div class="panel">
+        <h2>Bot Settings</h2>
+        <div class="muted" style="margin-bottom:14px">Variables for fake-mod messages: <code>{user}</code> <code>{reason}</code> <code>{channel}</code></div>
+        <div id="settingsForm"></div>
+        <hr style="border-color:var(--border); margin:18px 0" />
+        <button class="btn danger" onclick="resetSettings()">Reset all to defaults</button>
+      </div>
+    </div>
+
+    <!-- AI -->
+    <div class="tab" id="tab-ai">
+      <div class="panel">
+        <h2>AI</h2>
+        <p class="muted" style="margin-bottom:14px">
+          The bot replies with AI when pinged (<code>@bot message</code>) or when someone replies to a bot message.
+          Channel lists use Discord channel IDs (comma or space separated). Leave allowed empty to permit all channels except ignored ones.
+        </p>
+        <div class="field">
+          <label>Enabled</label>
+          <div class="row">
+            <input type="checkbox" id="aiEnabled" />
+            <span class="muted">Respond to pings and replies</span>
+          </div>
+        </div>
+        <div class="field">
+          <label>Provider</label>
+          <select id="aiProvider"></select>
+        </div>
+        <div class="field" id="aiCustomFields" style="display:none">
+          <label>Custom endpoint</label>
+          <div class="row">
+            <input id="aiCustomBaseUrl" placeholder="https://api.example.com/v1" style="flex:2; min-width:220px" />
+            <select id="aiCustomApiType" style="flex:1; min-width:140px">
+              <option value="openai">OpenAI-compatible</option>
+              <option value="anthropic">Anthropic-compatible</option>
+            </select>
+          </div>
+          <div class="muted" style="margin-top:4px">
+            Base URL of the API. Models are fetched from <code>&lt;base&gt;/models</code>; chat uses
+            <code>/chat/completions</code> (OpenAI) or <code>/messages</code> (Anthropic).
+          </div>
+        </div>
+        <div class="field">
+          <label id="aiApiKeyLabel">API Key</label>
+          <div class="row">
+            <input id="aiApiKey" type="password" placeholder="" autocomplete="off" />
+            <button class="btn" onclick="saveAi()">Save</button>
+            <button class="btn danger" onclick="clearAiKey()">Clear key</button>
+          </div>
+          <div class="muted" id="aiKeyPreview" style="margin-top:6px"></div>
+          <div class="muted" id="aiEnvHint" style="margin-top:4px"></div>
+        </div>
+        <div class="field">
+          <label id="aiModelLabel">Model</label>
+          <div class="row">
+            <select id="aiModel"></select>
+            <input id="aiModelCustom" placeholder="Or custom model id" style="flex:1; min-width:180px" />
+            <button class="btn secondary" onclick="refreshModels()">↻ Fetch models</button>
+          </div>
+          <div class="muted" id="aiModelHint" style="margin-top:4px"></div>
+        </div>
+        <div class="field">
+          <label>Allowed channels (optional)</label>
+          <input id="aiAllowedChannels" placeholder="123456789, 987654321" />
+        </div>
+        <div class="field">
+          <label>Ignored channels</label>
+          <input id="aiIgnoredChannels" placeholder="123456789, 987654321" />
+        </div>
+        <div class="field">
+          <label>System prompt</label>
+          <textarea id="aiSystemPrompt" style="min-height:100px" spellcheck="false"></textarea>
+        </div>
+        <button class="btn green" onclick="saveAi()">Save AI settings</button>
+      </div>
+    </div>
+
+    <!-- Modules -->
+    <div class="tab" id="tab-modules">
+      <div class="panel">
+        <h2>Dynamic Modules</h2>
+        <div class="mod-list" id="modList"></div>
+        <button class="btn secondary" onclick="loadModules()">Refresh</button>
+      </div>
+      <div class="panel">
+        <h2 id="editorTitle">New Module</h2>
+        <div class="field">
+          <label>Name (a–z, 0–9, _ , -)</label>
+          <input id="modName" placeholder="hello" />
+        </div>
+        <div class="field">
+          <label>Code (module.exports = { name, prefix })</label>
+          <textarea id="modCode" spellcheck="false"></textarea>
+        </div>
+        <div class="row">
+          <button class="btn green" onclick="saveModule()">Save &amp; Load</button>
+          <button class="btn secondary" onclick="newModule()">Clear</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Data -->
+    <div class="tab" id="tab-data">
+      <div class="panel">
+        <h2>Stored Data</h2>
+        <div class="row" style="margin-bottom:14px">
+          <select id="dataStore" onchange="loadData()">
+            <option value="stickies">stickies</option>
+            <option value="warnings">warnings</option>
+            <option value="reactionlogs">reactionlogs</option>
+            <option value="afkUsers">afkUsers</option>
+            <option value="customRoles">customRoles</option>
+          </select>
+          <button class="btn secondary" onclick="loadData()">Refresh</button>
+        </div>
+        <pre id="dataView">—</pre>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const DEFAULT_CODE = `module.exports = {
+  name: 'hello',
+  description: 'Say hello',
+  prefix: async (message, args) => {
+    await message.reply('Hello!');
+  }
+};`;
+
+let editingName = null;
+
+function toast(msg, isErr) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.className = "toast show" + (isErr ? " err" : "");
+  setTimeout(() => { t.className = "toast" + (isErr ? " err" : ""); }, 2600);
+}
+
+async function api(method, url, body) {
+  const opts = { method, headers: {} };
+  if (body !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+  const res = await fetch(url, opts);
+  if (res.status === 401) { showLogin(); throw new Error("Unauthorized"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+  return data;
+}
+
+// ─── Auth
+async function login() {
+  const pw = document.getElementById("pw").value;
+  try {
+    await api("POST", "/login", { password: pw });
+    enterApp();
+  } catch (e) {
+    document.getElementById("loginErr").textContent = e.message;
+  }
+}
+async function logout() {
+  try { await api("POST", "/logout"); } catch {}
+  showLogin();
+}
+function showLogin() {
+  document.getElementById("app").style.display = "none";
+  document.getElementById("login").style.display = "flex";
+}
+function enterApp() {
+  document.getElementById("login").style.display = "none";
+  document.getElementById("app").style.display = "block";
+  showTab("status");
+  refreshStatus();
+  loadFeatures();
+  loadCommands();
+  loadAutomod();
+  loadGreet();
+  loadRoles();
+  loadSettings();
+  loadAi();
+  loadModules();
+  loadData();
+  if (window._statusTimer) clearInterval(window._statusTimer);
+  window._statusTimer = setInterval(refreshStatus, 5000);
+}
+
+// ─── Tabs
+function showTab(name) {
+  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+  document.getElementById("tab-" + name).classList.add("active");
+}
+
+// ─── Status
+async function refreshStatus() {
+  try {
+    const s = await api("GET", "/api/status");
+    const mins = Math.floor(s.uptimeMs / 60000);
+    const up = mins < 60 ? mins + "m" : Math.floor(mins/60) + "h " + (mins%60) + "m";
+    document.getElementById("statGrid").innerHTML = [
+      ["num", s.ping + "ms", "WS Ping"],
+      ["num", s.guilds, "Guilds"],
+      ["num", s.users.toLocaleString(), "Users"],
+      ["num", up, "Uptime"],
+    ].map(([_, n, l]) => `<div class="stat"><div class="num">${n}</div><div class="lbl">${l}</div></div>`).join("");
+    document.getElementById("headerStatus").textContent = (s.tag || "offline") + " · " + s.ping + "ms";
+    if (s.activity && document.activeElement.id !== "presText") {
+      document.getElementById("presText").value = s.activity.name || "";
+      document.getElementById("presType").value = String(s.activity.type ?? 3);
+    }
+  } catch {}
+}
+async function setPresence() {
+  const text = document.getElementById("presText").value;
+  const type = parseInt(document.getElementById("presType").value, 10);
+  try { await api("POST", "/api/presence", { text, type }); toast("Presence updated"); }
+  catch (e) { toast(e.message, true); }
+}
+
+// ─── Command categories
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+async function loadFeatures() {
+  try {
+    const { features } = await api("GET", "/api/features");
+    const grid = document.getElementById("featureGrid");
+    grid.innerHTML = "";
+    for (const f of features) {
+      const card = document.createElement("div");
+      card.className = "feature-card";
+      const cmds = (f.commands || []).map(c => `<code>$${escapeHtml(c)}</code>`).join("") || '<span class="muted">no commands</span>';
+      card.innerHTML = `
+        <div class="fc-head">
+          <span class="fc-name">${escapeHtml(f.label)}</span>
+          <label class="switch"><input type="checkbox" ${f.enabled ? "checked" : ""} /><span class="slider"></span></label>
+        </div>
+        <div class="fc-desc">${escapeHtml(f.description)}</div>
+        <div class="fc-cmds">${cmds}</div>`;
+      card.querySelector("input").onchange = (e) => toggleFeature(f.id, e.target.checked);
+      grid.appendChild(card);
+    }
+  } catch (e) { toast(e.message, true); }
+}
+async function toggleFeature(id, enabled) {
+  try { await api("POST", "/api/features", { id, enabled }); toast((enabled ? "Enabled " : "Disabled ") + id); }
+  catch (e) { toast(e.message, true); await loadFeatures(); }
+}
+
+// ─── Per-command config
+let _cmdData = null; // { commands, channels, roles, permLevels, permLabels, ... }
+let _openCmd = null;
+
+async function loadCommands() {
+  try {
+    _cmdData = await api("GET", "/api/commands");
+    const hint = document.getElementById("cmdGuildHint");
+    hint.textContent = _cmdData.hasGuild
+      ? `Editing config for: ${_cmdData.guildName}`
+      : "Bot isn't in a server yet — config will apply once it joins one.";
+    renderCommands();
+  } catch (e) { toast(e.message, true); }
+}
+
+function renderCommands() {
+  if (!_cmdData) return;
+  const q = (document.getElementById("cmdSearch").value || "").toLowerCase();
+  const list = document.getElementById("commandList");
+  list.innerHTML = "";
+  for (const cmd of _cmdData.commands) {
+    if (q && !cmd.name.includes(q) && !(cmd.description || "").toLowerCase().includes(q)) continue;
+    const c = cmd.config;
+    const row = document.createElement("div");
+    row.className = "cmd-row" + (_openCmd === cmd.name ? " open" : "");
+    const catBadge = cmd.category ? `<span class="badge cat">${escapeHtml(cmd.category)}</span>` : "";
+    const enBadge = c.enabled ? "" : `<span class="badge off">disabled</span>`;
+    row.innerHTML = `
+      <div class="cmd-head">
+        <span class="cmd-name">$${escapeHtml(cmd.name)}</span>
+        ${catBadge}${enBadge}
+        <span class="cmd-desc">${escapeHtml(cmd.description || "")}</span>
+        <span class="badge">${escapeHtml(_cmdData.permLabels[c.permission] || c.permission)}</span>
+      </div>
+      <div class="cmd-body"></div>`;
+    row.querySelector(".cmd-head").onclick = () => { _openCmd = _openCmd === cmd.name ? null : cmd.name; renderCommands(); };
+    if (_openCmd === cmd.name) buildCmdBody(row.querySelector(".cmd-body"), cmd);
+    list.appendChild(row);
+  }
+}
+
+function buildCmdBody(el, cmd) {
+  const c = cmd.config;
+  const permOpts = _cmdData.permLevels.map(p => `<option value="${p}" ${p === c.permission ? "selected" : ""}>${escapeHtml(_cmdData.permLabels[p] || p)}</option>`).join("");
+  el.innerHTML = `
+    <div class="field">
+      <label>Enabled</label>
+      <div class="row"><label class="switch"><input type="checkbox" data-f="enabled" ${c.enabled ? "checked" : ""}/><span class="slider"></span></label></div>
+    </div>
+    <div class="field">
+      <label>Permission level</label>
+      <select data-f="permission">${permOpts}</select>
+    </div>
+    <div class="field">
+      <label>Cooldown (seconds, per user — 0 = none)</label>
+      <input type="number" min="0" max="86400" data-f="cooldown" value="${c.cooldown || 0}" style="width:120px"/>
+    </div>
+    <div class="field">
+      <label>Allowed channels (none = all)</label>
+      <div class="chip-pick" data-pick="allowedChannels"></div>
+    </div>
+    <div class="field">
+      <label>Blocked channels</label>
+      <div class="chip-pick block" data-pick="blockedChannels"></div>
+    </div>
+    <div class="field">
+      <label>Extra allowed roles (bypass permission level)</label>
+      <div class="chip-pick" data-pick="allowedRoles"></div>
+    </div>
+    ${Array.isArray(c.settings && c.settings.ladder) ? `
+    <div class="field" data-ladder>
+      <label>Warn escalation ladder — auto-punish at each warning count</label>
+      <div class="muted" style="margin-bottom:8px">action: none / mute / kick / ban. Duration (e.g. 10m, 1h, 1d) applies to mute only.</div>
+      <div id="ladderRows"></div>
+      <button class="btn secondary" data-act="addLadder" style="margin-top:8px">+ Add step</button>
+    </div>` : ""}
+    <div class="row">
+      <button class="btn green" data-act="save">Save</button>
+      <button class="btn secondary" data-act="reset">Reset to defaults</button>
+    </div>`;
+
+  const sel = new Set(c.allowedChannels), bl = new Set(c.blockedChannels), rl = new Set(c.allowedRoles);
+  const ladder = Array.isArray(c.settings && c.settings.ladder) ? c.settings.ladder.map(s => ({ ...s })) : null;
+  if (ladder) {
+    renderLadder(el.querySelector("#ladderRows"), ladder);
+    el.querySelector('[data-act="addLadder"]').onclick = () => { ladder.push({ count: ladder.length + 1, action: "mute", duration: "10m" }); renderLadder(el.querySelector("#ladderRows"), ladder); };
+  }
+  fillChips(el.querySelector('[data-pick="allowedChannels"]'), _cmdData.channels, sel, "#");
+  fillChips(el.querySelector('[data-pick="blockedChannels"]'), _cmdData.channels, bl, "#", true);
+  fillChips(el.querySelector('[data-pick="allowedRoles"]'), _cmdData.roles, rl, "@");
+
+  el.querySelector('[data-act="save"]').onclick = () => saveCommand(cmd.name, el, sel, bl, rl, ladder);
+  el.querySelector('[data-act="reset"]').onclick = () => resetCommand(cmd.name);
+}
+
+function renderLadder(container, ladder) {
+  container.innerHTML = "";
+  ladder.forEach((step, i) => {
+    const row = document.createElement("div");
+    row.className = "row";
+    row.style.marginBottom = "6px";
+    row.innerHTML = `
+      <span class="muted" style="width:64px">warns:</span>
+      <input type="number" min="1" value="${step.count}" style="width:70px" data-l="count"/>
+      <select data-l="action" style="width:110px">
+        ${["none","mute","kick","ban"].map(a => `<option value="${a}" ${a === step.action ? "selected" : ""}>${a}</option>`).join("")}
+      </select>
+      <input value="${escapeHtml(step.duration || "")}" placeholder="10m" style="width:80px" data-l="duration"/>
+      <button class="btn danger" data-l="del">✕</button>`;
+    row.querySelector('[data-l="count"]').oninput = e => step.count = parseInt(e.target.value, 10) || 1;
+    row.querySelector('[data-l="action"]').onchange = e => step.action = e.target.value;
+    row.querySelector('[data-l="duration"]').oninput = e => step.duration = e.target.value.trim();
+    row.querySelector('[data-l="del"]').onclick = () => { ladder.splice(i, 1); renderLadder(container, ladder); };
+    container.appendChild(row);
+  });
+  if (!ladder.length) container.innerHTML = '<span class="muted">No steps — warnings won’t auto-escalate.</span>';
+}
+
+function fillChips(container, items, selected, prefix, isBlock) {
+  container.innerHTML = "";
+  if (!items.length) { container.innerHTML = '<span class="muted">none available</span>'; return; }
+  for (const it of items) {
+    const chip = document.createElement("span");
+    chip.className = "chip" + (isBlock ? " block" : "") + (selected.has(it.id) ? " on" : "");
+    chip.textContent = prefix + it.name;
+    chip.onclick = () => {
+      if (selected.has(it.id)) { selected.delete(it.id); chip.classList.remove("on"); }
+      else { selected.add(it.id); chip.classList.add("on"); }
+    };
+    container.appendChild(chip);
+  }
+}
+
+async function saveCommand(name, el, sel, bl, rl, ladder) {
+  const body = {
+    enabled: el.querySelector('[data-f="enabled"]').checked,
+    permission: el.querySelector('[data-f="permission"]').value,
+    cooldown: parseInt(el.querySelector('[data-f="cooldown"]').value, 10) || 0,
+    allowedChannels: [...sel], blockedChannels: [...bl], allowedRoles: [...rl],
+  };
+  if (ladder) body.settings = { ladder: ladder.filter(s => s.count >= 1) };
+  try {
+    const r = await api("POST", "/api/commands/" + encodeURIComponent(name), body);
+    const cmd = _cmdData.commands.find(c => c.name === name);
+    if (cmd) cmd.config = r.config;
+    toast("Saved $" + name);
+    renderCommands();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function resetCommand(name) {
+  try {
+    const r = await api("POST", "/api/commands/" + encodeURIComponent(name), { reset: true });
+    const cmd = _cmdData.commands.find(c => c.name === name);
+    if (cmd) cmd.config = r.config;
+    toast("Reset $" + name);
+    renderCommands();
+  } catch (e) { toast(e.message, true); }
+}
+
+// ─── Automod
+let _amData = null;
+const AM_RULE_META = {
+  invites:     { label: "Anti-Invite", desc: "Delete Discord invite links.", fields: [] },
+  bannedWords: { label: "Banned Words", desc: "Delete messages containing blocked words.", fields: [{ key: "words", type: "csv", label: "Words (comma separated)" }] },
+  spam:        { label: "Anti-Spam", desc: "Act when a user sends too many messages too fast.", fields: [{ key: "maxMessages", type: "num", label: "Max messages" }, { key: "perSeconds", type: "num", label: "Per seconds" }] },
+  massMention: { label: "Mass Mention", desc: "Act on messages mentioning many users.", fields: [{ key: "maxMentions", type: "num", label: "Max mentions" }] },
+  caps:        { label: "Excessive Caps", desc: "Act on messages that are mostly uppercase.", fields: [{ key: "minLength", type: "num", label: "Min length" }, { key: "percent", type: "num", label: "Caps %" }] },
+};
+const AM_ACTIONS = ["delete", "warn", "mute"];
+
+function fillSelect(sel, items, selected, emptyLabel) {
+  sel.innerHTML = emptyLabel ? `<option value="">${emptyLabel}</option>` : "";
+  for (const it of items) {
+    const o = document.createElement("option");
+    o.value = it.id; o.textContent = "#" + it.name;
+    if (it.id === selected) o.selected = true;
+    sel.appendChild(o);
+  }
+}
+
+async function loadAutomod() {
+  try {
+    _amData = await api("GET", "/api/automod");
+    const c = _amData.config;
+    document.getElementById("amGuildHint").textContent = _amData.hasGuild ? `Editing automod for: ${_amData.guildName}` : "Bot isn't in a server yet.";
+    document.getElementById("amEnabled").checked = !!c.enabled;
+    fillSelect(document.getElementById("amLogChannel"), _amData.channels, c.logChannelId || "", "— none —");
+
+    const ic = new Set(c.ignoredChannels), ir = new Set(c.ignoredRoles);
+    fillChips(document.getElementById("amIgnoredChannels"), _amData.channels, ic, "#");
+    fillChips(document.getElementById("amIgnoredRoles"), _amData.roles, ir, "@");
+    _amData._ic = ic; _amData._ir = ir;
+
+    renderAutomodRules(c.rules);
+  } catch (e) { toast(e.message, true); }
+}
+
+function renderAutomodRules(rules) {
+  const wrap = document.getElementById("amRules");
+  wrap.innerHTML = "";
+  for (const [key, meta] of Object.entries(AM_RULE_META)) {
+    const r = rules[key] || {};
+    const row = document.createElement("div");
+    row.className = "cmd-row open";
+    row.dataset.rule = key;
+    const fieldsHtml = meta.fields.map(f => {
+      const val = f.type === "csv" ? (Array.isArray(r[f.key]) ? r[f.key].join(", ") : "") : (r[f.key] ?? "");
+      return `<div class="field"><label>${f.label}</label><input data-rk="${f.key}" data-rt="${f.type}" value="${escapeHtml(String(val))}" ${f.type === "num" ? 'type="number" style="width:120px"' : ""}/></div>`;
+    }).join("");
+    row.innerHTML = `
+      <div class="cmd-head" style="cursor:default">
+        <label class="switch"><input type="checkbox" data-rk="enabled" ${r.enabled ? "checked" : ""}/><span class="slider"></span></label>
+        <span class="cmd-name">${meta.label}</span>
+        <span class="cmd-desc">${meta.desc}</span>
+      </div>
+      <div class="cmd-body" style="display:block">
+        <div class="field"><label>Action</label>
+          <select data-rk="action">${AM_ACTIONS.map(a => `<option value="${a}" ${a === r.action ? "selected" : ""}>${a}</option>`).join("")}</select>
+        </div>
+        ${fieldsHtml}
+      </div>`;
+    wrap.appendChild(row);
+  }
+}
+
+async function saveAutomod() {
+  const rules = {};
+  for (const row of document.querySelectorAll("#amRules .cmd-row")) {
+    const key = row.dataset.rule;
+    const rule = {};
+    rule.enabled = row.querySelector('[data-rk="enabled"]').checked;
+    rule.action = row.querySelector('[data-rk="action"]').value;
+    for (const inp of row.querySelectorAll("[data-rt]")) {
+      const k = inp.dataset.rk, t = inp.dataset.rt;
+      if (t === "num") rule[k] = parseInt(inp.value, 10) || 0;
+      else if (t === "csv") rule[k] = inp.value.split(",").map(s => s.trim()).filter(Boolean);
+    }
+    rules[key] = rule;
+  }
+  const body = {
+    enabled: document.getElementById("amEnabled").checked,
+    logChannelId: document.getElementById("amLogChannel").value || null,
+    ignoredChannels: [..._amData._ic],
+    ignoredRoles: [..._amData._ir],
+    rules,
+  };
+  try { const r = await api("POST", "/api/automod", body); _amData.config = r.config; toast("Automod saved"); }
+  catch (e) { toast(e.message, true); }
+}
+
+// ─── Welcome & Logs
+let _greetData = null;
+async function loadGreet() {
+  try {
+    _greetData = await api("GET", "/api/greet");
+    const c = _greetData.config;
+    document.getElementById("greetGuildHint").textContent = _greetData.hasGuild ? `Editing for: ${_greetData.guildName}` : "Bot isn't in a server yet.";
+    const chans = _greetData.channels;
+    fillSelect(document.getElementById("wcChannel"), chans, c.welcome.channelId || "", "— none —");
+    fillSelect(document.getElementById("lvChannel"), chans, c.leave.channelId || "", "— none —");
+    fillSelect(document.getElementById("logChannel"), chans, c.logs.channelId || "", "— none —");
+    document.getElementById("wcEnabled").checked = !!c.welcome.enabled;
+    document.getElementById("wcMessage").value = c.welcome.message || "";
+    document.getElementById("lvEnabled").checked = !!c.leave.enabled;
+    document.getElementById("lvMessage").value = c.leave.message || "";
+    document.getElementById("logEnabled").checked = !!c.logs.enabled;
+    document.getElementById("logMember").checked = !!c.logs.memberEvents;
+    document.getElementById("logMessage").checked = !!c.logs.messageEvents;
+  } catch (e) { toast(e.message, true); }
+}
+async function saveGreet() {
+  const body = {
+    welcome: { enabled: document.getElementById("wcEnabled").checked, channelId: document.getElementById("wcChannel").value || null, message: document.getElementById("wcMessage").value },
+    leave:   { enabled: document.getElementById("lvEnabled").checked, channelId: document.getElementById("lvChannel").value || null, message: document.getElementById("lvMessage").value },
+    logs:    { enabled: document.getElementById("logEnabled").checked, channelId: document.getElementById("logChannel").value || null, memberEvents: document.getElementById("logMember").checked, messageEvents: document.getElementById("logMessage").checked },
+  };
+  try { const r = await api("POST", "/api/greet", body); _greetData.config = r.config; toast("Welcome & logs saved"); }
+  catch (e) { toast(e.message, true); }
+}
+
+// ─── Roles
+let _rolesData = null;
+let _autoSel = null;
+async function loadRoles() {
+  try {
+    _rolesData = await api("GET", "/api/roles");
+    document.getElementById("rolesGuildHint").textContent = _rolesData.hasGuild ? `Editing for: ${_rolesData.guildName}` : "Bot isn't in a server yet.";
+    _autoSel = new Set(_rolesData.autoroles);
+    fillChips(document.getElementById("autoroleChips"), _rolesData.roles, _autoSel, "@");
+    renderReactionRoles();
+  } catch (e) { toast(e.message, true); }
+}
+function roleName(id) { return (_rolesData.roles.find(r => r.id === id) || {}).name || id; }
+function renderReactionRoles() {
+  const wrap = document.getElementById("reactionRoleList");
+  const map = _rolesData.reactionRoles || {};
+  const ids = Object.keys(map);
+  if (!ids.length) { wrap.innerHTML = '<div class="muted">No reaction roles set up yet.</div>'; return; }
+  wrap.innerHTML = "";
+  for (const mid of ids) {
+    for (const [key, rid] of Object.entries(map[mid])) {
+      const row = document.createElement("div");
+      row.className = "mod-item";
+      const emoji = /^\d+$/.test(key) ? "(custom emoji)" : key;
+      row.innerHTML = `<span class="name">${emoji} → @${escapeHtml(roleName(rid))}</span><small>msg ${escapeHtml(mid)}</small> <button class="btn danger">Remove</button>`;
+      row.querySelector("button").onclick = () => removeReactionRole(mid, key);
+      wrap.appendChild(row);
+    }
+  }
+}
+async function saveAutoroles() {
+  try { const r = await api("POST", "/api/roles/autoroles", { autoroles: [..._autoSel] }); _rolesData.autoroles = r.autoroles; toast("Autoroles saved"); }
+  catch (e) { toast(e.message, true); }
+}
+async function removeReactionRole(messageId, key) {
+  try { await api("POST", "/api/roles/reaction/remove", { messageId, key }); delete _rolesData.reactionRoles[messageId][key]; if (!Object.keys(_rolesData.reactionRoles[messageId]).length) delete _rolesData.reactionRoles[messageId]; renderReactionRoles(); toast("Removed"); }
+  catch (e) { toast(e.message, true); }
+}
+
+// ─── Settings
+async function loadSettings() {
+  try {
+    const { settings } = await api("GET", "/api/settings");
+    const form = document.getElementById("settingsForm");
+    form.innerHTML = "";
+    for (const [key, val] of Object.entries(settings)) {
+      const wrap = document.createElement("div");
+      wrap.className = "field";
+      const big = key === "noPermMsg";
+      wrap.innerHTML = `<label>${key}</label>
+        <div class="row">
+          <input id="set_${key}" value="${String(val).replace(/"/g, "&quot;")}" />
+          <button class="btn" data-key="${key}">Save</button>
+        </div>`;
+      form.appendChild(wrap);
+      wrap.querySelector("button").onclick = () => saveSetting(key);
+    }
+  } catch (e) { toast(e.message, true); }
+}
+async function saveSetting(key) {
+  const value = document.getElementById("set_" + key).value;
+  try { await api("POST", "/api/settings", { key, value }); toast("Saved " + key); }
+  catch (e) { toast(e.message, true); }
+}
+async function resetSettings() {
+  if (!confirm("Reset all settings to defaults?")) return;
+  try { await api("POST", "/api/settings/reset"); await loadSettings(); await loadAi(); toast("Settings reset"); }
+  catch (e) { toast(e.message, true); }
+}
+
+// ─── AI
+const AI_KEY_PLACEHOLDERS = {
+  groq: "gsk_...",
+  openai: "sk-...",
+  claude: "sk-ant-...",
+  gemini: "AIza...",
+  custom: "api key (leave blank if not required, e.g. local Ollama)",
+};
+
+function updateAiProviderLabels(s) {
+  const providerId = document.getElementById("aiProvider").value;
+  const meta = (s.providers || []).find(p => p.id === providerId);
+  const label = meta?.label || providerId;
+  document.getElementById("aiApiKeyLabel").textContent = `${label} API Key`;
+  document.getElementById("aiModelLabel").textContent = `${label} Model`;
+  document.getElementById("aiApiKey").placeholder = AI_KEY_PLACEHOLDERS[providerId] || "";
+  const envVars = meta?.envVar || "API key env var";
+  document.getElementById("aiEnvHint").textContent =
+    `API key can also be set via .env (${envVars})`;
+
+  // Show base-URL / api-type inputs only for providers that declare them (custom).
+  const isCustom = Boolean(meta?.baseUrlField);
+  document.getElementById("aiCustomFields").style.display = isCustom ? "" : "none";
+  document.getElementById("aiModelHint").textContent = isCustom
+    ? "Set the base URL (and key if required), Save, then ↻ Fetch models."
+    : "";
+}
+
+async function loadAi() {
+  try {
+    const s = await api("GET", "/api/ai");
+    document.getElementById("aiEnabled").checked = !!s.aiEnabled;
+    document.getElementById("aiApiKey").value = "";
+    document.getElementById("aiKeyPreview").textContent = s.hasApiKey
+      ? `Current key: ${s.apiKeyPreview} (enter a new key to replace)`
+      : "No API key set";
+    document.getElementById("aiAllowedChannels").value = s.aiAllowedChannels || "";
+    document.getElementById("aiIgnoredChannels").value = s.aiIgnoredChannels || "";
+    document.getElementById("aiSystemPrompt").value = s.aiSystemPrompt || "";
+
+    const provSel = document.getElementById("aiProvider");
+    provSel.innerHTML = "";
+    for (const p of (s.providers || [])) {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      opt.textContent = p.label;
+      provSel.appendChild(opt);
+    }
+    if (s.aiProvider) provSel.value = s.aiProvider;
+    document.getElementById("aiCustomBaseUrl").value = s.customBaseUrl || "";
+    document.getElementById("aiCustomApiType").value = s.customApiType || "openai";
+    updateAiProviderLabels(s);
+
+    const sel = document.getElementById("aiModel");
+    sel.innerHTML = "";
+    const models = [...(s.models || [])];
+    const current = s.model || "";
+    if (current && !models.includes(current)) models.unshift(current);
+    for (const m of models) {
+      const opt = document.createElement("option");
+      opt.value = m;
+      opt.textContent = m;
+      sel.appendChild(opt);
+    }
+    if (current) sel.value = current;
+    else if (models.length) sel.value = models[0];
+    document.getElementById("aiModelCustom").value = "";
+  } catch (e) { toast(e.message, true); }
+}
+
+async function saveAi() {
+  const providerId = document.getElementById("aiProvider").value;
+  const isCustom = providerId === "custom";
+  const selModel = document.getElementById("aiModel").value.trim();
+  const customModel = document.getElementById("aiModelCustom").value.trim();
+  const model = customModel || selModel;
+  // Custom provider can be saved before a model is chosen (so you can fetch the list first).
+  if (!model && !isCustom) return toast("Select a model from the list", true);
+  const body = {
+    aiEnabled: document.getElementById("aiEnabled").checked,
+    aiProvider: providerId,
+    aiAllowedChannels: document.getElementById("aiAllowedChannels").value.trim(),
+    aiIgnoredChannels: document.getElementById("aiIgnoredChannels").value.trim(),
+    aiSystemPrompt: document.getElementById("aiSystemPrompt").value,
+  };
+  if (model) body.model = model;
+  if (isCustom) {
+    body.customBaseUrl = document.getElementById("aiCustomBaseUrl").value.trim();
+    body.customApiType = document.getElementById("aiCustomApiType").value;
+  }
+  const key = document.getElementById("aiApiKey").value.trim();
+  if (key) body.apiKey = key;
+  try {
+    await api("POST", "/api/ai", body);
+    toast("AI settings saved");
+    await loadAi();
+  } catch (e) { toast(e.message, true); }
+}
+
+// Persist current connection details, then reload (which fetches the model list).
+async function refreshModels() {
+  document.getElementById("aiModelHint").textContent = "Fetching models…";
+  await saveAi();
+  const n = document.getElementById("aiModel").options.length;
+  document.getElementById("aiModelHint").textContent =
+    n ? `Loaded ${n} model${n === 1 ? "" : "s"}.` : "No models returned — check the base URL / key.";
+}
+
+async function clearAiKey() {
+  const provider = document.getElementById("aiProvider");
+  const label = provider.options[provider.selectedIndex]?.textContent || "API";
+  if (!confirm(`Remove the stored ${label} API key?`)) return;
+  try {
+    await api("POST", "/api/ai", { clearApiKey: true, aiProvider: provider.value });
+    toast("API key cleared");
+    await loadAi();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function onAiProviderChange() {
+  try {
+    await api("POST", "/api/ai", { aiProvider: document.getElementById("aiProvider").value });
+    await loadAi();
+  } catch (e) { toast(e.message, true); }
+}
+
+// ─── Modules
+async function loadModules() {
+  try {
+    const { modules } = await api("GET", "/api/modules");
+    const list = document.getElementById("modList");
+    if (!modules.length) { list.innerHTML = '<div class="muted">No dynamic modules.</div>'; return; }
+    list.innerHTML = "";
+    for (const m of modules) {
+      const el = document.createElement("div");
+      el.className = "mod-item";
+      el.innerHTML = `<span>${m.loaded ? "🟢" : "🔴"}</span>
+        <span class="name">$${m.name}</span>
+        <button class="btn secondary" data-act="edit">Edit</button>
+        <button class="btn secondary" data-act="reload">Reload</button>
+        <button class="btn danger" data-act="del">Delete</button>`;
+      el.querySelector('[data-act="edit"]').onclick = () => editModule(m.name);
+      el.querySelector('[data-act="reload"]').onclick = () => reloadModule(m.name);
+      el.querySelector('[data-act="del"]').onclick = () => deleteModule(m.name);
+      list.appendChild(el);
+    }
+  } catch (e) { toast(e.message, true); }
+}
+function newModule() {
+  editingName = null;
+  document.getElementById("editorTitle").textContent = "New Module";
+  document.getElementById("modName").value = "";
+  document.getElementById("modName").disabled = false;
+  document.getElementById("modCode").value = DEFAULT_CODE;
+}
+async function editModule(name) {
+  try {
+    const m = await api("GET", "/api/modules/" + name);
+    editingName = name;
+    document.getElementById("editorTitle").textContent = "Editing: " + name;
+    document.getElementById("modName").value = name;
+    document.getElementById("modName").disabled = true;
+    document.getElementById("modCode").value = m.code;
+    showTab("modules");
+    window.scrollTo(0, document.body.scrollHeight);
+  } catch (e) { toast(e.message, true); }
+}
+async function saveModule() {
+  const name = document.getElementById("modName").value.trim();
+  const code = document.getElementById("modCode").value;
+  if (!name) return toast("Name required", true);
+  try {
+    await api("POST", "/api/modules", { name, code });
+    toast("Module $" + name + " saved & loaded");
+    await loadModules();
+  } catch (e) { toast(e.message, true); }
+}
+async function reloadModule(name) {
+  try { await api("POST", "/api/modules/" + name + "/reload"); toast("Reloaded " + name); await loadModules(); }
+  catch (e) { toast(e.message, true); }
+}
+async function deleteModule(name) {
+  if (!confirm("Delete module $" + name + "?")) return;
+  try { await api("DELETE", "/api/modules/" + name); toast("Deleted " + name); await loadModules(); if (editingName === name) newModule(); }
+  catch (e) { toast(e.message, true); }
+}
+
+// ─── Data
+async function loadData() {
+  const store = document.getElementById("dataStore").value;
+  try {
+    const { data } = await api("GET", "/api/data/" + store);
+    document.getElementById("dataView").textContent = JSON.stringify(data, null, 2);
+  } catch (e) { toast(e.message, true); }
+}
+
+// ─── Boot: check existing session
+document.getElementById("pw").addEventListener("keydown", e => { if (e.key === "Enter") login(); });
+document.getElementById("aiProvider").addEventListener("change", onAiProviderChange);
+document.getElementById("aiModel").addEventListener("change", () => {
+  document.getElementById("aiModelCustom").value = "";
+});
+newModule();
+api("GET", "/api/me").then(enterApp).catch(showLogin);
+</script>
+</body>
+</html>

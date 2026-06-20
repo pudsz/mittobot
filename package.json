@@ -1,0 +1,10 @@
+{
+  "name": "ggboi",
+  "version": "1.0.0",
+  "main": "index.js",
+  "dependencies": {
+    "discord.js": "^14.14.0",
+    "dotenv": "^16.3.1",
+    "express": "^4.19.2"
+  }
+}

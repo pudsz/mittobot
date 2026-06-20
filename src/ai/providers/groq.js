@@ -1,0 +1,91 @@
+const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
+const GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models";
+
+const DEFAULT_MODELS = [
+  "llama-3.3-70b-versatile",
+  "llama-3.1-8b-instant",
+  "openai/gpt-oss-120b",
+  "openai/gpt-oss-20b",
+  "meta-llama/llama-4-maverick-17b-128e-instruct",
+  "meta-llama/llama-4-scout-17b-16e-instruct",
+  "qwen/qwen3-32b",
+  "moonshotai/kimi-k2-instruct-0905",
+];
+
+const DEPRECATED_MODELS = {
+  "mixtral-8x7b-32768":       "llama-3.3-70b-versatile",
+  "gemma2-9b-it":             "llama-3.1-8b-instant",
+  "llama-3.1-70b-versatile":  "llama-3.3-70b-versatile",
+  "llama-3.1-70b-specdec":    "llama-3.3-70b-versatile",
+  "llama3-70b-8192":          "llama-3.3-70b-versatile",
+  "llama3-8b-8192":           "llama-3.1-8b-instant",
+};
+
+function resolveModel(model) {
+  const id = String(model || "").trim();
+  return DEPRECATED_MODELS[id] || id || DEFAULT_MODELS[0];
+}
+
+function isChatModel(id) {
+  return !/(whisper|tts|guard|distil-whisper)/i.test(id);
+}
+
+async function listModels(apiKey) {
+  const res = await fetch(GROQ_MODELS_URL, {
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body?.error?.message || `Groq models API error (${res.status})`);
+
+  const ids = (body.data || [])
+    .filter(m => m.active !== false && isChatModel(m.id))
+    .map(m => m.id)
+    .sort();
+
+  return ids.length ? ids : DEFAULT_MODELS;
+}
+
+async function chat(messages, { apiKey, model }) {
+  if (!apiKey) throw new Error("Groq API key is not configured.");
+
+  const resolved = resolveModel(model);
+
+  const res = await fetch(GROQ_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: resolved,
+      messages,
+      max_completion_tokens: 1024,
+      temperature: 0.7,
+    }),
+  });
+
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body?.error?.message || `Groq API error (${res.status})`);
+  }
+
+  const content = body?.choices?.[0]?.message?.content;
+  if (!content) throw new Error("Empty response from Groq.");
+  return content.trim();
+}
+
+module.exports = {
+  id: "groq",
+  label: "Groq",
+  envVar: "GROQ_API_KEY",
+  keyField: "groqApiKey",
+  modelField: "groqModel",
+  defaultModel: "llama-3.3-70b-versatile",
+  defaultModels: DEFAULT_MODELS,
+  resolveModel,
+  listModels,
+  chat,
+};
