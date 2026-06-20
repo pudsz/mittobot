@@ -176,8 +176,15 @@ client.on("interactionCreate", async interaction => {
       await execute(interaction, ctx);
     }
   } catch (err) {
+    // 10062 = Unknown interaction (token expired, >3s), 40060 = already acknowledged.
+    // Both mean the interaction is dead — replying again just throws the same error,
+    // so log quietly and bail instead of emitting a full stack + a doomed follow-up.
+    if (err?.code === 10062 || err?.code === 40060) {
+      console.warn(`Interaction expired (${interaction.commandName ?? interaction.customId}); skipping reply.`);
+      return;
+    }
     console.error(`Interaction error (${interaction.customId ?? interaction.commandName}):`, err);
-    const reply = { embeds: [utils.errorEmbed("An unexpected error occurred.")], ephemeral: true };
+    const reply = { embeds: [utils.errorEmbed("An unexpected error occurred.")], flags: 64 }; // 64 = Ephemeral
     try {
       interaction.replied || interaction.deferred
         ? await interaction.followUp(reply)
