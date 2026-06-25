@@ -1,3 +1,14 @@
 ggboi.zip
 node_modules/
 .env
+.env.local
+bot.db
+bot.db-journal
+*.bak
+*.json.bak
+
+# Dashboard (Vite app) build/deps
+dashboard/node_modules/
+dashboard/dist/
+dashboard/.env
+dashboard/.env.local

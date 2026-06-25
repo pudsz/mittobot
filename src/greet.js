@@ -1,6 +1,8 @@
 const fs   = require("fs");
 const path = require("path");
 const { EmbedBuilder } = require("discord.js");
+const safe = require("./safe");
+const db = require("./db");
 
 const GREET_FILE = path.join(__dirname, "..", "greet.json");
 
@@ -20,11 +22,36 @@ function guildDefaults() {
   };
 }
 
-function load() {
-  try { if (fs.existsSync(GREET_FILE)) store = JSON.parse(fs.readFileSync(GREET_FILE, "utf8")); }
-  catch { store = {}; }
+async function load() {
+  try {
+    store = {};
+    const rows = await db.getAllGreetConfigs();
+    for (const row of rows) {
+      store[row.guild_id] = {
+        welcome: {
+          enabled: row.welcome_enabled === 1,
+          channelId: row.welcome_channel_id,
+          message: row.welcome_message,
+        },
+        leave: {
+          enabled: row.leave_enabled === 1,
+          channelId: row.leave_channel_id,
+          message: row.leave_message,
+        },
+        logs: {
+          enabled: row.logs_enabled === 1,
+          channelId: row.logs_channel_id,
+          memberEvents: row.logs_member_events === 1,
+          messageEvents: row.logs_message_events === 1,
+        }
+      };
+    }
+  } catch (e) {
+    console.error("Failed to load greet config from db:", e);
+    store = {};
+  }
 }
-function save() { fs.writeFileSync(GREET_FILE, JSON.stringify(store, null, 2)); }
+function save() {}
 
 function getConfig(guildId) {
   const base = guildDefaults();
@@ -45,7 +72,19 @@ function setConfig(guildId, patch) {
     logs:    { ...cur.logs,    ...(patch.logs    || {}) },
   };
   store[guildId] = next;
-  save();
+
+  db.setGreetConfig(guildId, {
+    welcome_enabled: next.welcome.enabled,
+    welcome_channel_id: next.welcome.channelId,
+    welcome_message: next.welcome.message,
+    leave_enabled: next.leave.enabled,
+    leave_channel_id: next.leave.channelId,
+    leave_message: next.leave.message,
+    logs_enabled: next.logs.enabled,
+    logs_channel_id: next.logs.channelId,
+    logs_member_events: next.logs.memberEvents,
+    logs_message_events: next.logs.messageEvents,
+  }).catch(e => console.error("persist greet:", e.message));
   return next;
 }
 
@@ -63,7 +102,7 @@ function format(template, member, guild) {
 function sendTo(guild, channelId, embed) {
   if (!channelId) return;
   const ch = guild.channels.cache.get(channelId);
-  if (ch) ch.send({ embeds: [embed] }).catch(() => null);
+  if (ch) safe.send(ch, { embeds: [embed] }, "greet");
 }
 
 // ─── Event handlers ───

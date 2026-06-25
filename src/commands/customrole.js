@@ -1,4 +1,5 @@
 const { EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder } = require("discord.js");
+const safe = require("../safe");
 const { OWNER_IDS, ANCHOR_ROLE_ID, canCreateCustomRole, isAuthorized, noPermEmbed, errorEmbed, successEmbed, resolveUserId } = require("../utils");
 
 function isValidHex(color) { return /^#?([0-9A-Fa-f]{6})$/.test(color); }
@@ -26,9 +27,9 @@ async function removeExistingCustomRole(guildId, userId, guild, data) {
   if (data.customRoles[guildId]?.[userId]) {
     const oldRoleId = data.customRoles[guildId][userId].roleId;
     const oldRole   = guild.roles.cache.get(oldRoleId);
-    const member    = await guild.members.fetch(userId).catch(() => null);
-    if (member && oldRole) await member.roles.remove(oldRole).catch(() => null);
-    if (oldRole) await oldRole.delete().catch(() => null);
+    const member    = await safe.orNull(guild.members.fetch(userId), `customrole removeExisting fetch ${userId}`);
+    if (member && oldRole) await safe.removeRole(member, oldRole, "remove existing custom role", "customrole: remove old role");
+    if (oldRole) await safe.orNull(oldRole.delete(), `customrole: delete old role ${oldRole.id}`);
     delete data.customRoles[guildId][userId];
     data.saveCustomRoles();
     return true;
@@ -75,7 +76,7 @@ async function handleCustomRole(message, args, ctx) {
     const MAX = 20, lines = [];
     for (let i = 0; i < Math.min(entries.length, MAX); i++) {
       const [uid, d] = entries[i];
-      const m    = await message.guild.members.fetch(uid).catch(() => null);
+      const m    = await safe.orNull(message.guild.members.fetch(uid), `customrole list fetch ${uid}`);
       const name = m ? m.displayName : `<@${uid}>`;
       const icon = { normal: '⚪', gradient: '🌈', holographic: '✨' }[d.style] ?? '⚪';
       lines.push(`${icon} **${name}**: \`${d.name}\` (${d.color || 'Random'})`);
@@ -102,7 +103,7 @@ async function handleCustomRole(message, args, ctx) {
     const userId = resolveUserId(args[1]); if (!userId) return message.reply({ embeds: [usageEmbed()] });
     if (userId !== message.author.id && !member.permissions.has(PermissionFlagsBits.Administrator) && !OWNER_IDS.has(message.author.id))
       return message.reply({ embeds: [errorEmbed("You can only create a custom role for yourself.")] });
-    const targetMember = await message.guild.members.fetch(userId).catch(() => null);
+    const targetMember = await safe.orNull(message.guild.members.fetch(userId), `customrole create fetch ${userId}`);
     if (!targetMember) return message.reply({ embeds: [errorEmbed("That user isn't in this server.")] });
     const parsed = parseRoleName(args.slice(2)); if (!parsed) return message.reply({ embeds: [errorEmbed('Unclosed quote in role name.')] });
     const { roleName, remaining } = parsed; if (!roleName) return message.reply({ embeds: [usageEmbed()] });

@@ -1,4 +1,4 @@
-const { EmbedBuilder, SlashCommandBuilder } = require("discord.js");
+const { EmbedBuilder, SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 
 const CATEGORY = "fun";
 const BLURPLE = 0x5865f2;
@@ -262,5 +262,82 @@ module.exports = [
     prefix: async (m) => { try { m.reply({ embeds: [await dog()] }); } catch { m.reply({ embeds: [apiErrorEmbed("a dog")] }); } },
     slash: new SlashCommandBuilder().setName("dog").setDescription("Random dog picture"),
     execute: async (i) => { await i.deferReply(); try { i.editReply({ embeds: [await dog()] }); } catch { i.editReply({ embeds: [apiErrorEmbed("a dog")] }); } },
+  },
+  {
+    name: "femboyify", description: "Toggle a user's femboyified nickname", category: CATEGORY,
+    prefix: async (m, a) => {
+      const target = m.mentions.members.first();
+      if (!target) return m.reply({ embeds: [funEmbed("❌ Usage: `femboyify @user on/off`.", 0xed4245)] });
+      const mode = (a[1] || "").toLowerCase();
+      if (mode !== "on" && mode !== "off")
+        return m.reply({ embeds: [funEmbed("❌ Specify `on` or `off`. Usage: `femboyify @user on` or `femboyify @user off`.", 0xed4245)] });
+
+      const botMember = m.guild.members.me;
+      if (!botMember.permissions.has(PermissionFlagsBits.ManageNicknames))
+        return m.reply({ embeds: [funEmbed("❌ I need **Manage Nicknames** permission.", 0xed4245)] });
+      if (!target.manageable)
+        return m.reply({ embeds: [funEmbed("❌ Can't change their nickname — their role is above mine.", 0xed4245)] });
+
+      if (mode === "on") {
+        const original = target.nickname || target.user.username;
+        const newNick = `the cute ${original.replace(/^the cute | femboy$/gi, "").trim()} femboy`;
+        try {
+          await target.setNickname(newNick, "Femboyified");
+          await require("../femboyify").setFemboyified(m.guild.id, target.id, original);
+          m.reply({ embeds: [funEmbed(`✨ ${target} → **${newNick}**`)], allowedMentions: { parse: [] } });
+        } catch (err) {
+          m.reply({ embeds: [funEmbed(`❌ Failed: ${err.message}`, 0xed4245)] });
+        }
+      } else {
+        const femboyify = require("../femboyify");
+        const original = femboyify.getOriginalNick(m.guild.id, target.id);
+        if (!original) return m.reply({ embeds: [funEmbed("❌ That user isn't femboyified.", 0xed4245)] });
+        try {
+          await target.setNickname(original, "Unfemboyified");
+          await femboyify.removeFemboyified(m.guild.id, target.id);
+          m.reply({ embeds: [funEmbed(`✨ ${target} restored to **${original}**`)], allowedMentions: { parse: [] } });
+        } catch (err) {
+          m.reply({ embeds: [funEmbed(`❌ Failed to restore: ${err.message}`, 0xed4245)] });
+        }
+      }
+    },
+    slash: new SlashCommandBuilder().setName("femboyify").setDescription("Toggle a user's femboyified nickname")
+      .addUserOption(o => o.setName("user").setDescription("The user").setRequired(true))
+      .addStringOption(o => o.setName("mode").setDescription("on or off").setRequired(true)
+        .addChoices({ name: "on", value: "on" }, { name: "off", value: "off" })),
+    execute: async (i) => {
+      const target = i.options.getMember("user");
+      if (!target) return i.reply({ embeds: [funEmbed("❌ User not found.", 0xed4245)], ephemeral: true });
+      const mode = i.options.getString("mode");
+
+      const botMember = i.guild.members.me;
+      if (!botMember.permissions.has(PermissionFlagsBits.ManageNicknames))
+        return i.reply({ embeds: [funEmbed("❌ I need **Manage Nicknames** permission.", 0xed4245)], ephemeral: true });
+      if (!target.manageable)
+        return i.reply({ embeds: [funEmbed("❌ Can't change their nickname — their role is above mine.", 0xed4245)], ephemeral: true });
+
+      if (mode === "on") {
+        const original = target.nickname || target.user.username;
+        const newNick = `the cute ${original.replace(/^the cute | femboy$/gi, "").trim()} femboy`;
+        try {
+          await target.setNickname(newNick, "Femboyified");
+          await require("../femboyify").setFemboyified(i.guild.id, target.id, original);
+          i.reply({ embeds: [funEmbed(`✨ ${target} → **${newNick}**`)], allowedMentions: { parse: [] } });
+        } catch (err) {
+          i.reply({ embeds: [funEmbed(`❌ Failed: ${err.message}`, 0xed4245)], ephemeral: true });
+        }
+      } else {
+        const femboyify = require("../femboyify");
+        const original = femboyify.getOriginalNick(i.guild.id, target.id);
+        if (!original) return i.reply({ embeds: [funEmbed("❌ That user isn't femboyified.", 0xed4245)], ephemeral: true });
+        try {
+          await target.setNickname(original, "Unfemboyified");
+          await femboyify.removeFemboyified(i.guild.id, target.id);
+          i.reply({ embeds: [funEmbed(`✨ ${target} restored to **${original}**`)], allowedMentions: { parse: [] } });
+        } catch (err) {
+          i.reply({ embeds: [funEmbed(`❌ Failed to restore: ${err.message}`, 0xed4245)], ephemeral: true });
+        }
+      }
+    },
   },
 ];

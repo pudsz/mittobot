@@ -2,6 +2,7 @@ const fs   = require("fs");
 const path = require("path");
 const { PermissionFlagsBits } = require("discord.js");
 const { OWNER_IDS } = require("./utils");
+const db = require("./db");
 
 const CONFIG_FILE = path.join(__dirname, "..", "commandconfig.json");
 
@@ -36,11 +37,28 @@ function memberLevel(member, userId) {
 // { [guildId]: { [commandName]: { enabled, permission, allowedRoles[], allowedChannels[], blockedChannels[], cooldown, settings{} } } }
 let store = {};
 
-function load() {
-  try { if (fs.existsSync(CONFIG_FILE)) store = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8")); }
-  catch { store = {}; }
+async function load() {
+  try {
+    store = {};
+    const rows = await db.getAllCommandConfigs();
+    for (const row of rows) {
+      const g = (store[row.guild_id] ??= {});
+      g[row.command] = {
+        enabled: row.enabled === 1,
+        permission: row.permission,
+        allowedRoles: JSON.parse(row.allowed_roles || "[]"),
+        allowedChannels: JSON.parse(row.allowed_channels || "[]"),
+        blockedChannels: JSON.parse(row.blocked_channels || "[]"),
+        cooldown: row.cooldown,
+        settings: JSON.parse(row.settings || "{}"),
+      };
+    }
+  } catch (e) {
+    console.error("Failed to load command config from db:", e);
+    store = {};
+  }
 }
-function save() { fs.writeFileSync(CONFIG_FILE, JSON.stringify(store, null, 2)); }
+function save() {}
 
 // Raw stored override for a command (may be undefined / partial).
 function getRaw(guildId, command) {
@@ -65,18 +83,23 @@ function resolve(guildId, command, def = {}) {
 function set(guildId, command, patch) {
   (store[guildId] ??= {})[command] ??= {};
   Object.assign(store[guildId][command], patch);
-  save();
+  const cfg = resolve(guildId, command);
+  db.setCommandConfig(guildId, command, cfg).catch(e => console.error("persist command config:", e.message));
 }
 
 // Merge into a command's `settings` bag without clobbering siblings.
 function setSetting(guildId, command, key, value) {
   (store[guildId] ??= {})[command] ??= {};
   (store[guildId][command].settings ??= {})[key] = value;
-  save();
+  const cfg = resolve(guildId, command);
+  db.setCommandConfig(guildId, command, cfg).catch(e => console.error("persist command config:", e.message));
 }
 
 function reset(guildId, command) {
-  if (store[guildId]) { delete store[guildId][command]; save(); }
+  if (store[guildId]) {
+    delete store[guildId][command];
+    db.deleteCommandConfig(guildId, command).catch(e => console.error("reset command config:", e.message));
+  }
 }
 
 // ─── Cooldown tracking (in-memory; resets on restart) ───

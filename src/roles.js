@@ -1,5 +1,7 @@
 const fs   = require("fs");
 const path = require("path");
+const safe = require("./safe");
+const db = require("./db");
 
 const ROLES_FILE = path.join(__dirname, "..", "roles.json");
 
@@ -10,11 +12,22 @@ const ROLES_FILE = path.join(__dirname, "..", "roles.json");
 //   } }
 let store = {};
 
-function load() {
-  try { if (fs.existsSync(ROLES_FILE)) store = JSON.parse(fs.readFileSync(ROLES_FILE, "utf8")); }
-  catch { store = {}; }
+async function load() {
+  try {
+    store = {};
+    const rows = await db.getAllRolesConfigs();
+    for (const row of rows) {
+      store[row.guild_id] = {
+        autoroles: JSON.parse(row.autoroles || "[]"),
+        reactionRoles: JSON.parse(row.reaction_roles || "{}"),
+      };
+    }
+  } catch (e) {
+    console.error("Failed to load roles config from db:", e);
+    store = {};
+  }
 }
-function save() { fs.writeFileSync(ROLES_FILE, JSON.stringify(store, null, 2)); }
+function save() {}
 
 function getGuild(guildId) {
   const g = store[guildId] || {};
@@ -24,8 +37,11 @@ function getGuild(guildId) {
 // ─── Autoroles ───
 function getAutoroles(guildId) { return getGuild(guildId).autoroles; }
 function setAutoroles(guildId, roleIds) {
-  (store[guildId] ??= {}).autoroles = roleIds.filter(x => /^\d{17,20}$/.test(x));
-  save();
+  const cleanIds = roleIds.filter(x => /^\d{17,20}$/.test(x));
+  (store[guildId] ??= {}).autoroles = cleanIds;
+
+  const g = getGuild(guildId);
+  db.setRolesConfig(guildId, cleanIds, g.reactionRoles).catch(e => console.error("persist roles:", e.message));
   return getAutoroles(guildId);
 }
 
@@ -40,7 +56,8 @@ function addReactionRole(guildId, messageId, key, roleId) {
   (g.reactionRoles ??= {});
   (g.reactionRoles[messageId] ??= {});
   g.reactionRoles[messageId][key] = roleId;
-  save();
+
+  db.setRolesConfig(guildId, g.autoroles || [], g.reactionRoles).catch(e => console.error("persist roles:", e.message));
 }
 
 function removeReactionRole(guildId, messageId, key) {
@@ -48,7 +65,9 @@ function removeReactionRole(guildId, messageId, key) {
   if (!map) return false;
   delete map[key];
   if (Object.keys(map).length === 0) delete store[guildId].reactionRoles[messageId];
-  save();
+
+  const g = getGuild(guildId);
+  db.setRolesConfig(guildId, g.autoroles || [], g.reactionRoles).catch(e => console.error("persist roles:", e.message));
   return true;
 }
 
@@ -64,7 +83,7 @@ async function onMemberAdd(member) {
   for (const id of roleIds) {
     const role = member.guild.roles.cache.get(id);
     if (role && role.position < me.roles.highest.position) {
-      await member.roles.add(role, "Autorole on join").catch(() => null);
+      await safe.addRole(member, role, "Autorole on join", "autorole on join");
     }
   }
 }
@@ -72,18 +91,18 @@ async function onMemberAdd(member) {
 // reaction: a (possibly partial) MessageReaction; added: bool
 async function onReaction(reaction, user, added) {
   if (user.bot) return;
-  if (reaction.partial) { if (!await reaction.fetch().catch(() => null)) return; }
+  if (reaction.partial) { if (!await safe.orNull(reaction.fetch(), "fetch partial reaction for reaction role")) return; }
   const msg = reaction.message;
   const guild = msg.guild;
   if (!guild) return;
   const roleId = roleForReaction(guild.id, msg.id, reaction.emoji);
   if (!roleId) return;
-  const member = await guild.members.fetch(user.id).catch(() => null);
+  const member = await safe.orNull(guild.members.fetch(user.id), "fetch member for reaction role");
   if (!member) return;
   const role = guild.roles.cache.get(roleId);
   if (!role || role.position >= guild.members.me.roles.highest.position) return;
-  if (added) await member.roles.add(role, "Reaction role").catch(() => null);
-  else       await member.roles.remove(role, "Reaction role").catch(() => null);
+  if (added) await safe.addRole(member, role, "Reaction role", "reaction role add");
+  else       await safe.removeRole(member, role, "Reaction role", "reaction role remove");
 }
 
 module.exports = {

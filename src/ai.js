@@ -1,8 +1,21 @@
 const settings = require("./settings");
 const { getProvider, listProviders } = require("./ai/providers");
 const groqProvider = require("./ai/providers/groq");
+const { processMessageImages, buildContentParts } = require("./ai/images");
+
+const safe = require("./safe");
 
 const MAX_REPLY_LEN = 2000;
+
+// Model-list lookups hit a live upstream (and the dashboard polls GET /api/ai
+// frequently). Cache results — including failures — so we don't hammer a flaky
+// custom endpoint or flood the logs with the same warning on every poll.
+const MODEL_LIST_TTL = 60_000;
+const modelListCache = new Map(); // key -> { at, models? , error? }
+
+function modelListCacheKey(providerId, opts, hasKey) {
+  return [providerId, opts.baseUrl || "", opts.apiType || "", hasKey ? "k" : ""].join("|");
+}
 
 function parseChannelList(str) {
   if (!str || !String(str).trim()) return new Set();
@@ -33,16 +46,79 @@ function splitMessage(text, maxLen = MAX_REPLY_LEN) {
   return chunks;
 }
 
-function buildMessages(userContent, replyContext) {
-  const system = settings.get("aiSystemPrompt") || "You are a helpful Discord assistant. Keep replies concise and friendly.";
-  const messages = [{ role: "system", content: system }];
+async function getChannelContext(message, client, limit = 8) {
+  if (limit <= 0) return [];
+  try {
+    const fetched = await safe.orNull(message.channel.messages.fetch({ limit: limit + 2 }), "fetch channel context");
+    if (!fetched) return [];
 
-  if (replyContext) {
-    messages.push({ role: "assistant", content: replyContext });
+    const prefix = settings.get("prefix");
+    
+    const list = Array.from(fetched.values())
+      .filter(m => m.id !== message.id && !m.content.startsWith(prefix))
+      .reverse()
+      .slice(-limit);
+
+    return list.map(m => {
+      const isSelf = m.author.id === client.user.id;
+      if (isSelf) {
+        return { role: "assistant", content: m.content };
+      } else {
+        const authorTag = m.member?.displayName || m.author.username;
+        return {
+          role: "user",
+          name: m.author.username.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64),
+          content: `[${authorTag}]: ${m.content}`
+        };
+      }
+    });
+  } catch (err) {
+    console.error("Failed to fetch channel context:", err);
+    return [];
+  }
+}
+
+async function buildMessageHistory(message, ctx, limit = 8, userContent, images = []) {
+  const { client } = ctx;
+  const history = await getChannelContext(message, client, limit);
+  
+  // If there are images, embed them inline as content parts
+  const authorTag = message.member?.displayName || message.author.username;
+  const taggedContent = `[${authorTag}]: ${userContent}`;
+  const contentWithImages = images.length > 0
+    ? buildContentParts(taggedContent, images)
+    : taggedContent;
+
+  history.push({
+    role: "user",
+    name: message.author.username.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64),
+    content: contentWithImages
+  });
+
+  let system = settings.get("aiSystemPrompt") || "You are a helpful Discord assistant. Keep replies concise and friendly.";
+  
+  if (settings.get("aiMemoryEnabled") !== false) {
+    const aiMemory = require("./ai/memory");
+    const memories = aiMemory.recall(message.guild.id, message.author.id, 15);
+    if (memories.length > 0) {
+      const formattedMemories = memories.map(m => {
+        const scope = m.userId ? `User <@${m.userId}>` : "Server/General";
+        return `- [Fact #${m.id}] (${scope}): ${m.content}`;
+      }).join("\n");
+      system += `\n\n### KNOWN MEMORIES / FACTS:\n${formattedMemories}\nUse these facts to personalize your responses. If a fact is outdated or no longer true, you can delete it using forget_memory. If you learn something new and important about a user or server, use add_memory to save it.`;
+    }
   }
 
-  messages.push({ role: "user", content: userContent });
-  return messages;
+  return [{ role: "system", content: system }, ...history];
+}
+
+function cleanResponse(text, thinkingEnabled) {
+  if (!text) return "";
+  let clean = text;
+  if (!thinkingEnabled) {
+    clean = clean.replace(/<think>[\s\S]*?<\/think>/gi, "");
+  }
+  return clean.trim();
 }
 
 async function chatWithProvider(providerId, messages) {
@@ -60,15 +136,31 @@ async function chatWithProvider(providerId, messages) {
     }
   }
 
-  const opts = { apiKey, model };
+  const opts = {
+    apiKey,
+    model,
+    temperature: Number(settings.get("aiTemperature") ?? 0.7),
+    maxTokens: Number(settings.get("aiMaxTokens") ?? 1024),
+    topP: Number(settings.get("aiTopP") ?? 1.0),
+    thinkingEnabled: settings.get("aiThinkingEnabled") === true,
+  };
   if (provider.baseUrlField) opts.baseUrl = settings.get(provider.baseUrlField);
   if (provider.apiTypeField) opts.apiType = settings.get(provider.apiTypeField);
+
+  if (settings.get("aiToolsEnabled") !== false) {
+    const tools = require("./ai/tools");
+    opts.tools = tools.getOpenAiTools();
+  }
 
   return provider.chat(messages, opts);
 }
 
 async function handleAiMessage(message, ctx) {
   if (!settings.get("aiEnabled")) return false;
+
+  // Maintenance mode — skip AI responses entirely
+  const mm = settings.get("maintenanceMode");
+  if ((mm === true || mm === "true") && !ctx.utils?.isOwner(message.author.id)) return false;
 
   const providerId = settings.get("aiProvider") || "groq";
   const apiKey = settings.getAiApiKey(providerId);
@@ -80,17 +172,15 @@ async function handleAiMessage(message, ctx) {
 
   const { client } = ctx;
   let userContent = null;
-  let replyContext = null;
 
   if (message.mentions.has(client.user.id)) {
     userContent = stripBotMention(message.content, client.user.id);
     if (!userContent) userContent = "The user pinged you without a message. Greet them briefly.";
   } else if (message.reference?.messageId) {
-    const ref = await message.channel.messages.fetch(message.reference.messageId).catch(() => null);
+    const ref = await safe.orNull(message.channel.messages.fetch(message.reference.messageId), "fetch referenced message for AI");
     if (ref?.author?.id !== client.user.id) return false;
     userContent = message.content.trim();
     if (!userContent) userContent = "The user replied to your message without text. Ask what they need.";
-    if (ref.content) replyContext = ref.content.slice(0, 1500);
   } else {
     return false;
   }
@@ -99,8 +189,80 @@ async function handleAiMessage(message, ctx) {
 
   try {
     await message.channel.sendTyping();
-    const reply = await chatWithProvider(providerId, buildMessages(userContent, replyContext));
-    const chunks = splitMessage(reply);
+    const tools = require("./ai/tools");
+
+    // Detect and download image attachments for vision support
+    const images = await processMessageImages(message);
+    if (images.length > 0) {
+      console.log(`[vision] Processing ${images.length} image(s) from ${message.author.tag}`);
+    }
+
+    let messages = await buildMessageHistory(
+      message, ctx,
+      Number(settings.get("aiContextLimit") ?? 8),
+      userContent,
+      images
+    );
+    let loopCount = 0;
+    const MAX_LOOPS = 5;
+    let finalReply = "";
+    const thinkingEnabled = settings.get("aiThinkingEnabled") === true;
+
+    while (loopCount < MAX_LOOPS) {
+      const response = await chatWithProvider(providerId, messages);
+      if (typeof response === "string") {
+        finalReply = cleanResponse(response, thinkingEnabled);
+        break;
+      }
+
+      const { text, toolCalls } = response;
+      if (text) {
+        finalReply = cleanResponse(text, thinkingEnabled);
+      }
+
+      if (!toolCalls || toolCalls.length === 0) {
+        break;
+      }
+
+      messages.push({
+        role: "assistant",
+        content: text || null,
+        tool_calls: toolCalls.map(tc => ({
+          id: tc.id,
+          type: "function",
+          function: {
+            name: tc.name,
+            arguments: JSON.stringify(tc.args)
+          }
+        }))
+      });
+
+      for (const tc of toolCalls) {
+        console.log(`[ai] Executing tool: ${tc.name} with args:`, tc.args);
+        let resultStr;
+        try {
+          resultStr = await tools.executeTool(tc.name, tc.args, ctx, message);
+        } catch (err) {
+          resultStr = `Error executing tool: ${err.message}`;
+        }
+        
+        messages.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          name: tc.name,
+          content: resultStr
+        });
+      }
+
+      loopCount++;
+    }
+
+    if (!finalReply) {
+      console.warn("[AI] Empty response after", loopCount, "tool loops");
+      finalReply = "I have processed your request.";
+    }
+
+    const chunks = splitMessage(finalReply);
     for (let i = 0; i < chunks.length; i++) {
       if (i === 0) await message.reply(chunks[i]);
       else await message.channel.send(chunks[i]);
@@ -108,7 +270,7 @@ async function handleAiMessage(message, ctx) {
     return true;
   } catch (err) {
     console.error("AI reply error:", err.message);
-    await message.reply({ content: `❌ AI error: ${err.message}` }).catch(() => null);
+    await safe.reply(message, { content: `❌ AI error: ${err.message}` }, "AI error reply");
     return true;
   }
 }
@@ -142,11 +304,17 @@ function getPublicSettings() {
     hasApiKey:          Boolean(key),
     apiKeyPreview:      key ? `••••${key.slice(-4)}` : "",
     models:             provider.defaultModels,
-    // Custom provider config (only meaningful when aiProvider === "custom")
     customBaseUrl:      settings.get("customBaseUrl"),
     customApiType:      settings.get("customApiType"),
-    // backward compat for any old clients
     groqModel:          settings.get("groqModel"),
+    // Advanced parameters
+    aiTemperature:      settings.get("aiTemperature"),
+    aiMaxTokens:        settings.get("aiMaxTokens"),
+    aiTopP:             settings.get("aiTopP"),
+    aiContextLimit:     settings.get("aiContextLimit"),
+    aiToolsEnabled:     settings.get("aiToolsEnabled"),
+    aiMemoryEnabled:    settings.get("aiMemoryEnabled"),
+    aiThinkingEnabled:   settings.get("aiThinkingEnabled"),
   };
 }
 
@@ -157,19 +325,30 @@ async function getPublicSettingsAsync() {
   if (!provider) return base;
 
   const key = settings.getAiApiKey(providerId);
-  // Custom provider can list models without a key (e.g. local Ollama); others need one.
   const hasBaseUrl = provider.baseUrlField && settings.get(provider.baseUrlField);
   if ((key || hasBaseUrl) && typeof provider.listModels === "function") {
-    try {
-      const listOpts = {};
-      if (provider.baseUrlField) listOpts.baseUrl = settings.get(provider.baseUrlField);
-      if (provider.apiTypeField) listOpts.apiType = settings.get(provider.apiTypeField);
-      base.models = await provider.listModels(key, listOpts);
-      if (base.model && !base.models.includes(base.model)) {
-        base.models = [base.model, ...base.models];
+    const listOpts = {};
+    if (provider.baseUrlField) listOpts.baseUrl = settings.get(provider.baseUrlField);
+    if (provider.apiTypeField) listOpts.apiType = settings.get(provider.apiTypeField);
+
+    const cacheKey = modelListCacheKey(providerId, listOpts, Boolean(key));
+    const cached = modelListCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < MODEL_LIST_TTL) {
+      if (cached.models) base.models = cached.models;
+    } else {
+      try {
+        const models = await provider.listModels(key, listOpts);
+        modelListCache.set(cacheKey, { at: Date.now(), models });
+        base.models = models;
+      } catch (err) {
+        if (!cached || cached.error !== err.message) {
+          console.warn(`[ai] Could not fetch ${provider.label} model list:`, err.message);
+        }
+        modelListCache.set(cacheKey, { at: Date.now(), error: err.message });
       }
-    } catch (err) {
-      console.warn(`[ai] Could not fetch ${provider.label} model list:`, err.message);
+    }
+    if (base.model && Array.isArray(base.models) && !base.models.includes(base.model)) {
+      base.models = [base.model, ...base.models];
     }
   }
   return base;
@@ -230,6 +409,15 @@ function updateSettings(body) {
   } else if (typeof body.apiKey === "string" && body.apiKey.trim() && activeProvider) {
     settings.set(activeProvider.keyField, body.apiKey.trim());
   }
+
+  // Advanced settings
+  if (typeof body.aiTemperature === "number") settings.set("aiTemperature", body.aiTemperature);
+  if (typeof body.aiMaxTokens === "number") settings.set("aiMaxTokens", body.aiMaxTokens);
+  if (typeof body.aiTopP === "number") settings.set("aiTopP", body.aiTopP);
+  if (typeof body.aiContextLimit === "number") settings.set("aiContextLimit", body.aiContextLimit);
+  if (typeof body.aiToolsEnabled === "boolean") settings.set("aiToolsEnabled", body.aiToolsEnabled);
+  if (typeof body.aiMemoryEnabled === "boolean") settings.set("aiMemoryEnabled", body.aiMemoryEnabled);
+  if (typeof body.aiThinkingEnabled === "boolean") settings.set("aiThinkingEnabled", body.aiThinkingEnabled);
 }
 
 module.exports = {

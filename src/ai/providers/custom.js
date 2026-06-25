@@ -3,6 +3,8 @@
 // http://localhost:11434/v1) and picks the wire format. Models are fetched
 // live from the endpoint's /models route.
 
+const { contentToAnthropicBlocks } = require("../images");
+
 const DEFAULT_MODELS = [];
 
 function normalizeBase(baseUrl) {
@@ -50,33 +52,102 @@ async function listModels(apiKey, { baseUrl, apiType } = {}) {
   return [...new Set(ids)];
 }
 
-// ─── OpenAI-compatible chat
-async function chatOpenAI(messages, { apiKey, model, base }) {
+// ─── OpenAI-compatible chat (with tool calling)
+async function chatOpenAI(messages, { apiKey, model, base, temperature, maxTokens, topP, tools }) {
+  const body = {
+    model,
+    messages,
+    max_completion_tokens: maxTokens || 1024,
+    temperature: temperature !== undefined ? temperature : 0.7
+  };
+  if (topP !== undefined) body.top_p = topP;
+  if (tools && tools.length > 0) body.tools = tools;
+
   const res = await fetch(`${base}/chat/completions`, {
     method: "POST",
     headers: {
       ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ model, messages, max_tokens: 1024, temperature: 0.7 }),
+    body: JSON.stringify(body),
   });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body?.error?.message || body?.error || `Custom API error (${res.status})`);
-  const content = body?.choices?.[0]?.message?.content;
-  if (!content) throw new Error("Empty response from custom endpoint.");
-  return content.trim();
+  const bodyData = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(bodyData?.error?.message || bodyData?.error || `Custom API error (${res.status})`);
+  const msg = bodyData?.choices?.[0]?.message;
+  if (!msg) throw new Error("Empty response from custom endpoint.");
+  return {
+    text: (msg.content || "").trim(),
+    toolCalls: msg.tool_calls ? msg.tool_calls.map(tc => ({
+      id: tc.id,
+      name: tc.function.name,
+      args: JSON.parse(tc.function.arguments)
+    })) : undefined
+  };
 }
 
-// ─── Anthropic-compatible chat
-async function chatAnthropic(messages, { apiKey, model, base }) {
+// ─── Anthropic-compatible chat (with tool calling)
+async function chatAnthropic(messages, { apiKey, model, base, temperature, maxTokens, topP, tools }) {
   let system = "";
   const out = [];
   for (const msg of messages) {
-    if (msg.role === "system") system = system ? `${system}\n\n${msg.content}` : msg.content;
-    else out.push({ role: msg.role, content: msg.content });
+    if (msg.role === "system") {
+      system = system ? `${system}\n\n${msg.content}` : msg.content;
+      continue;
+    }
+    if (msg.role === "assistant") {
+      const contentBlocks = [];
+      if (msg.content) contentBlocks.push({ type: "text", text: msg.content });
+      if (msg.tool_calls) {
+        for (const tc of msg.tool_calls) {
+          contentBlocks.push({
+            type: "tool_use",
+            id: tc.id,
+            name: tc.function?.name || tc.name,
+            input: typeof tc.function?.arguments === "string"
+              ? JSON.parse(tc.function.arguments)
+              : (tc.function?.arguments || tc.args || {})
+          });
+        }
+      }
+      out.push({
+        role: "assistant",
+        content: contentBlocks.length === 1 && contentBlocks[0].type === "text" ? contentBlocks[0].text : contentBlocks
+      });
+    } else if (msg.role === "tool") {
+      // Group consecutive tool messages into a single user message
+      const toolBlocks = [];
+      let j = i;
+      while (j < messages.length && messages[j].role === "tool") {
+        const tm = messages[j];
+        toolBlocks.push({
+          type: "tool_result",
+          tool_use_id: tm.tool_call_id,
+          content: tm.content || ""
+        });
+        j++;
+      }
+      i = j - 1;
+      out.push({ role: "user", content: toolBlocks });
+    } else {
+      // Handle array content (text + images from vision support)
+      out.push({ role: msg.role, content: contentToAnthropicBlocks(msg.content) });
+    }
   }
-  const payload = { model, max_tokens: 1024, messages: out };
+  const payload = {
+    model,
+    max_tokens: maxTokens || 1024,
+    messages: out,
+    temperature: temperature !== undefined ? temperature : 0.7
+  };
   if (system) payload.system = system;
+  if (topP !== undefined) payload.top_p = topP;
+  if (tools && tools.length > 0) {
+    payload.tools = tools.map(t => ({
+      name: t.function.name,
+      description: t.function.description,
+      input_schema: t.function.parameters
+    }));
+  }
 
   const res = await fetch(`${base}/messages`, {
     method: "POST",
@@ -87,19 +158,27 @@ async function chatAnthropic(messages, { apiKey, model, base }) {
     },
     body: JSON.stringify(payload),
   });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body?.error?.message || body?.error || `Custom API error (${res.status})`);
-  const content = body?.content?.[0]?.text;
-  if (!content) throw new Error("Empty response from custom endpoint.");
-  return content.trim();
+  const bodyData = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(bodyData?.error?.message || bodyData?.error || `Custom API error (${res.status})`);
+
+  const toolCalls = [];
+  let text = "";
+  for (const block of (bodyData?.content || [])) {
+    if (block.type === "text") text += block.text;
+    else if (block.type === "tool_use") toolCalls.push({ id: block.id, name: block.name, args: block.input });
+  }
+  return {
+    text: text.trim(),
+    toolCalls: toolCalls.length ? toolCalls : undefined
+  };
 }
 
-async function chat(messages, { apiKey, model, baseUrl, apiType }) {
+async function chat(messages, { apiKey, model, baseUrl, apiType, temperature, maxTokens, topP, tools }) {
   const base = normalizeBase(baseUrl);
   if (!model) throw new Error("Custom provider: no model selected.");
   return apiType === "anthropic"
-    ? chatAnthropic(messages, { apiKey, model, base })
-    : chatOpenAI(messages, { apiKey, model, base });
+    ? chatAnthropic(messages, { apiKey, model, base, temperature, maxTokens, topP, tools })
+    : chatOpenAI(messages, { apiKey, model, base, temperature, maxTokens, topP, tools });
 }
 
 module.exports = {

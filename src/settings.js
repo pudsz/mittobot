@@ -1,14 +1,24 @@
 const fs   = require("fs");
 const path = require("path");
 const { getProvider, listProviders, getEnvVars } = require("./ai/providers");
+const db   = require("./db");
 
 const SETTINGS_FILE = path.join(__dirname, "..", "settings.json");
 
-const AI_SYSTEM_PROMPT_DEFAULT = `You are a casual Discord bot in a tight-knit community server. Reply the way people here actually chat: short, loose, friendly, sometimes chaotic. Use lowercase when it fits, light internet slang (yo, bro, wsp, fr, lmao, ngl, tbh), and one-liners—not formal paragraphs.
+const AI_SYSTEM_PROMPT_DEFAULT = `You are Hermes, an advanced, autonomous AI agent and friendly companion in this Discord server. You chat naturally like a close friend: casual, laid-back, welcoming, and warm. Use lowercase when it fits, and light internet acronyms (yo, wsp, hru, fr, lmao, ngl, tbh) rather than formal sentences. Keep replies chill and friendly, not aggressive or hostile.
 
-You're one of the homies, not customer support. Banter is fine. React naturally to dead chat, art drops, fanfics, games, role jokes, time zones, AFK jokes, and random nonsense. Keep most replies under 2–3 sentences unless someone actually wants a real answer.
+YOUR POWERS & CAPABILITIES:
+- You have tools to moderate members (warn, mute/timeout, kick, ban), inspect user profiles/warnings, check channel history, send messages to other channels, search the web for real-time information, scrape web pages, and manage your long-term memory facts.
+- Use your tools autonomously when asked or when necessary (e.g. if someone asks you to moderate a user, look up a question online, or check what someone said in another channel).
+- Never announce or over-explain that you are using tools. Just run them silently and incorporate the results naturally.
 
-No markdown essays, no bullet-point lectures, no "How can I assist you today?" energy. Stay concise, match the vibe, and don't over-explain.`;
+MEMORY & LEARNING:
+- You have a persistent memory cache. If you learn something interesting or important about a user (their preferences, timezone, hobbies, nicknames) or the server, use the \`add_memory\` tool to store it.
+- If a memory fact is outdated, use \`forget_memory\` to remove it.
+
+CONVERSATION GUIDELINES:
+- Keep your conversational replies short and engaging (1-3 sentences). Avoid formal customer support language ("How can I help you today?").
+- If executing a moderation action (like timeout or warn), write a brief success statement in your natural vibe, or let the tool output confirm the action. Do not lecture.`;
 
 const DEFAULTS = {
   prefix:       "$",
@@ -35,27 +45,45 @@ const DEFAULTS = {
   aiSystemPrompt:     AI_SYSTEM_PROMPT_DEFAULT,
   aiAllowedChannels:  "",
   aiIgnoredChannels:  "",
+  aiTemperature:      0.7,
+  aiMaxTokens:        1024,
+  aiTopP:             1.0,
+  aiContextLimit:     8,
+  aiToolsEnabled:     true,
+  aiMemoryEnabled:    true,
+  aiThinkingEnabled:   false,
   funEnabled:         true,
   infoEnabled:        true,
   fakeModEnabled:     true,
+  maintenanceMode:    false,
+  maintenanceMessage: "🔧 The bot is currently under maintenance. Please try again later.",
 };
 
 let _settings = { ...DEFAULTS };
 
-function load() {
+// Async: awaited once during bot startup before any command is processed.
+async function load() {
   try {
-    if (fs.existsSync(SETTINGS_FILE)) {
-      _settings = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8")) };
-    }
-  } catch { _settings = { ...DEFAULTS }; }
+    const saved = await db.getGlobalSettings();
+    _settings = { ...DEFAULTS, ...saved };
+  } catch (e) {
+    console.error("Failed to load settings from db:", e);
+    _settings = { ...DEFAULTS };
+  }
 }
 
+// Persist every key (used for bulk operations like reset-to-defaults).
+// The in-memory cache is authoritative at runtime; persistence is best-effort.
 function save() {
-  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(_settings, null, 2));
+  Promise.all(Object.entries(_settings).map(([k, v]) => db.setGlobalSetting(k, v)))
+    .catch(e => console.error("Failed to save settings to db:", e));
 }
 
 function get(key) { return _settings[key] ?? DEFAULTS[key]; }
-function set(key, value) { _settings[key] = value; save(); }
+function set(key, value) {
+  _settings[key] = value;
+  db.setGlobalSetting(key, value).catch(e => console.error("Failed to persist setting:", e));
+}
 function getAll() { return { ..._settings }; }
 
 function getActiveProvider() {
@@ -110,8 +138,6 @@ function hydrateAiKeysFromEnv() {
 function formatFakeMsg(template, vars = {}) {
   return template.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? `{${k}}`);
 }
-
-load();
 
 module.exports = {
   load,

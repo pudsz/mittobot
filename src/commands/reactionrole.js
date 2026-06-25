@@ -2,6 +2,8 @@ const { EmbedBuilder, SlashCommandBuilder, PermissionFlagsBits } = require("disc
 const { errorEmbed, successEmbed } = require("../utils");
 const roles = require("../roles");
 
+const safe = require("../safe");
+
 const BLURPLE = 0x5865f2;
 
 // Parse an emoji argument into a key usable for lookup: custom -> id, unicode -> char.
@@ -13,7 +15,7 @@ function parseEmojiArg(arg) {
 }
 
 async function resolveMessage(channel, messageId) {
-  return channel.messages.fetch(messageId).catch(() => null);
+  return safe.orNull(channel.messages.fetch(messageId), `reaction role fetch msg ${messageId}`);
 }
 
 async function handleReactionRole(message, args, ctx) {
@@ -43,7 +45,7 @@ async function handleReactionRole(message, args, ctx) {
     if (role.position >= message.guild.members.me.roles.highest.position)
       return message.reply({ embeds: [errorEmbed("That role is higher than my highest role — I can't assign it.")] });
 
-    await target.react(emoji.raw).catch(() => null);
+    await safe.react(target, emoji.raw, "prefix reaction role add");
     roles.addReactionRole(message.guild.id, messageId, emoji.key, role.id);
     return message.reply({ embeds: [successEmbed(`Bound ${emoji.raw} → ${role} on message \`${messageId}\`.`)], allowedMentions: { parse: [] } });
   }
@@ -101,11 +103,11 @@ module.exports = [
       }
       // add
       const role = interaction.options.getRole("role");
-      const target = await interaction.channel.messages.fetch(messageId).catch(() => null);
+      const target = await safe.orNull(interaction.channel.messages.fetch(messageId), `slash reaction role fetch msg ${messageId}`);
       if (!target) return interaction.reply({ embeds: [errorEmbed("Message not found in this channel.")], ephemeral: true });
       if (role.position >= interaction.guild.members.me.roles.highest.position)
         return interaction.reply({ embeds: [errorEmbed("That role is higher than my highest role.")], ephemeral: true });
-      await target.react(emoji.raw).catch(() => null);
+      await safe.react(target, emoji.raw, "slash reaction role add reaction");
       roles.addReactionRole(interaction.guild.id, messageId, emoji.key, role.id);
       return interaction.reply({ embeds: [successEmbed(`Bound ${emoji.raw} → ${role}.`)], ephemeral: true, allowedMentions: { parse: [] } });
     },

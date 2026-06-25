@@ -1,4 +1,5 @@
 const { EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder } = require("discord.js");
+const safe = require("../safe");
 const { isAuthorized, noPermEmbed, errorEmbed } = require("../utils");
 
 // Builds a word-boundary regex for the search term.
@@ -32,7 +33,7 @@ async function runScrape(message, reply, editReply, channel, guild, authorUserna
         const fetchLimit = Math.min(100, limit - channelCount);
         const options    = { limit: fetchLimit };
         if (lastId) options.before = lastId;
-        const fetched = await ch.messages.fetch(options).catch(() => null);
+        const fetched = await safe.orNull(ch.messages.fetch(options), `scrape fetch msgs in #${ch.name}`);
         if (!fetched || fetched.size === 0) break;
         fetched.forEach(msg => {
           if (!msg.author || msg.author.bot || msg.system || !msg.content) return;
@@ -51,12 +52,12 @@ async function runScrape(message, reply, editReply, channel, guild, authorUserna
 
     channelsDone++;
     if (channelsDone % 5 === 0 || channelsDone === channels.size) {
-      await editReply({ embeds: [new EmbedBuilder().setColor(0xfee75c).setTitle("🔍 Scraping Server...").setDescription(`Searching for: \`${displayText}\`\n\n**Channels:** ${channelsDone} / ${channels.size} done\n**Messages scanned:** ${totalScanned.toLocaleString()}\n**Unique users found so far:** ${foundUsers.size}`)] }).catch(() => null);
+      safe.orNull(editReply({ embeds: [new EmbedBuilder().setColor(0xfee75c).setTitle("🔍 Scraping Server...").setDescription(`Searching for: \`${displayText}\`\n\n**Channels:** ${channelsDone} / ${channels.size} done\n**Messages scanned:** ${totalScanned.toLocaleString()}\n**Unique users found so far:** ${foundUsers.size}`)] }), "scrape progress");
     }
   }
 
   if (foundUsers.size === 0) {
-    return editReply({ embeds: [new EmbedBuilder().setColor(0xed4245).setTitle("📜 No Results Found").setDescription(`Nobody was found saying \`${displayText}\` as a standalone word across **${channels.size}** channels (${totalScanned.toLocaleString()} messages scanned).`).setFooter({ text: `Requested by ${authorUsername}` })] }).catch(() => null);
+    return safe.orNull(editReply({ embeds: [new EmbedBuilder().setColor(0xed4245).setTitle("📜 No Results Found").setDescription(`Nobody was found saying \`${displayText}\` as a standalone word across **${channels.size}** channels (${totalScanned.toLocaleString()} messages scanned).`).setFooter({ text: `Requested by ${authorUsername}` })] }), "scrape no results");
   }
 
   const lines = Array.from(foundUsers.entries()).map(([id, data], index) =>
@@ -87,8 +88,8 @@ async function runScrape(message, reply, editReply, channel, guild, authorUserna
   let first = true;
   for (let i = 0; i < embeds.length; i += BATCH) {
     const batch = embeds.slice(i, i + BATCH);
-    if (first) { await editReply({ embeds: batch }).catch(() => null); first = false; }
-    else        { await channel.send({ embeds: batch }).catch(() => null); }
+    if (first) { await safe.orNull(editReply({ embeds: batch }), "scrape results first"); first = false; }
+    else        { await safe.send(channel, { embeds: batch }, "scrape results batch"); }
   }
 }
 

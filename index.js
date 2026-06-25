@@ -3,15 +3,22 @@ const fs   = require("fs");
 const path = require("path");
 require("dotenv").config();
 
+const db       = require("./src/db");
 const data     = require("./src/data");
 const utils    = require("./src/utils");
 const settings = require("./src/settings");
 const features = require("./src/features");
 const config   = require("./src/config");
-const automod  = require("./src/automod");
-const greet    = require("./src/greet");
-const roles    = require("./src/roles");
+const automod     = require("./src/automod");
+const greet       = require("./src/greet");
+const roles       = require("./src/roles");
+const dangerzone  = require("./src/dangerzone");
 const { loadModule, MODULES_DIR, ensureModulesDir } = require("./src/commands/modules");
+const aiMemory    = require("./src/ai/memory");
+const autoexec    = require("./src/autoexec");
+const safe        = require("./src/safe");
+const roletracker = require("./src/roletracker");
+const femboyify   = require("./src/femboyify");
 
 // ─── Command loading
 // commandMap: name -> { prefix, execute, _dynamic? }
@@ -44,6 +51,7 @@ const COMMAND_FILES = [
   "./src/commands/config",
   "./src/commands/reactionrole",
   "./src/commands/autorole",
+  "./src/commands/dangerzone",
 ];
 for (const file of COMMAND_FILES) {
   const defs = require(file);
@@ -61,7 +69,7 @@ for (const file of moduleFiles) {
 }
 
 // ─── ctx passed to every handler
-const ctx = { client: null, data, utils, commandMap, slashMap, config, features, automod, greet, roles };
+const ctx = { client: null, data, utils, commandMap, slashMap, slashDefs, config, features, automod, greet, roles, dangerzone, autoexec, roletracker, femboyify };
 
 // ─── Central access control: category toggle + per-command config.
 // Returns { ok } or { ok:false, reason, remain?, cfg }.
@@ -115,6 +123,37 @@ client.on("messageCreate", async message => {
     if (await automod.checkMessage(message)) return;
   } catch (err) { console.error("Automod error:", err.message); }
 
+  // Dangerzone: if the channel is a trap, punish and stop.
+  try {
+    if (await dangerzone.checkMessage(message)) return;
+  } catch (err) { console.error("Dangerzone error:", err.message); }
+
+  // Auto-exec: fire any rules triggered by the "message" event (only if guild has rules)
+  if (autoexec.hasRules(message.guild.id)) {
+    try {
+      await autoexec.executeTrigger(message.guild.id, "message", {
+        guild: message.guild,
+        user: message.author,
+        member: message.member,
+        username: message.author.username,
+        userId: message.author.id,
+        message,
+        content: message.content,
+        channel: message.channel,
+      });
+    } catch (err) { console.error("Autoexec message error:", err.message); }
+  }
+
+  // Maintenance mode — block AI + commands for non-owners
+  const mm = settings.get("maintenanceMode");
+  if ((mm === true || mm === "true") && !utils.isOwner(message.author.id)) {
+    if (message.content.startsWith(utils.PREFIX)) {
+      const mainMsg = settings.get("maintenanceMessage") || "🔧 The bot is currently under maintenance. Please try again later.";
+      safe.reply(message, { embeds: [utils.errorEmbed(mainMsg)] }, "maintenance mode");
+    }
+    return;
+  }
+
   if (data.stickies[message.channel.id] && message.id !== data.stickies[message.channel.id]?.messageId) {
     await handleStickyRepost(message.channel, data);
   }
@@ -136,7 +175,7 @@ client.on("messageCreate", async message => {
     if (!access.ok) {
       // Stay quiet for disabled/category/unknown to avoid spam; tell the user for perm/channel/cooldown.
       if (access.reason === "permission" || access.reason === "channel" || access.reason === "cooldown") {
-        message.reply({ embeds: [utils.errorEmbed(denyMessage(access.reason, access.remain))] }).catch(() => null);
+        safe.reply(message, { embeds: [utils.errorEmbed(denyMessage(access.reason, access.remain))] }, "access denied message");
       }
       return;
     }
@@ -144,7 +183,7 @@ client.on("messageCreate", async message => {
       await handler.prefix(message, args, ctx);
     } catch (err) {
       console.error(`Error executing command ${command}:`, err);
-      message.reply({ embeds: [utils.errorEmbed("An unexpected error occurred.")] }).catch(() => null);
+      safe.reply(message, { embeds: [utils.errorEmbed("An unexpected error occurred.")] }, "command error");
     }
   }
 });
@@ -161,6 +200,15 @@ client.on("interactionCreate", async interaction => {
     }
     // Slash commands
     if (interaction.isChatInputCommand()) {
+      // Maintenance mode — block slash commands for non-owners
+      const mm = settings.get("maintenanceMode");
+      if ((mm === true || mm === "true") && !utils.isOwner(interaction.user.id)) {
+        const mainMsg = settings.get("maintenanceMessage") || "🔧 The bot is currently under maintenance. Please try again later.";
+        return interaction.reply({
+          embeds: [utils.errorEmbed(mainMsg)],
+          ephemeral: true,
+        });
+      }
       const execute = slashMap.get(interaction.commandName);
       if (!execute) return;
       const def = commandMap.get(interaction.commandName);
@@ -198,9 +246,9 @@ async function logReaction(reaction, user, added) {
   if (user.bot) return;
 
   // Hydrate partials so we always have full emoji/message/author data.
-  if (reaction.partial) { if (!await reaction.fetch().catch(() => null)) return; }
+  if (reaction.partial) { if (!await safe.orNull(reaction.fetch(), "fetch partial reaction")) return; }
   let msg = reaction.message;
-  if (msg.partial) { msg = await msg.fetch().catch(() => null); if (!msg) return; }
+  if (msg.partial) { msg = await safe.orNull(msg.fetch(), "fetch partial message for reaction log"); if (!msg) return; }
 
   const guild = msg.guild; if (!guild) return;
   const entry = data.reactionlogs[guild.id]; if (!entry) return;
@@ -245,35 +293,60 @@ async function logReaction(reaction, user, added) {
 
   if (imageUrl) embed.setThumbnail(imageUrl);
 
-  ch.send({ embeds: [embed] }).catch(() => null);
+  safe.send(ch, { embeds: [embed] }, "reaction log");
 }
 
 client.on("messageReactionAdd", (reaction, user) => {
   logReaction(reaction, user, true);
-  roles.onReaction(reaction, user, true).catch(() => null);
+  roles.onReaction(reaction, user, true).catch(err => console.error("[safe] reaction role add:", err.message));
 });
 client.on("messageReactionRemove", (reaction, user) => {
   logReaction(reaction, user, false);
-  roles.onReaction(reaction, user, false).catch(() => null);
+  roles.onReaction(reaction, user, false).catch(err => console.error("[safe] reaction role remove:", err.message));
 });
 
 // ─── Welcome / leave / audit logs / autorole
 client.on("guildMemberAdd",    member => {
   greet.onMemberAdd(member).catch(err => console.error("greet add:", err.message));
   roles.onMemberAdd(member).catch(err => console.error("autorole:", err.message));
+  // Auto-exec: fire any rules triggered by the "join" event
+  autoexec.executeTrigger(member.guild.id, "join", {
+    guild: member.guild,
+    user: member.user,
+    member,
+    username: member.user.username,
+    userId: member.id,
+  }).catch(err => console.error("autoexec join:", err.message));
 });
-client.on("guildMemberRemove", member => greet.onMemberRemove(member).catch(err => console.error("greet remove:", err.message)));
-client.on("messageDelete",     message => greet.onMessageDelete(message).catch(() => null));
-client.on("messageUpdate",     (oldMsg, newMsg) => greet.onMessageUpdate(oldMsg, newMsg).catch(() => null));
+client.on("guildMemberRemove", member => {
+  greet.onMemberRemove(member).catch(err => console.error("greet remove:", err.message));
+  // Auto-exec: fire any rules triggered by the "leave" event
+  autoexec.executeTrigger(member.guild.id, "leave", {
+    guild: member.guild,
+    user: member.user,
+    username: member.user.username,
+    userId: member.id,
+  }).catch(err => console.error("autoexec leave:", err.message));
+});
+client.on("messageDelete",     message => greet.onMessageDelete(message).catch(err => console.error("[safe] greet.onMessageDelete:", err.message)));
+client.on("messageUpdate",     (oldMsg, newMsg) => greet.onMessageUpdate(oldMsg, newMsg).catch(err => console.error("[safe] greet.onMessageUpdate:", err.message)));
+
+// ─── Live role tracker — auto-edits tracked role-list messages on role changes
+// ─── Femboyify nickname lock — reverts manual nickname changes
+client.on("guildMemberUpdate", (oldMember, newMember) => {
+  try {
+    roletracker.handleRoleUpdate(oldMember, newMember);
+  } catch (err) {
+    console.error("[roletracker] guildMemberUpdate error:", err.message);
+  }
+  try {
+    femboyify.handleNicknameUpdate(oldMember, newMember);
+  } catch (err) {
+    console.error("[femboyify] guildMemberUpdate error:", err.message);
+  }
+});
 
 client.once("ready", async () => {
-  settings.load();
-  settings.hydrateAiKeysFromEnv();
-  data.load();
-  config.load();
-  automod.load();
-  greet.load();
-  roles.load();
   ctx.client = client;
   console.log(`Logged in as ${client.user.tag}`);
   client.user.setActivity(`${settings.get("prefix")}help | mambo`, { type: 3 });
@@ -287,11 +360,11 @@ client.once("ready", async () => {
     console.error("Failed to register slash commands:", err);
   }
 
-  // Start the web dashboard (non-fatal if it fails)
+  // Start the public HTTP API that the (separately hosted) dashboard talks to.
   try {
-    require("./src/dashboard/server").startDashboard(ctx);
+    require("./src/api/server").startApi(ctx);
   } catch (err) {
-    console.error("Failed to start dashboard:", err);
+    console.error("Failed to start bot API:", err);
   }
 });
 
@@ -299,4 +372,67 @@ process.on("unhandledRejection", error => {
   console.error("Unhandled promise rejection:", error);
 });
 
-client.login(process.env.BOT_TOKEN);
+// ─── Graceful shutdown ────────────────────────────────────────────────
+async function shutdown(signal) {
+  console.log(`\n[shutdown] ${signal} received — shutting down gracefully...`);
+  try {
+    // Stop timers
+    const automod = require("./src/automod");
+    automod.stopSpamCleanup();
+    try {
+      const mod = require("./src/commands/mod");
+      if (typeof mod.stopProbationCleanup === "function") mod.stopProbationCleanup();
+    } catch { /* best-effort */ }
+  } catch { /* best-effort */ }
+  try {
+    // Destroy Discord client
+    await client.destroy();
+    console.log("[shutdown] Discord client destroyed.");
+  } catch (err) { console.error("[shutdown] Error destroying client:", err.message); }
+  try {
+    // Close SQLite
+    const db = require("./src/db");
+    db.close();
+    console.log("[shutdown] SQLite connection closed.");
+  } catch (err) { console.error("[shutdown] Error closing DB:", err.message); }
+  console.log("[shutdown] Goodbye.");
+  process.exit(0);
+}
+
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+
+// ─── Bootstrap: initialize SQLite + hydrate all in-memory caches BEFORE
+// connecting to Discord, so the first event is never served against empty state.
+(async () => {
+  try {
+    await db.init();
+    await Promise.all([
+      settings.load(),
+      data.load(),
+      config.load(),
+      automod.load(),
+      greet.load(),
+      roles.load(),
+      dangerzone.load(),
+      aiMemory.load(),
+      autoexec.load(),
+      roletracker.load(),
+      femboyify.load(),
+    ]);
+    settings.hydrateAiKeysFromEnv();
+    // Start probation cleanup timer
+    try {
+      const mod = require("./src/commands/mod");
+      if (typeof mod.setClient === "function") mod.setClient(client);
+      if (typeof mod.startProbationCleanup === "function") mod.startProbationCleanup();
+      console.log("[probation] cleanup timer started");
+    } catch (err) {
+      console.error("[probation] failed to start cleanup:", err.message);
+    }
+  } catch (err) {
+    console.error("Fatal: failed to initialize data layer:", err);
+    process.exit(1);
+  }
+  client.login(process.env.BOT_TOKEN);
+})();

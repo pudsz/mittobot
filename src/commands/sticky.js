@@ -1,4 +1,5 @@
 const { EmbedBuilder, SlashCommandBuilder } = require("discord.js");
+const safe = require("../safe");
 const { isAuthorized, noPermEmbed, errorEmbed, successEmbed } = require("../utils");
 
 function stickyEmbed(text, pinnedBy) {
@@ -8,8 +9,8 @@ function stickyEmbed(text, pinnedBy) {
 async function repostSticky(channel, data) {
   const entry = data.stickies[channel.id]; if (!entry) return;
   if (entry.messageId) {
-    const old = await channel.messages.fetch(entry.messageId).catch(() => null);
-    if (old) await old.delete().catch(() => null);
+    const old = await safe.orNull(channel.messages.fetch(entry.messageId), "sticky: fetch old");
+    if (old) await safe.delete(old, "sticky: delete old");
   }
   const msg = await channel.send({ embeds: [stickyEmbed(entry.text, entry.pinnedBy)] });
   entry.messageId = msg.id;
@@ -18,9 +19,16 @@ async function repostSticky(channel, data) {
 
 const stickyDebounce = new Map();
 
+function clearStickyDebounce(channelId) {
+  if (stickyDebounce.has(channelId)) {
+    clearTimeout(stickyDebounce.get(channelId));
+    stickyDebounce.delete(channelId);
+  }
+}
+
 async function handleStickyRepost(channel, data) {
   if (!data.stickies[channel.id]) return;
-  if (stickyDebounce.has(channel.id)) clearTimeout(stickyDebounce.get(channel.id));
+  clearStickyDebounce(channel.id);
   stickyDebounce.set(channel.id, setTimeout(async () => {
     stickyDebounce.delete(channel.id);
     await repostSticky(channel, data).catch(console.error);
@@ -37,14 +45,11 @@ async function prefixSticky(message, args, ctx) {
     await repostSticky(message.channel, data);
     await message.reply({ embeds: [successEmbed("Sticky set.")] });
   } else if (sub === "remove" || sub === "clear") {
-    if (stickyDebounce.has(message.channel.id)) {
-      clearTimeout(stickyDebounce.get(message.channel.id));
-      stickyDebounce.delete(message.channel.id);
-    }
+    clearStickyDebounce(message.channel.id);
     const entry = data.stickies[message.channel.id];
     if (entry?.messageId) {
-      const old = await message.channel.messages.fetch(entry.messageId).catch(() => null);
-      if (old) await old.delete().catch(() => null);
+      const old = await safe.orNull(message.channel.messages.fetch(entry.messageId), "sticky: fetch old to remove");
+      if (old) await safe.delete(old, "sticky: delete old on remove");
     }
     delete data.stickies[message.channel.id];
     data.saveStickies();
@@ -64,14 +69,11 @@ async function slashSticky(interaction, ctx) {
     await repostSticky(interaction.channel, data);
     await interaction.reply({ embeds: [successEmbed("Sticky set.")], ephemeral: true });
   } else {
-    if (stickyDebounce.has(interaction.channel.id)) {
-      clearTimeout(stickyDebounce.get(interaction.channel.id));
-      stickyDebounce.delete(interaction.channel.id);
-    }
+    clearStickyDebounce(interaction.channel.id);
     const entry = data.stickies[interaction.channel.id];
     if (entry?.messageId) {
-      const old = await interaction.channel.messages.fetch(entry.messageId).catch(() => null);
-      if (old) await old.delete().catch(() => null);
+      const old = await safe.orNull(interaction.channel.messages.fetch(entry.messageId), "sticky: fetch old slash");
+      if (old) await safe.delete(old, "sticky: delete old slash");
     }
     delete data.stickies[interaction.channel.id];
     data.saveStickies();

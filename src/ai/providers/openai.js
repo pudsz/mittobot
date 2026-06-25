@@ -28,8 +28,19 @@ async function listModels(apiKey) {
   return ids.length ? ids : DEFAULT_MODELS;
 }
 
-async function chat(messages, { apiKey, model }) {
+async function chat(messages, { apiKey, model, temperature, maxTokens, topP, tools }) {
   if (!apiKey) throw new Error("OpenAI API key is not configured.");
+
+  const body = {
+    model: model || DEFAULT_MODELS[0],
+    messages,
+    max_completion_tokens: maxTokens || 1024,
+    temperature: temperature !== undefined ? temperature : 0.7,
+  };
+  if (topP !== undefined) body.top_p = topP;
+  if (tools && tools.length > 0) {
+    body.tools = tools;
+  }
 
   const res = await fetch(OPENAI_URL, {
     method: "POST",
@@ -37,22 +48,25 @@ async function chat(messages, { apiKey, model }) {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      model: model || DEFAULT_MODELS[0],
-      messages,
-      max_completion_tokens: 1024,
-      temperature: 0.7,
-    }),
+    body: JSON.stringify(body),
   });
 
-  const body = await res.json().catch(() => ({}));
+  const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(body?.error?.message || `OpenAI API error (${res.status})`);
+    throw new Error(data?.error?.message || `OpenAI API error (${res.status})`);
   }
 
-  const content = body?.choices?.[0]?.message?.content;
-  if (!content) throw new Error("Empty response from OpenAI.");
-  return content.trim();
+  const msg = data?.choices?.[0]?.message;
+  if (!msg) throw new Error("Empty response from OpenAI.");
+
+  return {
+    text: msg.content || "",
+    toolCalls: msg.tool_calls ? msg.tool_calls.map(tc => ({
+      id: tc.id,
+      name: tc.function.name,
+      args: JSON.parse(tc.function.arguments)
+    })) : undefined
+  };
 }
 
 module.exports = {

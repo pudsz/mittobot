@@ -1,0 +1,47 @@
+# ─── ggboi bot systemd service ───────────────────────────────────────────
+# Install:
+#   sudo cp scripts/ggboi-bot.service /etc/systemd/system/ggboi-bot.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable ggboi-bot
+#   sudo systemctl start ggboi-bot
+#
+# View logs:
+#   sudo journalctl -u ggboi-bot -f
+
+[Unit]
+Description=ggboi Discord Bot
+Documentation=https://github.com/your-repo/ggboi
+After=network.target
+
+[Service]
+Type=simple
+
+# Run as a non-root user. Create one with:
+#   sudo useradd -r -s /bin/false ggboi-bot
+User=ggboi-bot
+Group=ggboi-bot
+
+WorkingDirectory=/opt/ggboi
+
+# Load environment variables from .env
+EnvironmentFile=/opt/ggboi/.env
+Environment=NODE_ENV=production
+
+ExecStart=/usr/bin/node /opt/ggboi/index.js
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# ── Security hardening ──
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/ggboi /opt/ggboi/logs
+
+# Memory/resource limits
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

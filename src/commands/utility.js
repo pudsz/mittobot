@@ -1,4 +1,5 @@
-const { EmbedBuilder, SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
+const { EmbedBuilder, SlashCommandBuilder, PermissionFlagsBits, REST, Routes } = require("discord.js");
+const safe = require("../safe");
 const utils = require("../utils");
 const { MAX_PURGE, isAuthorized, noPermEmbed, errorEmbed, successEmbed } = utils;
 
@@ -16,13 +17,13 @@ async function prefixHelp(message, args, ctx) {
     .setTitle("📖 Bot Commands")
     .setDescription("Here are the available commands:")
     .addFields(
-      { name: "🛠️ Utility",      value: "`$help`, `$ping`, `$purge <amount>`, `$sticky <set/remove>`, `$reactionlog <set/remove>`, `$afk [reason]`" },
-      { name: "ℹ️ Info",          value: "`$userinfo`, `$serverinfo`, `$roleinfo`, `$avatar`, `$membercount`, `$botinfo`" },
+      { name: "🛠️ Utility",      value: "`$help`, `$ping`, `$purge <amount>`, `$sticky <set/remove>`, `$reactionlog <set/remove>`, `$afk [reason]`, `$reregister`" },
+      { name: "ℹ️ Info",          value: "`$userinfo`, `$serverinfo`, `$roleinfo`, `$whohas <permission>`, `$avatar`, `$membercount`, `$botinfo`, `$listroles <@role> [@role...]`" },
       { name: "🎉 Fun",          value: "`$8ball`, `$coinflip`, `$roll`, `$rps`, `$choose`, `$ship`, `$meme`, `$joke`, `$dadjoke`, `$cat`, `$dog`, `$reverse`, `$mock`, `$pp`, `$iq`, `$howgay`" },
       { name: "🔍 Scrape",       value: ["`$scrapemessage <amount> <text>`", "Searches the last `<amount>` messages **across every channel** in the server (max 5,000 per channel).", "Lists every user who said `<text>` as a standalone word with a direct jump link.", "Example: `$scrapemessage 500 nig`"].join("\n") },
       { name: "🎨 Custom Roles", value: ['`$customrole create @user "Name" normal #FF0000`', '`$customrole create @user "Name" gradient #FF0000 #0000FF`', '`$customrole create @user "Name" holographic`', "`$customrole remove [@user]` — removes a custom role", "`$customrole list` — lists all custom roles (Admin only)"].join("\n") },
       { name: "🎭 Fake Mod",     value: "`$warn`, `$kick`, `$ban`, `$mute`, `$timeout`, `$softban`, `$tempban`, `$lock`, `$slowmode`" },
-      { name: "🛡️ Real Mod",     value: "`$realwarn`, `$realkick`, `$realban`, `$realmute`, `$reallock`, `$realslowmode`" },
+      { name: "🛡️ Real Mod",     value: "`$realwarn`, `$realkick`, `$realban`, `$realmute`, `$reallock`, `$realslowmode`, `$syncperms`" },
       { name: "🧩 Modules",      value: "`$modules create <name>`, `$modules delete <name>`, `$modules list`, `$modules reload <name>`" },
       { name: "⚙️ Config",        value: "`$config <command> [enable/disable/perm/cooldown/allow/block/reset]` — customize any command" },
       { name: "🪄 Roles",        value: "`$autorole add/remove <@role>`, `$reactionrole add <msgId> <emoji> <@role>`" },
@@ -62,9 +63,9 @@ async function prefixPurge(message, args, ctx) {
     return message.reply({ embeds: [errorEmbed(`Provide a number between 1 and ${MAX_PURGE}`)] });
   try {
     const deleted = await message.channel.bulkDelete(amount, true);
-    await message.delete().catch(() => null);
+    await safe.delete(message, "purge command");
     const confirm = await message.channel.send({ embeds: [successEmbed(`Deleted ${deleted.size} messages.`)] });
-    setTimeout(() => confirm.delete().catch(() => null), 4000);
+    setTimeout(() => safe.delete(confirm, "purge confirmation"), 4000);
   } catch (err) {
     console.error(err);
     await message.channel.send({ embeds: [errorEmbed(`Failed: ${err.message}`)] });
@@ -95,9 +96,9 @@ async function prefixAfk(message, args, ctx) {
   const { data } = ctx;
   data.afkUsers[message.author.id] = { reason: args.join(" ") || "AFK", since: Date.now(), guildId: message.guild.id };
   data.saveAfk();
-  await message.delete().catch(() => null);
+  await safe.delete(message, "afk command");
   const c = await message.channel.send(`👋 ${message.author} I set your AFK: **${args.join(" ") || "AFK"}**`);
-  setTimeout(() => c.delete().catch(() => null), 5000);
+  setTimeout(() => safe.delete(c, "afk confirmation"), 5000);
 }
 
 async function slashAfk(interaction, ctx) {
@@ -115,14 +116,36 @@ async function handleAfkChecks(message, ctx) {
     delete data.afkUsers[message.author.id];
     data.saveAfk();
     const back = await message.channel.send(`👋 Welcome back ${message.author}, I removed your AFK.`);
-    setTimeout(() => back.delete().catch(() => null), 5000);
+    setTimeout(() => safe.delete(back, "afk welcome back"), 5000);
   }
   for (const [userId, user] of message.mentions.users) {
     if (userId === message.author.id) continue;
     const entry = data.afkUsers[userId]; if (!entry) continue;
     if (entry.guildId && entry.guildId !== message.guild.id) continue;
-    const member = await message.guild.members.fetch(userId).catch(() => null);
+    const member = await safe.orNull(message.guild.members.fetch(userId), `afk check fetch member ${userId}`);
     await message.channel.send(`💤 **${member?.displayName ?? user.username}** is AFK: ${entry.reason} — ${timeAgo(entry.since)}`);
+  }
+}
+
+// ─── Reregister (re-register slash commands) ──────────────────────────────
+async function prefixReregister(message, args, ctx) {
+  const { slashDefs, client } = ctx;
+  if (!slashDefs || slashDefs.length === 0) {
+    return message.reply({ embeds: [errorEmbed("No slash commands to register.")] });
+  }
+  if (!client?.user) {
+    return message.reply({ embeds: [errorEmbed("Bot is not ready yet.")] });
+  }
+  const status = await message.reply({ embeds: [new EmbedBuilder().setColor(0xfee75c).setDescription(`⏳ Registering **${slashDefs.length}** slash commands globally...`)] });
+
+  try {
+    const rest = new REST().setToken(process.env.BOT_TOKEN);
+    const body = slashDefs.map(s => s.toJSON());
+    await rest.put(Routes.applicationCommands(client.user.id), { body });
+    await status.edit({ embeds: [new EmbedBuilder().setColor(0x00c776).setDescription(`✅ Registered **${slashDefs.length}** slash commands globally. It may take a few minutes for Discord to propagate the changes.`)] });
+  } catch (err) {
+    console.error("Reregister error:", err);
+    await status.edit({ embeds: [errorEmbed(`Failed: ${err.message}`)] });
   }
 }
 
@@ -204,6 +227,12 @@ module.exports = [
       .addStringOption(o => o.setName("action").setDescription("set or remove").setRequired(true).addChoices({ name: "set", value: "set" }, { name: "remove", value: "remove" }))
       .addChannelOption(o => o.setName("channel").setDescription("Channel to log to").setRequired(false)),
     execute: slashReactionLog,
+  },
+  {
+    name: "reregister",
+    description: "Re-register all slash commands globally",
+    defaultPermission: "owner",
+    prefix: prefixReregister,
   },
 ];
 

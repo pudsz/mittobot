@@ -1,0 +1,31 @@
+# ─── ggboi production stack ──────────────────────────────────────────────
+# Deploys the bot (SQLite-backed) ready for the dashboard on Vercel.
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Requires a .env file in the same directory with:
+#   BOT_TOKEN, DASHBOARD_PASSWORD, DASHBOARD_JWT_SECRET, DASHBOARD_ORIGIN
+#
+# For HTTPS, put this behind a reverse proxy (nginx, Caddy, or Traefik)
+# on the host. See docs/deploy.md for a full guide.
+
+services:
+  bot:
+    build: .
+    container_name: ggboi-bot
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:3001"   # bind to localhost only — proxy handles public traffic
+    env_file:
+      - .env
+    environment:
+      # Use a persistent path for the SQLite database inside the volume
+      - SQLITE_DB_PATH=/data/ggboi.sqlite
+    volumes:
+      - ggboi-data:/data
+      # Hot-reload modules from host during dev; comment out in stable prod
+      # - ./modules:/app/modules
+
+volumes:
+  ggboi-data:
