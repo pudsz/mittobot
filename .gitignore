@@ -6,6 +6,7 @@ bot.db
 bot.db-journal
 *.bak
 *.json.bak
+*.deb
 
 # Dashboard (Vite app) build/deps
 dashboard/node_modules/
