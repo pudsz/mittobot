@@ -22,7 +22,9 @@ export default function SettingsTab({ onReset }) {
   async function saveSetting(key) {
     setSaving(key);
     try {
-      await api("POST", "/api/settings", { key, value: values[key] });
+      // Booleans are sent as "true"/"false" strings (the API normalises them back)
+      const val = values[key];
+      await api("POST", "/api/settings", { key, value: typeof val === "boolean" ? String(val) : val });
       toast("Saved " + key);
     } catch (e) { toast(e.message, true); } finally { setSaving(null); }
   }
@@ -69,18 +71,23 @@ export default function SettingsTab({ onReset }) {
               <div className="muted" style={{ fontSize: 13 }}>When enabled, all commands and AI responses are blocked. Only bot owners can use the bot.</div>
             </div>
             <Toggle
-              checked={values.maintenanceMode === "true" || values.maintenanceMode === true}
-              onChange={(checked) => { setValues({ ...values, maintenanceMode: String(checked) }); setTimeout(() => saveSetting("maintenanceMode"), 0); }}
+              checked={values.maintenanceMode === true}
+              onChange={(checked) => { setValues({ ...values, maintenanceMode: checked }); setTimeout(() => saveSetting("maintenanceMode"), 0); }}
             />
           </div>
-          {(values.maintenanceMode === "true" || values.maintenanceMode === true) && (
+          {(values.maintenanceMode === true) && (
             <div>
               <label style={{ fontSize: 13, marginBottom: 4, display: "block" }}>Custom Maintenance Message</label>
               <div className="row">
-                <input value={values.maintenanceMessage || ""} onChange={(e) => setValues({ ...values, maintenanceMessage: e.target.value })} placeholder="🔧 The bot is currently under maintenance. Please try again later." style={{ flex: 1 }} />
-                <button className="btn" onClick={() => saveSetting("maintenanceMessage")} disabled={saving === "maintenanceMessage"}><Check />{saving === "maintenanceMessage" ? "Saving..." : "Save"}</button>
+                <input
+                  value={values.maintenanceMessage || ""}
+                  onChange={(e) => setValues({ ...values, maintenanceMessage: e.target.value })}
+                  onBlur={() => { if (values.maintenanceMessage !== undefined) saveSetting("maintenanceMessage"); }}
+                  placeholder="🔧 The bot is currently under maintenance. Please try again later."
+                  style={{ flex: 1 }}
+                />
               </div>
-              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>This message will be shown to users when they try to use commands during maintenance.</div>
+              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>This message will be shown to users when they try to use commands during maintenance. Auto-saves when you click away.</div>
             </div>
           )}
         </div>

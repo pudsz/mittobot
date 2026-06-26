@@ -238,6 +238,40 @@ function init() {
       name    TEXT NOT NULL,
       prompt  TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS scheduled_messages (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id      TEXT NOT NULL,
+      channel_id    TEXT NOT NULL,
+      content       TEXT NOT NULL,
+      embed_json    TEXT,
+      scheduled_at  TEXT NOT NULL,
+      recurrence    TEXT,
+      enabled       INTEGER DEFAULT 1,
+      created_by    TEXT,
+      last_sent_at  TEXT
+    );
+    CREATE INDEX IF NOT EXISTS sched_guild ON scheduled_messages (guild_id, enabled);
+
+    CREATE TABLE IF NOT EXISTS server_backups (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id    TEXT NOT NULL,
+      name        TEXT NOT NULL,
+      data        TEXT NOT NULL,
+      created_at  TEXT NOT NULL,
+      created_by  TEXT
+    );
+    CREATE INDEX IF NOT EXISTS backup_guild ON server_backups (guild_id);
+
+    CREATE TABLE IF NOT EXISTS economy_users (
+      guild_id   TEXT NOT NULL,
+      user_id    TEXT NOT NULL,
+      balance    INTEGER DEFAULT 0,
+      bank       INTEGER DEFAULT 0,
+      last_daily BIGINT DEFAULT 0,
+      last_work  BIGINT DEFAULT 0,
+      PRIMARY KEY (guild_id, user_id)
+    );
   `);
 
   // Migrations for columns added after initial table creation
@@ -899,4 +933,92 @@ module.exports = {
   addPersonality,
   updatePersonality,
   deletePersonality,
+
+  // ── Scheduled Messages ───────────────────────────────────────────────────
+  async getScheduledMessages(guildId) {
+    return query("SELECT * FROM scheduled_messages WHERE guild_id = ? ORDER BY scheduled_at ASC", [guildId]);
+  },
+  async getAllScheduledMessages() {
+    return query("SELECT * FROM scheduled_messages WHERE enabled = 1 ORDER BY scheduled_at ASC");
+  },
+  async addScheduledMessage(guildId, channelId, content, scheduledAt, recurrence, createdBy, embedJson) {
+    const info = db.prepare(`
+      INSERT INTO scheduled_messages (guild_id, channel_id, content, embed_json, scheduled_at, recurrence, enabled, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+    `).run(guildId, channelId, content, embedJson || null, scheduledAt, recurrence || null, createdBy || null);
+    return info.lastInsertRowid;
+  },
+  async updateScheduledMessage(id, patch) {
+    const sets = [];
+    const vals = [];
+    const allowed = ["channel_id", "content", "embed_json", "scheduled_at", "recurrence", "enabled", "last_sent_at"];
+    for (const [k, v] of Object.entries(patch)) {
+      if (allowed.includes(k)) { sets.push(`${k} = ?`); vals.push(v); }
+    }
+    if (!sets.length) return;
+    vals.push(id);
+    db.prepare(`UPDATE scheduled_messages SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
+  },
+  async deleteScheduledMessage(id) {
+    db.prepare("DELETE FROM scheduled_messages WHERE id = ?").run(id);
+  },
+
+  // ── Server Backups ─────────────────────────────────────────────────────
+  async getBackups(guildId) {
+    return query("SELECT id, guild_id, name, created_at, created_by FROM server_backups WHERE guild_id = ? ORDER BY created_at DESC", [guildId]);
+  },
+  async getBackup(id) {
+    return get("SELECT * FROM server_backups WHERE id = ?", [id]);
+  },
+  async addBackup(guildId, name, data, createdBy) {
+    const info = db.prepare("INSERT INTO server_backups (guild_id, name, data, created_at, created_by) VALUES (?, ?, ?, ?, ?)").run(guildId, name, JSON.stringify(data), new Date().toISOString(), createdBy || null);
+    return info.lastInsertRowid;
+  },
+  async deleteBackup(id) {
+    db.prepare("DELETE FROM server_backups WHERE id = ?").run(id);
+  },
+
+  // ── Economy ─────────────────────────────────────────────────────────────
+  async getEconomyUser(guildId, userId) {
+    return get("SELECT * FROM economy_users WHERE guild_id = ? AND user_id = ?", [guildId, userId]);
+  },
+  async upsertEconomyUser(guildId, userId, balance, bank) {
+    db.prepare(`
+      INSERT INTO economy_users (guild_id, user_id, balance, bank)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(guild_id, user_id) DO UPDATE SET
+        balance = balance + excluded.balance,
+        bank = bank + excluded.bank
+    `).run(guildId, userId, balance || 0, bank || 0);
+  },
+  async setEconomyUser(guildId, userId, balance, bank, lastDaily, lastWork) {
+    db.prepare(`
+      INSERT INTO economy_users (guild_id, user_id, balance, bank, last_daily, last_work)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(guild_id, user_id) DO UPDATE SET
+        balance = excluded.balance,
+        bank = excluded.bank,
+        last_daily = excluded.last_daily,
+        last_work = excluded.last_work
+    `).run(guildId, userId, balance, bank, lastDaily || 0, lastWork || 0);
+  },
+  async transferMoney(guildId, fromId, toId, amount) {
+    return withTransaction(() => {
+      const from = db.prepare("SELECT balance, bank FROM economy_users WHERE guild_id = ? AND user_id = ?").get(guildId, fromId);
+      if (!from || from.balance < amount) return false;
+      db.prepare("UPDATE economy_users SET balance = balance - ? WHERE guild_id = ? AND user_id = ?").run(amount, guildId, fromId);
+      db.prepare(`
+        INSERT INTO economy_users (guild_id, user_id, balance, bank)
+        VALUES (?, ?, ?, 0)
+        ON CONFLICT(guild_id, user_id) DO UPDATE SET balance = balance + ?
+      `).run(guildId, toId, amount, amount);
+      return true;
+    })();
+  },
+  async getEconomyLeaderboard(guildId, limit = 10) {
+    return query(
+      "SELECT user_id, balance, bank, (balance + bank) as total FROM economy_users WHERE guild_id = ? ORDER BY total DESC LIMIT ?",
+      [guildId, limit]
+    );
+  },
 };

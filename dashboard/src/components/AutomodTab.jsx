@@ -8,6 +8,7 @@ import ChannelSelect from "./ChannelSelect.jsx";
 import DropdownSelect from "./DropdownSelect.jsx";
 import useGuildData from "../hooks/useGuildData.js";
 import useToggleSet from "../hooks/useToggleSet.js";
+import ErrorRetry from "./ErrorRetry.jsx";
 
 const AM_RULE_META = {
   invites: { label: "Anti-Invite", desc: "Delete Discord invite links.", fields: [] },
@@ -20,7 +21,7 @@ const AM_ACTIONS = ["delete", "warn", "mute"];
 
 export default function AutomodTab({ guildId }) {
   const toast = useToast();
-  const { data, loading } = useGuildData(guildId, "/api/automod");
+  const { data, loading, error, refetch } = useGuildData(guildId, "/api/automod");
 
   const [enabled, setEnabled] = useState(false);
   const [logChannelId, setLogChannelId] = useState("");
@@ -77,6 +78,16 @@ export default function AutomodTab({ guildId }) {
       <div className="tab active">
         <Panel><div className="skeleton skeleton-heading" /><div className="skeleton skeleton-text" /><div className="skeleton skeleton-text" style={{ width: "70%" }} /></Panel>
         <Panel>{[1, 2, 3].map((i) => <div className="skeleton skeleton-card" key={i} style={{ height: 60, marginBottom: 8 }} />)}</Panel>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="tab active">
+        <Panel>
+          <ErrorRetry message={error} onRetry={refetch} />
+        </Panel>
       </div>
     );
   }

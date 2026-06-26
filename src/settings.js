@@ -78,6 +78,8 @@ const DEFAULTS = {
   aiFallbackProviders:  "",   // comma-separated provider IDs, up to 5
   aiChattyMode:         false, // respond to conversations naturally without being pinged
   aiChattyCooldown:     60,    // seconds between responses in the same channel (chatty mode)
+  aiDmEnabled:          true,  // respond to direct messages via AI
+  aiBrowserEnabled:     true,  // enable Playwright-powered browse_page tool
   aiToolPermissions:    "",   // JSON map of tool name -> min perm level: {"warn_member":"mod","kick_member":"admin","ban_member":"admin","mute_member":"mod"}
   funEnabled:         true,
   infoEnabled:        true,
@@ -93,6 +95,12 @@ async function load() {
   try {
     const saved = await db.getGlobalSettings();
     _settings = { ...DEFAULTS, ...saved };
+    // Normalise stringified booleans that may have been stored by older
+    // dashboard versions or direct DB writes — avoids truthiness bugs.
+    for (const [k, v] of Object.entries(_settings)) {
+      if (v === "true") _settings[k] = true;
+      else if (v === "false") _settings[k] = false;
+    }
   } catch (e) {
     console.error("Failed to load settings from db:", e);
     _settings = { ...DEFAULTS };

@@ -6,6 +6,7 @@ import Panel from "./Panel.jsx";
 import DropdownSelect from "./DropdownSelect.jsx";
 import useGuildData from "../hooks/useGuildData.js";
 import useToggleSet from "../hooks/useToggleSet.js";
+import ErrorRetry from "./ErrorRetry.jsx";
 
 function ResultList({ title, icon: Icon, items }) {
   if (!items?.length) return null;
@@ -24,7 +25,7 @@ function ResultList({ title, icon: Icon, items }) {
 
 export default function ChannelsTab({ guildId }) {
   const toast = useToast();
-  const { data, loading, refetch } = useGuildData(guildId, "/api/channels");
+  const { data, loading, error, refetch } = useGuildData(guildId, "/api/channels");
 
   const [scope, setScope] = useState("category");
   const [categoryId, setCategoryId] = useState("");
@@ -90,6 +91,16 @@ export default function ChannelsTab({ guildId }) {
       <div className="tab active">
         <Panel><div className="skeleton skeleton-heading" /><div className="skeleton skeleton-text" /><div className="skeleton skeleton-text" style={{ width: "60%" }} /><div className="skeleton skeleton-card" style={{ height: 80 }} /></Panel>
         <Panel><div className="skeleton skeleton-heading" /><div className="skeleton skeleton-text" /><div className="skeleton skeleton-card" style={{ height: 100 }} /></Panel>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="tab active">
+        <Panel>
+          <ErrorRetry message={error} onRetry={refetch} />
+        </Panel>
       </div>
     );
   }

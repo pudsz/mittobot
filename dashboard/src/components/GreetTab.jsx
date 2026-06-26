@@ -6,6 +6,7 @@ import Toggle from "./Toggle.jsx";
 import Panel from "./Panel.jsx";
 import ChannelSelect from "./ChannelSelect.jsx";
 import useGuildData from "../hooks/useGuildData.js";
+import ErrorRetry from "./ErrorRetry.jsx";
 
 // Preview the message with placeholder substitution
 function previewText(text) {
@@ -20,7 +21,7 @@ function previewText(text) {
 
 export default function GreetTab({ guildId }) {
   const toast = useToast();
-  const { data, loading } = useGuildData(guildId, "/api/greet");
+  const { data, loading, error, refetch } = useGuildData(guildId, "/api/greet");
 
   const [welcome, setWelcome] = useState({
     enabled: false, channelId: "", message: "",
@@ -79,6 +80,16 @@ export default function GreetTab({ guildId }) {
         <Panel><div className="skeleton skeleton-heading" /><div className="skeleton skeleton-text" /><div className="skeleton skeleton-text" style={{ width: "60%" }} /></Panel>
         <Panel><div className="skeleton skeleton-heading" /><div className="skeleton skeleton-text" /><div className="skeleton skeleton-text" style={{ width: "50%" }} /></Panel>
         <Panel><div className="skeleton skeleton-heading" /><div className="skeleton skeleton-text" /><div className="skeleton skeleton-text" style={{ width: "70%" }} /></Panel>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="tab active">
+        <Panel>
+          <ErrorRetry message={error} onRetry={refetch} />
+        </Panel>
       </div>
     );
   }

@@ -6,10 +6,11 @@ import Panel from "./Panel.jsx";
 import DropdownSelect from "./DropdownSelect.jsx";
 import useGuildData from "../hooks/useGuildData.js";
 import useToggleSet from "../hooks/useToggleSet.js";
+import ErrorRetry from "./ErrorRetry.jsx";
 
 export default function RolesTab({ guildId }) {
   const toast = useToast();
-  const { data, loading } = useGuildData(guildId, "/api/roles");
+  const { data, loading, error, refetch } = useGuildData(guildId, "/api/roles");
   const [autoSel, toggleAuto, setAutoSel] = useToggleSet();
 
   // Sync autoroles from fetched data
@@ -40,6 +41,16 @@ export default function RolesTab({ guildId }) {
       <div className="tab active">
         <Panel><div className="skeleton skeleton-heading" /><div className="skeleton skeleton-text" /><div className="skeleton skeleton-text" style={{ width: "80%" }} /><div className="skeleton skeleton-text" style={{ width: "40%" }} /></Panel>
         <Panel><div className="skeleton skeleton-heading" /><div className="skeleton skeleton-text" /><div className="skeleton skeleton-text" style={{ width: "60%" }} /></Panel>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="tab active">
+        <Panel>
+          <ErrorRetry message={error} onRetry={refetch} />
+        </Panel>
       </div>
     );
   }

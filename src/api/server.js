@@ -546,14 +546,18 @@ function startApi(ctx) {
   });
 
   app.post("/api/settings", requireAuth, requireOwner, (req, res) => {
-    const { key, value } = req.body || {};
+    let { key, value } = req.body || {};
     if (typeof key !== "string" || !(key in settings.DEFAULTS))
       return res.status(400).json({ error: "Unknown setting key" });
     if (AI_SETTING_KEYS.has(key))
       return res.status(400).json({ error: "Use the AI tab to change this setting" });
     if (typeof value !== "string")
       return res.status(400).json({ error: "value must be a string" });
-    if (key === "prefix" && (value.length < 1 || value.length > 3))
+    // Normalise boolean-like strings to actual booleans so consumers
+    // don't have to write `mm === true || mm === "true"` everywhere.
+    if (value === "true") value = true;
+    else if (value === "false") value = false;
+    if (key === "prefix" && typeof value === "string" && (value.length < 1 || value.length > 3))
       return res.status(400).json({ error: "prefix must be 1–3 characters" });
     settings.set(key, value);
     res.json({ ok: true, settings: getBotSettings() });
@@ -1239,6 +1243,142 @@ function startApi(ctx) {
     }
   });
 
+  // ─── Server Backups ─────────────────────────────────────────────────────
+  app.get("/api/backup", requireAuth, async (req, res) => {
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (!guildInfo.guildId) return res.json({ backups: [] });
+    if (!userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    try {
+      const backupMod = require("../backup");
+      const rows = await backupMod.get(guildInfo.guildId);
+      // Return counts without full data JSON (for list view performance)
+      res.json({ backups: rows });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/backup", requireAuth, async (req, res) => {
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (!guildInfo.guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    if (!userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    const guild = resolveGuild(guildInfo.guildId);
+    if (!guild) return res.status(400).json({ error: "Guild not found" });
+    try {
+      const backupMod = require("../backup");
+      const name = (req.body?.name || `Backup ${new Date().toLocaleDateString()}`).slice(0, 100);
+      const result = await backupMod.create(guild, name, req.user.tag);
+      res.json({ ok: true, backup: result });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/backup/:id", requireAuth, async (req, res) => {
+    try {
+      const backupMod = require("../backup");
+      const entry = await backupMod.getById(parseInt(req.params.id, 10));
+      if (!entry) return res.status(404).json({ error: "Backup not found" });
+      // Verify guild access
+      const guildInfo = getGuildInfo(reqGuildId(req));
+      if (guildInfo.guildId && entry.guild_id !== guildInfo.guildId)
+        return res.status(403).json({ error: "You don't have access to this backup" });
+      if (guildInfo.guildId && !userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
+        return res.status(403).json({ error: "You don't have access to this guild" });
+      res.json({ backup: entry });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/backup/:id/restore", requireAuth, async (req, res) => {
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (!guildInfo.guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    if (!userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    const guild = resolveGuild(guildInfo.guildId);
+    if (!guild) return res.status(400).json({ error: "Guild not found" });
+    try {
+      const backupMod = require("../backup");
+      const entry = await backupMod.getById(parseInt(req.params.id, 10));
+      if (!entry) return res.status(404).json({ error: "Backup not found" });
+      const result = await backupMod.restoreGuild(guild, entry.data);
+      res.json({ ok: true, log: result.log.slice(0, 50), summary: result.summary });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/backup/:id", requireAuth, async (req, res) => {
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (!guildInfo.guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    if (!userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    try {
+      const backupMod = require("../backup");
+      await backupMod.remove(parseInt(req.params.id, 10));
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ─── Scheduled Messages ───────────────────────────────────────────────────
+  app.get("/api/schedule", requireAuth, (req, res) => {
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (!guildInfo.guildId) return res.json({ schedules: [], channels: [] });
+    if (!userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    const schedMod = require("../scheduler");
+    res.json({
+      schedules: schedMod.getForGuild(guildInfo.guildId),
+      channels: guildInfo.channels,
+      guildId: guildInfo.guildId,
+      hasGuild: guildInfo.hasGuild,
+      guildName: guildInfo.guildName,
+    });
+  });
+
+  app.post("/api/schedule", requireAuth, async (req, res) => {
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (!guildInfo.guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    if (!userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    const { channelId, content, scheduledAt, recurrence, embedJson } = req.body || {};
+    if (!channelId || !content || !scheduledAt)
+      return res.status(400).json({ error: "channelId, content, and scheduledAt are required" });
+    const iso = new Date(scheduledAt);
+    if (isNaN(iso.getTime()) || iso <= new Date())
+      return res.status(400).json({ error: "scheduledAt must be a valid future ISO datetime" });
+    try {
+      const schedMod = require("../scheduler");
+      const entry = await schedMod.create(
+        guildInfo.guildId, channelId, content.slice(0, 2000),
+        iso.toISOString(), recurrence || null,
+        req.user.tag, embedJson || null
+      );
+      res.json({ ok: true, schedule: entry });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/schedule/:id", requireAuth, async (req, res) => {
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (!guildInfo.guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    if (!userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    try {
+      const schedMod = require("../scheduler");
+      await schedMod.remove(parseInt(req.params.id, 10));
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ─── Auto-Execute Rules Engine ───────────────────────────────────────────
   app.get("/api/autoexec", requireAuth, async (req, res) => {
     const guildInfo = getGuildInfo(reqGuildId(req));
@@ -1400,8 +1540,33 @@ function startApi(ctx) {
     }
   });
 
+  // ─── Economy ──────────────────────────────────────────────────────────────
+  app.get("/api/economy/leaderboard", requireAuth, async (req, res) => {
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (!guildInfo.guildId) return res.json({ leaderboard: [], hasGuild: false });
+    if (!userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    try {
+      const economy = require("../economy");
+      const lb = await economy.leaderboard(guildInfo.guildId, 20);
+      const guild = resolveGuild(guildInfo.guildId);
+      const enriched = lb.map(row => {
+        let displayName = row.user_id;
+        if (guild) {
+          const member = guild.members.cache.get(row.user_id);
+          if (member) displayName = member.displayName || member.user?.username || row.user_id;
+        }
+        return { ...row, displayName };
+      });
+      res.json({ leaderboard: enriched, guildId: guildInfo.guildId, hasGuild: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`[api] Bot dashboard API on http://0.0.0.0:${PORT}`);
+    const schedCount = (() => { try { return require("../scheduler").count(); } catch { return 0; } })();
+    console.log(`[api] Bot dashboard API on http://0.0.0.0:${PORT} (${schedCount} schedules loaded)`);
   });
 }
 

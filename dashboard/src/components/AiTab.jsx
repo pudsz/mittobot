@@ -126,6 +126,8 @@ export default function AiTab() {
   const [fallbackProviders, setFallbackProviders] = useState([]);
   const [chattyMode, setChattyMode] = useState(false);
   const [chattyCooldown, setChattyCooldown] = useState(60);
+  const [dmEnabled, setDmEnabled] = useState(true);
+  const [browserEnabled, setBrowserEnabled] = useState(true);
 
   // Tool permission states
   const [toolPerms, setToolPerms] = useState({});
@@ -164,6 +166,8 @@ export default function AiTab() {
     setFallbackProviders(raw.slice(0, 5));
     setChattyMode(!!d.aiChattyMode);
     setChattyCooldown(d.aiChattyCooldown ?? 60);
+    setDmEnabled(d.aiDmEnabled !== false);
+    setBrowserEnabled(d.aiBrowserEnabled !== false);
 
     // Tool permissions
     try {
@@ -251,6 +255,8 @@ export default function AiTab() {
       aiFallbackProviders: fallbackProviders.filter(id => id && id !== provider).join(","),
       aiChattyMode: chattyMode,
       aiChattyCooldown: Number(chattyCooldown),
+      aiDmEnabled: dmEnabled,
+      aiBrowserEnabled: browserEnabled,
       aiToolPermissions: JSON.stringify(toolPerms),
     };
     if (finalModel) body.model = finalModel;
@@ -376,9 +382,27 @@ export default function AiTab() {
         </div>
 
         <div className="field" style={{ marginBottom: 12 }}>
+          <label>💬 Direct Messages</label>
+          <div className="row">
+            <Toggle checked={dmEnabled} onChange={setDmEnabled} />
+            <span className="muted">Respond to direct messages via AI</span>
+          </div>
+        </div>
+
+        <div className="field" style={{ marginBottom: 12 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span>🌐 Browser Mode</span>
+            <span className="badge ok" style={{ fontSize: 10 }}>NEW</span>
+          </label>
+          <div className="row">
+            <Toggle checked={browserEnabled} onChange={setBrowserEnabled} />
+            <span className="muted">Enable Playwright-powered browse_page tool (renders JS-heavy sites in a real browser)</span>
+          </div>
+        </div>
+
+        <div className="field" style={{ marginBottom: 12 }}>
           <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span>💬 Chatty Mode</span>
-            <span className="badge ok" style={{ fontSize: 10 }}>NEW</span>
           </label>
           <div className="row" style={{ marginBottom: 8 }}>
             <Toggle checked={chattyMode} onChange={setChattyMode} />

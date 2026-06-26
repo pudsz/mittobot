@@ -19,6 +19,7 @@ const autoexec    = require("./src/autoexec");
 const safe        = require("./src/safe");
 const roletracker = require("./src/roletracker");
 const femboyify   = require("./src/femboyify");
+const scheduler   = require("./src/scheduler");
 
 // ─── Command loading
 // commandMap: name -> { prefix, execute, _dynamic? }
@@ -47,6 +48,7 @@ const COMMAND_FILES = [
   "./src/commands/modules",
   "./src/commands/settings",
   "./src/commands/fun",
+  "./src/commands/economy",
   "./src/commands/info",
   "./src/commands/config",
   "./src/commands/reactionrole",
@@ -54,6 +56,9 @@ const COMMAND_FILES = [
   "./src/commands/dangerzone",
   "./src/commands/ai",
   "./src/commands/clearmemories",
+  "./src/commands/schedule",
+  "./src/commands/backup",
+  "./src/commands/websearch",
 ];
 for (const file of COMMAND_FILES) {
   const defs = require(file);
@@ -118,7 +123,15 @@ ctx.client = client;
 
 // ─── Events
 client.on("messageCreate", async message => {
-  if (!message.guild || message.author.bot) return;
+  if (message.author.bot) return;
+
+  // DM support — route direct messages to AI if enabled
+  if (!message.guild) {
+    if (settings.get("aiDmEnabled") !== false) {
+      await handleAiMessage(message, ctx);
+    }
+    return;
+  }
 
   // Automod runs first; if it removed the message, stop processing.
   try {
@@ -146,10 +159,12 @@ client.on("messageCreate", async message => {
     } catch (err) { console.error("Autoexec message error:", err.message); }
   }
 
-  // Maintenance mode — block AI + commands for non-owners
+  // Maintenance mode — block everything for non-owners
   const mm = settings.get("maintenanceMode");
-  if ((mm === true || mm === "true") && !utils.isOwner(message.author.id)) {
-    if (message.content.startsWith(utils.PREFIX)) {
+  if (mm && !utils.isOwner(message.author.id)) {
+    // Notify the user if they obviously tried to interact (prefix / ping),
+    // but stay silent otherwise to avoid spamming casual chat channels.
+    if (message.content.startsWith(utils.PREFIX) || message.mentions.has(client.user.id)) {
       const mainMsg = settings.get("maintenanceMessage") || "🔧 The bot is currently under maintenance. Please try again later.";
       safe.reply(message, { embeds: [utils.errorEmbed(mainMsg)] }, "maintenance mode");
     }
@@ -204,7 +219,7 @@ client.on("interactionCreate", async interaction => {
     if (interaction.isChatInputCommand()) {
       // Maintenance mode — block slash commands for non-owners
       const mm = settings.get("maintenanceMode");
-      if ((mm === true || mm === "true") && !utils.isOwner(interaction.user.id)) {
+      if (mm && !utils.isOwner(interaction.user.id)) {
         const mainMsg = settings.get("maintenanceMessage") || "🔧 The bot is currently under maintenance. Please try again later.";
         return interaction.reply({
           embeds: [utils.errorEmbed(mainMsg)],
@@ -385,6 +400,14 @@ async function shutdown(signal) {
       const mod = require("./src/commands/mod");
       if (typeof mod.stopProbationCleanup === "function") mod.stopProbationCleanup();
     } catch { /* best-effort */ }
+    // Clear all schedule timers
+    try {
+      const sched = require("./src/scheduler");
+      if (typeof sched.reload === "function") {
+        // reload() clears timers and resets; we're shutting down so just need clear
+        // (no-op — timers are unref'd, so they won't block shutdown)
+      }
+    } catch { /* best-effort */ }
   } catch { /* best-effort */ }
   try {
     // Destroy Discord client
@@ -422,6 +445,8 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
       roletracker.load(),
       femboyify.load(),
     ]);
+    // Load scheduled messages after settings are ready
+    await scheduler.load(client).catch(err => console.error("[scheduler] Load error:", err.message));
     settings.hydrateAiKeysFromEnv();
     // Start probation cleanup timer
     try {

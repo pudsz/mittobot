@@ -7,6 +7,7 @@ import Panel from "./Panel.jsx";
 import ChannelSelect from "./ChannelSelect.jsx";
 import DropdownSelect from "./DropdownSelect.jsx";
 import useGuildData from "../hooks/useGuildData.js";
+import ErrorRetry from "./ErrorRetry.jsx";
 
 const ACTION_OPTIONS = [
   { value: "kick", label: "👢 Kick", desc: "Kick the user from the server" },
@@ -179,7 +180,7 @@ function ChannelForm({ channelId, initial, channels, roles, onSave, onCancel, sa
 
 export default function DangerZoneTab({ guildId }) {
   const toast = useToast();
-  const { data, loading, refetch } = useGuildData(guildId, "/api/dangerzone");
+  const { data, loading, error, refetch } = useGuildData(guildId, "/api/dangerzone");
   const [editingId, setEditingId] = useState(null);
   const [adding, setAdding] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -234,6 +235,16 @@ export default function DangerZoneTab({ guildId }) {
         </Panel>
         <Panel>
           {[1, 2].map((i) => <div className="skeleton skeleton-card" key={i} style={{ height: 90, marginBottom: 8 }} />)}
+        </Panel>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="tab active">
+        <Panel>
+          <ErrorRetry message={error} onRetry={refetch} />
         </Panel>
       </div>
     );

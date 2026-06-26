@@ -225,16 +225,19 @@ async function buildMessageHistory(message, ctx, limit = 8, userContent, images 
 
   let system = settings.get("aiSystemPrompt") || "You are a helpful Discord assistant. Keep replies concise and friendly.";
 
-  // Inject server context so the AI knows where it is and can use tools
-  const guildName = message.guild?.name || "Unknown";
-  system += `\n\n### SERVER CONTEXT:\n- Server: ${guildName} (ID: ${message.guild.id})\n- Current channel: #${message.channel.name} (ID: ${message.channel.id})\n- Bot's own user ID: ${client.user.id}`;
-  
-  // Inject speaker profile as metadata (not part of the user's message)
-  if (speakerProfile) {
-    system += speakerProfile;
+  // Inject server context (skip for DMs)
+  if (message.guild) {
+    system += `\n\n### SERVER CONTEXT:\n- Server: ${message.guild.name} (ID: ${message.guild.id})\n- Current channel: #${message.channel.name} (ID: ${message.channel.id})\n- Bot's own user ID: ${client.user.id}`;
+    
+    // Inject speaker profile as metadata (not part of the user's message)
+    if (speakerProfile) {
+      system += speakerProfile;
+    }
+  } else {
+    system += `\n\n### DM CONTEXT:\n- This is a private direct message conversation with <@${message.author.id}>\n- Bot's own user ID: ${client.user.id}`;
   }
   
-  if (settings.get("aiMemoryEnabled") !== false) {
+  if (message.guild && settings.get("aiMemoryEnabled") !== false) {
     const aiMemory = require("./ai/memory");
     const memories = aiMemory.recall(message.guild.id, message.author.id, 15);
     if (memories.length > 0) {
@@ -243,8 +246,6 @@ async function buildMessageHistory(message, ctx, limit = 8, userContent, images 
         return `- [Fact #${m.id}] (${scope}): ${m.content}`;
       }).join("\n");
       system += `\n\n### KNOWN MEMORIES / FACTS:\n${formattedMemories}`;
-    } else {
-      system += `\n\n### KNOWN MEMORIES / FACTS:\nNo memories stored yet. Use add_memory to remember things about users or the server.`;
     }
   }
 
@@ -257,24 +258,53 @@ function cleanResponse(text, thinkingEnabled) {
   if (!thinkingEnabled) {
     clean = clean.replace(/<think>[\s\S]*?<\/think>/gi, "");
   }
-  // If the model hallucinated raw tool-call JSON as text, discard it.
-  // Only catch JSON that looks like a tool call (has "name" + "parameters"),
-  // not legitimate JSON responses like status objects or code blocks.
-  if (/^\s*[{[]/.test(clean) && /\b"name"\s*:/.test(clean)) {
-    try { JSON.parse(clean.trim()); return ""; } catch { /* partial JSON, keep the text */ }
+
+  // Strip hallucinated tool-call JSON that the model wrote as raw text.
+  // Handles BOTH complete JSON and incomplete/truncated JSON (e.g. missing
+  // closing braces after a content string was cut off by max_tokens).
+  //
+  // Strategy: detect the {"name": "...", "parameters": ...} signature
+  // and strip it, even if the JSON is malformed. Don't touch legitimate
+  // JSON inside ``` backtick code blocks.
+  const TOOL_CALL_SIG = /\{\s*"name"\s*:\s*"/;
+
+  // 1. If the entire response is just a raw tool-call blob (no code blocks),
+  //    discard it entirely — even partial/incomplete JSON.
+  if (!clean.includes("```") && TOOL_CALL_SIG.test(clean)) {
+    // Strip the leading {"name":...} blob, keeping only text that precedes it
+    const sigIdx = clean.search(TOOL_CALL_SIG);
+    const openBrace = clean.lastIndexOf("{", sigIdx);
+    if (openBrace >= 0 && openBrace <= sigIdx) {
+      const before = clean.slice(0, openBrace).trim();
+      // If there was meaningful text before the JSON, keep that; otherwise discard
+      if (before.length > 0 && !/^[\s,]*$/.test(before)) {
+        clean = before;
+      } else {
+        return ""; // pure tool-call hallucination — discard entirely
+      }
+    }
   }
+
+  // 2. Strip trailing tool-call JSON that follows legitimate text.
+  //    Handles both newline-separated and inline cases. The comma after
+  //    the tool name is optional (catches incomplete JSON too).
+  clean = clean.replace(/(?:\n|^)\s*\{\s*"name"\s*:\s*"[^"]+"[^]*$/, "").trim();
+
   return clean.trim();
 }
 
 // Auto-memory: after each AI interaction, fire a cheap follow-up call to
 // extract any learnable facts about the user and save them via add_memory.
 // Runs in background (fire-and-forget) so the user gets their response instantly.
+// Tries the active provider first, then falls back through the configured chain.
 async function extractFactsAsync(message, userContent, botReply, providerId) {
   try {
     const aiMemory = require("./ai/memory");
-    const groqProvider = require("./ai/providers/groq");
-    const groqKey = settings.getAiApiKey("groq");
-    if (!groqKey) return;
+
+    // Build fallback chain: active provider → primary → configured fallbacks (deduplicated)
+    const primaryId = settings.get("aiProvider") || "groq";
+    const fallbackIds = parseFallbackList(settings.get("aiFallbackProviders"));
+    const candidates = [providerId, primaryId, ...fallbackIds].filter((id, i, arr) => arr.indexOf(id) === i);
 
     const systemPrompt = `Extract any facts worth remembering about this Discord user from the conversation. Return ONLY a JSON array of facts, each with "scope" ("user" or "server") and "content" (max 300 chars). If nothing new was learned, return an empty array []. Example: [{"scope":"user","content":"Prefers TypeScript over Python"},{"scope":"server","content":"New rules posted in #announcements"}]`;
 
@@ -283,20 +313,38 @@ async function extractFactsAsync(message, userContent, botReply, providerId) {
       { role: "user", content: `User said: ${userContent.slice(0, 500)}\nBot replied: ${botReply.slice(0, 500)}\n\nExtract facts:` }
     ];
 
-    const result = await groqProvider.chat(messages, {
-      apiKey: groqKey,
-      model: "llama-3.1-8b-instant",
-      temperature: 0.3,
-      maxTokens: 512,
-    });
-
     let facts = [];
-    try {
-      // Try to parse the response as JSON
-      const text = (typeof result === "string" ? result : result.text || "").trim();
-      const match = text.match(/\[[\s\S]*\]/);
-      if (match) facts = JSON.parse(match[0]);
-    } catch { return; }
+    let usedProvider = null;
+
+    for (const pid of candidates) {
+      const provider = getProvider(pid);
+      if (!provider) continue;
+      const key = settings.getAiApiKey(pid);
+      if (!key) continue;
+
+      // Use the configured model for this provider, otherwise its first default
+      const model = settings.getAiModel(pid) || provider.defaultModel || (Array.isArray(provider.defaultModels) ? provider.defaultModels[0] : null);
+      if (!model) continue;
+
+      try {
+        const result = await provider.chat(messages, {
+          apiKey: key,
+          model,
+          temperature: 0.3,
+          maxTokens: 512,
+        });
+        const text = (typeof result === "string" ? result : result.text || "").trim();
+        const match = text.match(/\[[\s\S]*\]/);
+        if (match) facts = JSON.parse(match[0]);
+        usedProvider = pid;
+        break;
+      } catch (e) {
+        // Try the next provider in the fallback chain
+        continue;
+      }
+    }
+
+    if (!usedProvider || facts.length === 0) return;
 
     for (const fact of facts) {
       if (fact.content && fact.content.trim().length > 3) {
@@ -305,7 +353,7 @@ async function extractFactsAsync(message, userContent, botReply, providerId) {
       }
     }
     if (facts.length > 0) {
-      console.log(`[auto-memory] Saved ${facts.length} fact(s) from conversation with ${message.author.tag}`);
+      console.log(`[auto-memory] Saved ${facts.length} fact(s) via ${usedProvider} from conversation with ${message.author.tag}`);
     }
   } catch (err) {
     // Silently fail — auto-memory is best-effort only
@@ -393,10 +441,7 @@ async function chatWithProvider(providerIds, messages) {
 
 async function handleAiMessage(message, ctx) {
   if (!settings.get("aiEnabled")) return false;
-
-  // Maintenance mode — skip AI responses entirely
-  const mm = settings.get("maintenanceMode");
-  if ((mm === true || mm === "true") && !ctx.utils?.isOwner(message.author.id)) return false;
+  const isDM = !message.guild;
 
   const providerId = settings.get("aiProvider") || "groq";
   const apiKey = settings.getAiApiKey(providerId);
@@ -414,7 +459,11 @@ async function handleAiMessage(message, ctx) {
   const { client } = ctx;
   let userContent = null;
 
-  if (message.mentions.has(client.user.id)) {
+  // DMs: always respond, no trigger needed
+  if (isDM) {
+    userContent = message.content.trim();
+    if (!userContent) userContent = "You sent an empty message.";
+  } else if (message.mentions.has(client.user.id)) {
     userContent = stripBotMention(message.content, client.user.id);
     if (!userContent) userContent = "The user pinged you without a message. Greet them briefly.";
   } else if (message.reference?.messageId) {
@@ -451,8 +500,14 @@ async function handleAiMessage(message, ctx) {
   if (message.content.startsWith(ctx.utils.PREFIX)) return false;
 
   let startTime = Date.now(); // hoisted for catch-block access
+  let typingInterval = null; // refreshed to keep the "bot is typing..." indicator alive during tool loops
   try {
     await message.channel.sendTyping();
+    // Refresh typing indicator every 8s so users see "bot is typing..." dots
+    // throughout multi-turn tool loops. Discord's indicator expires after ~10s.
+    typingInterval = setInterval(() => {
+      message.channel.sendTyping().catch(() => {});
+    }, 8_000).unref();
     const tools = require("./ai/tools");
 
     // Detect and download image attachments for vision support
@@ -482,6 +537,11 @@ async function handleAiMessage(message, ctx) {
     // Pin subsequent tool-calling iterations to the first working provider
     // so the model doesn't switch mid-conversation.
     let pinnedProvider = null;
+
+    // Track tool interactions for thread buffer persistence — without this,
+    // the AI forgets what it learned (web search results, user info, etc.)
+    // on the very next message because only the final text reply is saved.
+    const toolInteractions = []; // [{ name, args, result }]
 
     // Per-conversation add_memory call counter (prevent memory loop spam)
     let addMemoryCallsThisTurn = 0;
@@ -576,6 +636,8 @@ async function handleAiMessage(message, ctx) {
         } catch (err) {
           resultStr = `Error executing tool: ${err.message}`;
         }
+        // Persist tool interaction so the thread buffer can reference it on next turn
+        toolInteractions.push({ name: tc.name, args: tc.args, result: resultStr });
         
         messages.push({
           role: "tool",
@@ -612,34 +674,46 @@ async function handleAiMessage(message, ctx) {
       chattyCooldowns.set(message.channel.id, Date.now());
     }
 
-    // Update conversation thread buffer for continuity
+    // Update conversation thread buffer for continuity.
+    // Include tool interactions so the AI remembers search results, user lookups,
+    // and other context it gathered via tools on previous turns.
     const threadEntry = threadBuffer.get(message.channel.id) || { lastUpdate: 0, turns: [] };
     threadEntry.lastUpdate = Date.now();
     threadEntry.turns.push({ role: "user", name: message.author.username, content: userContent });
+    // Append tool results as a single context-rich turn so the AI can reference them
+    if (toolInteractions.length > 0) {
+      const toolSummary = toolInteractions
+        .map(ti => `[Tool: ${ti.name}] Result: ${ti.result.slice(0, 400)}`)
+        .join("\n");
+      threadEntry.turns.push({ role: "assistant", content: `Tool results from previous turn:\n${toolSummary}` });
+    }
     threadEntry.turns.push({ role: "assistant", content: finalReply.slice(0, 500) });
-    if (threadEntry.turns.length > 6) threadEntry.turns = threadEntry.turns.slice(-6); // keep 3 pairs
+    if (threadEntry.turns.length > 8) threadEntry.turns = threadEntry.turns.slice(-8); // keep ~3 pairs + tools
     threadBuffer.set(message.channel.id, threadEntry);
 
     // Analytics: log this AI call
     analyticsBuffer.push({
-      guildId: message.guild.id, userId: message.author.id,
+      guildId: message.guild?.id || "dm", userId: message.author.id,
       provider: activeProviderId, model: settings.getAiModel(activeProviderId),
       tokens: finalReply.length + (messages.reduce((s, m) => s + String(m.content||"").length, 0)),
       latencyMs: Date.now() - startTime, success: true, error: null,
     });
 
-    // Auto-memory: fire-and-forget fact extraction after successful response
-    if (settings.get("aiMemoryEnabled") !== false && settings.get("aiToolsEnabled") !== false) {
+    clearInterval(typingInterval);
+
+    // Auto-memory: fire-and-forget fact extraction after successful response (guild only)
+    if (message.guild && settings.get("aiMemoryEnabled") !== false && settings.get("aiToolsEnabled") !== false) {
       extractFactsAsync(message, userContent, finalReply, activeProviderId).catch(() => {});
     }
 
     return true;
   } catch (err) {
+    clearInterval(typingInterval);
     console.error("AI reply error:", err.message);
     // Log failed call to analytics (defensive: startTime fallback to 0 if somehow undefined)
     try {
       analyticsBuffer.push({
-        guildId: message.guild.id, userId: message.author.id,
+        guildId: message.guild?.id || "dm", userId: message.author.id,
         provider: settings.get("aiProvider") || "groq", model: settings.getAiModel(settings.get("aiProvider") || "groq"),
         tokens: 0, latencyMs: typeof startTime === "number" ? Date.now() - startTime : 0, success: false, error: err.message,
       });
@@ -819,6 +893,8 @@ function updateSettings(body) {
   if (typeof body.aiChattyCooldown === "number" && body.aiChattyCooldown >= 5 && body.aiChattyCooldown <= 3600) {
     settings.set("aiChattyCooldown", body.aiChattyCooldown);
   }
+  if (typeof body.aiDmEnabled === "boolean") settings.set("aiDmEnabled", body.aiDmEnabled);
+  if (typeof body.aiBrowserEnabled === "boolean") settings.set("aiBrowserEnabled", body.aiBrowserEnabled);
 }
 
 function getActiveConvoCount() {

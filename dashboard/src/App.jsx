@@ -3,7 +3,7 @@ import {
   Activity, Terminal, ShieldAlert, MessageSquareCode, ShieldCheck,
   Settings, Sparkles, Blocks, Database, KeyRound, LogOut, FolderSync,
   Gauge, ScrollText, StickyNote, Zap, ShieldPlus, Mail, RefreshCw,
-  Users, Cpu, Disc, Flame, FolderOpen, MessageSquare, TrendingUp,
+  Users, Cpu, Disc, Flame, FolderOpen, MessageSquare, TrendingUp, CalendarDays, HardDrive, Coins,
 } from "lucide-react";
 import { api, setToken, clearToken, onUnauthorized, BASE } from "./api.js";
 import { ToastProvider } from "./components/Toast.jsx";
@@ -23,10 +23,14 @@ import AutoExecTab from "./components/AutoExecTab.jsx";
 import UserNotesTab from "./components/UserNotesTab.jsx";
 import ExtendedAutomodTab from "./components/ExtendedAutomodTab.jsx";
 import CasesTab from "./components/CasesTab.jsx";
+import ScheduleTab from "./components/ScheduleTab.jsx";
+import BackupTab from "./components/BackupTab.jsx";
+import EconomyTab from "./components/EconomyTab.jsx";
 import RoleMembersTab from "./components/RoleMembersTab.jsx";
 import DangerZoneTab from "./components/DangerZoneTab.jsx";
 import AiChatTab from "./components/AiChatTab.jsx";
 import AnalyticsTab from "./components/AnalyticsTab.jsx";
+import ErrorBoundary from "./components/ErrorBoundary.jsx";
 
 // ─── Guild-management tabs — available to any guild admin ────────────────────
 const USER_TABS = [
@@ -39,6 +43,9 @@ const USER_TABS = [
   { id: "rolemembers",label: "Role Members",Icon: Users },
   { id: "channels",   label: "Channels",   Icon: FolderSync },
   { id: "cases",      label: "Cases",      Icon: FolderOpen },
+  { id: "schedule",   label: "Schedule",   Icon: CalendarDays },
+  { id: "backup",     label: "Backups",    Icon: HardDrive },
+  { id: "economy",    label: "Economy",   Icon: Coins },
   { id: "modlog",     label: "Mod Log",    Icon: ScrollText },
   { id: "modnotes",   label: "User Notes", Icon: StickyNote },
   { id: "dmtemplates",label: "DM Templates",Icon: Mail },
@@ -158,22 +165,34 @@ function Dashboard({ user, onLogout, isAdminMode, onToggleMode }) {
   const [guildId, setGuildId] = useState("");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
+  const contentRef = useRef(null);
 
   const activeTabs = isAdminMode ? [...USER_TABS, ...ADMIN_TABS] : USER_TABS;
 
-  // Ctrl+K / Cmd+K command palette
+  // Ctrl+K / Cmd+K command palette + Alt+1-9 quick tab switching
   useEffect(() => {
     function onKey(e) {
       if ((e.key === "k" || e.key === "K") && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         setPaletteOpen(prev => !prev);
         setPaletteQuery("");
+        return;
       }
-      if (e.key === "Escape") setPaletteOpen(false);
+      if (e.key === "Escape") { setPaletteOpen(false); return; }
+      // Alt+1-9 for quick tab switching (skip the input/textarea focus)
+      if (e.altKey && e.key >= "1" && e.key <= "9") {
+        const tag = document.activeElement?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+        const idx = parseInt(e.key, 10) - 1;
+        if (idx < activeTabs.length) {
+          e.preventDefault();
+          setTab(activeTabs[idx].id);
+        }
+      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [activeTabs]);
 
   const paletteItems = activeTabs.map(t => ({ type: "tab", label: t.label, id: t.id, Icon: t.Icon }));
   const filteredPalette = paletteQuery.trim()
@@ -209,6 +228,11 @@ function Dashboard({ user, onLogout, isAdminMode, onToggleMode }) {
     const currentExists = activeTabs.some(t => t.id === tab);
     if (!currentExists) setTab("status");
   }, [isAdminMode]);
+
+  // Scroll to top when switching tabs
+  useEffect(() => {
+    contentRef.current?.scrollTo({ top: 0, behavior: "instant" });
+  }, [tab]);
 
   return (
     <div id="app">
@@ -261,6 +285,7 @@ function Dashboard({ user, onLogout, isAdminMode, onToggleMode }) {
           {USER_TABS.map(({ id, label, Icon }) => (
             <button
               key={id}
+              title={label}
               className={tab === id ? "active" : ""}
               onClick={() => setTab(id)}
             >
@@ -274,6 +299,7 @@ function Dashboard({ user, onLogout, isAdminMode, onToggleMode }) {
               {ADMIN_TABS.map(({ id, label, Icon }) => (
                 <button
                   key={id}
+                  title={label}
                   className={tab === id ? "active" : ""}
                   onClick={() => setTab(id)}
                 >
@@ -301,32 +327,38 @@ function Dashboard({ user, onLogout, isAdminMode, onToggleMode }) {
         </div>
       </aside>
 
-      <div className="content-area">
+      <div className="content-area" ref={contentRef}>
         <header>
           <h1>ggboi / {activeTabs.find(t => t.id === tab)?.label || tab}</h1>
           <div className="spacer"></div>
+          <span className="muted" style={{ fontSize: 10, opacity: 0.5 }}>Alt+1-9 to switch tabs</span>
         </header>
         <main>
-          {tab === "status" && <StatusTab onStatus={(s) => setHeaderStatus((s.tag || "offline") + " · " + s.ping + "ms")} admin={isAdminMode} />}
-          {tab === "commands" && <CommandsTab guildId={guildId} />}
-          {tab === "automod" && <AutomodTab guildId={guildId} />}
-          {tab === "greet" && <GreetTab guildId={guildId} />}
-          {tab === "roles" && <RolesTab guildId={guildId} />}
-          {tab === "rolemembers" && <RoleMembersTab guildId={guildId} />}
-          {tab === "channels" && <ChannelsTab guildId={guildId} />}
-          {tab === "cases" && <CasesTab guildId={guildId} />}
-          {tab === "modlog" && <ModerationLogTab guildId={guildId} />}
-          {tab === "modnotes" && <UserNotesTab guildId={guildId} />}
-          {tab === "dmtemplates" && <DmTemplateTab guildId={guildId} />}
-          {tab === "autoexec" && <AutoExecTab guildId={guildId} />}
-          {tab === "dangerzone" && <DangerZoneTab guildId={guildId} />}
-          {tab === "extautomod" && <ExtendedAutomodTab guildId={guildId} />}
-          {tab === "settings" && <SettingsTab onReset={() => setAiKey((k) => k + 1)} />}
-          {tab === "ai" && <AiTab key={aiKey} />}
-          {tab === "aichat" && <AiChatTab guildId={guildId} />}
-          {tab === "analytics" && <AnalyticsTab />}
-          {tab === "modules" && <ModulesTab />}
-          {tab === "data" && <DataTab />}
+          <ErrorBoundary resetKey={tab + guildId}>
+            {tab === "status" && <StatusTab onStatus={(s) => setHeaderStatus((s.tag || "offline") + " · " + s.ping + "ms")} admin={isAdminMode} />}
+            {tab === "commands" && <CommandsTab guildId={guildId} />}
+            {tab === "automod" && <AutomodTab guildId={guildId} />}
+            {tab === "greet" && <GreetTab guildId={guildId} />}
+            {tab === "roles" && <RolesTab guildId={guildId} />}
+            {tab === "rolemembers" && <RoleMembersTab guildId={guildId} />}
+            {tab === "channels" && <ChannelsTab guildId={guildId} />}
+            {tab === "cases" && <CasesTab guildId={guildId} />}
+            {tab === "schedule" && <ScheduleTab guildId={guildId} />}
+            {tab === "backup" && <BackupTab guildId={guildId} />}
+            {tab === "economy" && <EconomyTab guildId={guildId} />}
+            {tab === "modlog" && <ModerationLogTab guildId={guildId} />}
+            {tab === "modnotes" && <UserNotesTab guildId={guildId} />}
+            {tab === "dmtemplates" && <DmTemplateTab guildId={guildId} />}
+            {tab === "autoexec" && <AutoExecTab guildId={guildId} />}
+            {tab === "dangerzone" && <DangerZoneTab guildId={guildId} />}
+            {tab === "extautomod" && <ExtendedAutomodTab guildId={guildId} />}
+            {tab === "settings" && <SettingsTab onReset={() => setAiKey((k) => k + 1)} />}
+            {tab === "ai" && <AiTab key={aiKey} />}
+            {tab === "aichat" && <AiChatTab guildId={guildId} />}
+            {tab === "analytics" && <AnalyticsTab />}
+            {tab === "modules" && <ModulesTab />}
+            {tab === "data" && <DataTab />}
+          </ErrorBoundary>
         </main>
       </div>
 
