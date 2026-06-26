@@ -3,6 +3,7 @@ const cors    = require("cors");
 const crypto  = require("crypto");
 const jwt     = require("jsonwebtoken");
 const fs      = require("fs");
+const os      = require("os");
 const path    = require("path");
 const { ChannelType, PermissionFlagsBits } = require("discord.js");
 
@@ -63,6 +64,16 @@ function passwordMatches(input, expected) {
 function startApi(ctx) {
   const PASSWORD = process.env.DASHBOARD_PASSWORD;
   const PORT     = parseInt(process.env.API_PORT, 10) || parseInt(process.env.PORT, 10) || 3001;
+
+  // Command rate tracking (rolling window for dashboard display)
+  const cmdTimes = [];
+  ctx.commandRate = () => {
+    const now = Date.now();
+    const cutoff = now - 60_000;
+    while (cmdTimes.length && cmdTimes[0] < cutoff) cmdTimes.shift();
+    return cmdTimes.length;
+  };
+  ctx.trackCommand = () => { cmdTimes.push(Date.now()); };
   // Allow the bot to share a process secret across instances; fall back to an
   // ephemeral one (fine for a single instance, tokens reset on restart).
   const JWT_SECRET = process.env.DASHBOARD_JWT_SECRET || crypto.randomBytes(32).toString("hex");
@@ -469,6 +480,34 @@ function startApi(ctx) {
       return res.json({ online: false, ping: 0, guilds: 0, users: 0, uptimeMs: 0, tag: "Offline", activity: null });
     }
     const activity = client.user.presence?.activities?.[0] ?? null;
+
+    // Memory usage — system RAM (not just V8 heap)
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    const memoryUsedMb = Math.round((totalMem - freeMem) / 1024 / 1024);
+    const memoryTotalMb = Math.round(totalMem / 1024 / 1024);
+
+    // CPU load averages (1, 5, 15 min) and process uptime
+    const cpuLoad = os.loadavg(); // [1min, 5min, 15min]
+    const cpuCount = os.cpus().length;
+    const processUptimeSec = Math.round(process.uptime());
+    const nodeRuntime = {
+      version: process.version,
+      platform: process.platform,
+      arch: process.arch,
+      pid: process.pid,
+    };
+
+    // Active AI conversations (approximate from thread buffer size)
+    let activeAiConversations = 0;
+    try {
+      const ai = require("../ai");
+      activeAiConversations = typeof ai.getActiveConvoCount === "function" ? ai.getActiveConvoCount() : 0;
+    } catch { /* ignore */ }
+
+    // Commands per minute (rolling window)
+    const cmdRate = typeof ctx.commandRate === "function" ? ctx.commandRate() : 0;
+
     res.json({
       online:   true,
       tag:      client.user.tag,
@@ -476,6 +515,13 @@ function startApi(ctx) {
       ping:     Math.round(client.ws.ping || 0),
       guilds:   client.guilds.cache.size,
       users:    client.guilds.cache.reduce((acc, g) => acc + (g.memberCount || 0), 0),
+      memoryUsedMb,
+      memoryTotalMb,
+      cpuLoad: { load1: cpuLoad[0], load5: cpuLoad[1], load15: cpuLoad[2], cpuCount },
+      processUptimeSec,
+      nodeRuntime,
+      activeAiConversations,
+      commandsPerMin: cmdRate,
       activity: activity ? { name: activity.name, type: activity.type } : null,
     });
   });
@@ -1315,7 +1361,8 @@ function startApi(ctx) {
       if (!guildId) return res.json({ stats: [], topUsers: [] });
       const stats = await db.getAiAnalytics(guildId, days);
       const topUsers = await db.getAiTopUsers(guildId, days, 10);
-      res.json({ stats, topUsers, days });
+      const daily = await db.getAiDailyAnalytics(guildId, days);
+      res.json({ stats, topUsers, daily, days });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }

@@ -1,4 +1,4 @@
-const { ChannelType, EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder } = require("discord.js");
+const { ChannelType, EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder, MessageFlags } = require("discord.js");
 const safe = require("../safe");
 const { isAuthorized, noPermEmbed, errorEmbed, successEmbed, resolveUserId, parseDuration, formatDuration } = require("../utils");
 const config = require("../config");
@@ -516,7 +516,7 @@ async function handleRealWarnList(message, args, ctx) {
 
 async function slashRealWarnList(interaction, ctx) {
   const { data } = ctx;
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const user = interaction.options.getUser("user");
   const list = data.getWarnings(interaction.guild.id, user.id);
   if (!list.length) return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setDescription(`📋 **${user.username}** has no warnings`)] });
@@ -536,7 +536,7 @@ async function slashRealWarnClear(interaction, ctx) {
   const { data } = ctx;
   const user = interaction.options.getUser("user");
   data.clearWarnings(interaction.guild.id, user.id);
-  await interaction.reply({ embeds: [successEmbed(`Cleared all warnings for **${user.username}**`)], ephemeral: true });
+  await interaction.reply({ embeds: [successEmbed(`Cleared all warnings for **${user.username}**`)], flags: MessageFlags.Ephemeral });
 }
 
 async function handleRealLock(message, args, unlock, ctx) {
@@ -550,7 +550,7 @@ async function handleRealLock(message, args, unlock, ctx) {
 
 async function slashRealLock(interaction, unlock, ctx) {
   if (!interaction.guild.members.me.permissions.has(PermissionFlagsBits.ManageChannels))
-    return interaction.reply({ embeds: [errorEmbed("I need `Manage Channels`.")], ephemeral: true });
+    return interaction.reply({ embeds: [errorEmbed("I need `Manage Channels`.")], flags: MessageFlags.Ephemeral });
   const reason = interaction.options.getString("reason") || "No reason";
   await interaction.deferReply();
   try {
@@ -571,7 +571,7 @@ async function handleRealSlowmode(message, args, ctx) {
 
 async function slashRealSlowmode(interaction, ctx) {
   if (!interaction.guild.members.me.permissions.has(PermissionFlagsBits.ManageChannels))
-    return interaction.reply({ embeds: [errorEmbed("I need `Manage Channels`.")], ephemeral: true });
+    return interaction.reply({ embeds: [errorEmbed("I need `Manage Channels`.")], flags: MessageFlags.Ephemeral });
   const seconds = interaction.options.getInteger("seconds");
   await interaction.deferReply();
   try {
@@ -841,11 +841,11 @@ async function handleSyncPerms(message, args, ctx) {
 
 async function slashSyncPerms(interaction, ctx) {
   if (!memberHasManageChannels(interaction.member, interaction.memberPermissions))
-    return interaction.reply({ embeds: [errorEmbed("You need `Manage Channels` to sync permissions.")], ephemeral: true });
+    return interaction.reply({ embeds: [errorEmbed("You need `Manage Channels` to sync permissions.")], flags: MessageFlags.Ephemeral });
   if (!interaction.guild.members.me.permissions.has(PermissionFlagsBits.ManageChannels))
-    return interaction.reply({ embeds: [errorEmbed("I need `Manage Channels`.")], ephemeral: true });
+    return interaction.reply({ embeds: [errorEmbed("I need `Manage Channels`.")], flags: MessageFlags.Ephemeral });
 
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const selection = await selectSlashSyncTargets(interaction);
   if (selection.error) return interaction.editReply({ embeds: [errorEmbed(selection.error)] });
   if (!selection.targets.length && !selection.skipped.length) return interaction.editReply({ embeds: [errorEmbed("No channels matched that selection.")] });

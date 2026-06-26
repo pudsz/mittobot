@@ -1,4 +1,4 @@
-const { EmbedBuilder, SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
+const { EmbedBuilder, SlashCommandBuilder, PermissionFlagsBits, MessageFlags } = require("discord.js");
 const safe = require("../safe");
 const { resolveUserId, errorEmbed } = require("../utils");
 
@@ -387,7 +387,7 @@ module.exports = [
         if (r) roles.push(r);
       }
       if (roles.length === 0) {
-        return i.reply({ embeds: [errorEmbed("No roles provided.")], ephemeral: true });
+        return i.reply({ embeds: [errorEmbed("No roles provided.")], flags: MessageFlags.Ephemeral });
       }
 
       try {
@@ -396,7 +396,7 @@ module.exports = [
         const chunks = splitRoleChunks(text);
         const messageIds = [];
 
-        await i.deferReply({ ephemeral: true });
+        await i.deferReply({ flags: MessageFlags.Ephemeral });
 
         const first = await safe.orNull(i.channel.send({ content: chunks[0], allowedMentions: { parse: [] } }), "trackroles slash send first");
         if (first) messageIds.push(first.id);
@@ -458,7 +458,7 @@ module.exports = [
         const tracks = roletracker.getTracked(i.guild.id);
         const track = tracks.find(t => t.channelId === i.channel.id);
         if (!track) {
-          return i.reply({ embeds: [errorEmbed("No tracked roles in this channel.")], ephemeral: true });
+          return i.reply({ embeds: [errorEmbed("No tracked roles in this channel.")], flags: MessageFlags.Ephemeral });
         }
         await roletracker.removeTrack(i.guild.id, i.channel.id);
 
@@ -473,7 +473,7 @@ module.exports = [
             await safe.edit(firstMsg, { content: "⏹️ **Tracking stopped.** The list above may be outdated." }, "untrackroles slash edit");
           }
         }
-        await i.reply({ embeds: [require("../utils").successEmbed("Tracking stopped for this channel.")], ephemeral: true });
+        await i.reply({ embeds: [require("../utils").successEmbed("Tracking stopped for this channel.")], flags: MessageFlags.Ephemeral });
       } catch (err) {
         console.error("untrackroles slash error:", err.message);
         i.reply({ embeds: [errorEmbed("Failed to stop tracking: " + err.message)] });
@@ -514,7 +514,7 @@ module.exports = [
         const roletracker = require("../roletracker");
         const tracks = roletracker.getTracked(i.guild.id);
         if (tracks.length === 0) {
-          return i.reply({ embeds: [errorEmbed("No active role tracks in this server.")], ephemeral: true });
+          return i.reply({ embeds: [errorEmbed("No active role tracks in this server.")], flags: MessageFlags.Ephemeral });
         }
         const lines = tracks.map((t, idx) => {
           const channel = i.guild.channels.cache.get(t.channelId);
@@ -527,7 +527,7 @@ module.exports = [
           .setColor(BLURPLE)
           .setTitle(`📋 Active Role Tracks (${tracks.length})`)
           .setDescription(lines.join("\n"));
-        await i.reply({ embeds: [embed], ephemeral: true });
+        await i.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
       } catch (err) {
         console.error("trackedroles slash error:", err.message);
         i.reply({ embeds: [errorEmbed("Error: " + err.message)] });
@@ -591,7 +591,7 @@ module.exports = [
         if (r) roles.push(r);
       }
       if (roles.length === 0) {
-        return i.reply({ embeds: [errorEmbed("No roles provided.")], ephemeral: true });
+        return i.reply({ embeds: [errorEmbed("No roles provided.")], flags: MessageFlags.Ephemeral });
       }
       const text = buildListRolesText(roles);
       const chunks = splitRoleChunks(text);

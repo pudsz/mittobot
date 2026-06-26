@@ -1,4 +1,4 @@
-const { EmbedBuilder, SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
+const { EmbedBuilder, SlashCommandBuilder, PermissionFlagsBits, MessageFlags } = require("discord.js");
 const { errorEmbed, successEmbed } = require("../utils");
 const roles = require("../roles");
 
@@ -90,26 +90,26 @@ module.exports = [
       if (sub === "list") {
         const map = roles.getReactionRoles(interaction.guild.id);
         const ids = Object.keys(map);
-        if (!ids.length) return interaction.reply({ embeds: [new EmbedBuilder().setColor(BLURPLE).setDescription("No reaction roles set up.")], ephemeral: true });
+        if (!ids.length) return interaction.reply({ embeds: [new EmbedBuilder().setColor(BLURPLE).setDescription("No reaction roles set up.")], flags: MessageFlags.Ephemeral });
         const lines = ids.map(mid => `**\`${mid}\`:** ` + Object.entries(map[mid]).map(([k, rid]) => `${/^\d+$/.test(k) ? `<:e:${k}>` : k} → <@&${rid}>`).join(", "));
-        return interaction.reply({ embeds: [new EmbedBuilder().setColor(BLURPLE).setTitle("🎭 Reaction Roles").setDescription(lines.join("\n").slice(0, 4000))], ephemeral: true, allowedMentions: { parse: [] } });
+        return interaction.reply({ embeds: [new EmbedBuilder().setColor(BLURPLE).setTitle("🎭 Reaction Roles").setDescription(lines.join("\n").slice(0, 4000))], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
       }
       const messageId = interaction.options.getString("message_id");
       const emoji = parseEmojiArg(interaction.options.getString("emoji"));
-      if (!emoji) return interaction.reply({ embeds: [errorEmbed("Invalid emoji.")], ephemeral: true });
+      if (!emoji) return interaction.reply({ embeds: [errorEmbed("Invalid emoji.")], flags: MessageFlags.Ephemeral });
       if (sub === "remove") {
         const ok = roles.removeReactionRole(interaction.guild.id, messageId, emoji.key);
-        return interaction.reply({ embeds: ok ? [successEmbed("Reaction role removed.")] : [errorEmbed("No such binding.")], ephemeral: true });
+        return interaction.reply({ embeds: ok ? [successEmbed("Reaction role removed.")] : [errorEmbed("No such binding.")], flags: MessageFlags.Ephemeral });
       }
       // add
       const role = interaction.options.getRole("role");
       const target = await safe.orNull(interaction.channel.messages.fetch(messageId), `slash reaction role fetch msg ${messageId}`);
-      if (!target) return interaction.reply({ embeds: [errorEmbed("Message not found in this channel.")], ephemeral: true });
+      if (!target) return interaction.reply({ embeds: [errorEmbed("Message not found in this channel.")], flags: MessageFlags.Ephemeral });
       if (role.position >= interaction.guild.members.me.roles.highest.position)
-        return interaction.reply({ embeds: [errorEmbed("That role is higher than my highest role.")], ephemeral: true });
+        return interaction.reply({ embeds: [errorEmbed("That role is higher than my highest role.")], flags: MessageFlags.Ephemeral });
       await safe.react(target, emoji.raw, "slash reaction role add reaction");
       roles.addReactionRole(interaction.guild.id, messageId, emoji.key, role.id);
-      return interaction.reply({ embeds: [successEmbed(`Bound ${emoji.raw} → ${role}.`)], ephemeral: true, allowedMentions: { parse: [] } });
+      return interaction.reply({ embeds: [successEmbed(`Bound ${emoji.raw} → ${role}.`)], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     },
   },
 ];

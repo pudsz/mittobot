@@ -2,6 +2,7 @@ const {
   EmbedBuilder, SlashCommandBuilder,
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
   ModalBuilder, TextInputBuilder, TextInputStyle,
+  MessageFlags,
 } = require("discord.js");
 const { isOwner, successEmbed, errorEmbed, noPermEmbed } = require("../utils");
 const settings = require("../settings");
@@ -54,7 +55,7 @@ const LABELS = {
 
 // ─── Called by index.js when a settings:* button is clicked
 async function handleSettingsButton(interaction) {
-  if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [noPermEmbed()], ephemeral: true });
+  if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [noPermEmbed()], flags: MessageFlags.Ephemeral });
   const key = interaction.customId.replace("settings:", "");
 
   if (key === "reset") {
@@ -83,20 +84,20 @@ async function handleSettingsButton(interaction) {
 
 // ─── Called by index.js when a settings_modal:* modal is submitted
 async function handleSettingsModal(interaction) {
-  if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [noPermEmbed()], ephemeral: true });
+  if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [noPermEmbed()], flags: MessageFlags.Ephemeral });
   const key   = interaction.customId.replace("settings_modal:", "");
   const value = interaction.fields.getTextInputValue("value").trim();
 
-  if (!value) return interaction.reply({ embeds: [errorEmbed("Value cannot be empty.")], ephemeral: true });
+  if (!value) return interaction.reply({ embeds: [errorEmbed("Value cannot be empty.")], flags: MessageFlags.Ephemeral });
 
   if (key === "prefix" && value.length > 3)
-    return interaction.reply({ embeds: [errorEmbed("Prefix must be 1–3 characters.")], ephemeral: true });
+    return interaction.reply({ embeds: [errorEmbed("Prefix must be 1–3 characters.")], flags: MessageFlags.Ephemeral });
 
   settings.set(key, value);
 
   // Update the original panel message
   await interaction.update({ embeds: [settingsEmbed()], components: settingsRows() }).catch(() =>
-    interaction.reply({ embeds: [successEmbed(`\`${LABELS[key] ?? key}\` updated.`)], ephemeral: true })
+    interaction.reply({ embeds: [successEmbed(`\`${LABELS[key] ?? key}\` updated.`)], flags: MessageFlags.Ephemeral })
   );
 }
 
@@ -107,7 +108,7 @@ async function prefixSettings(message, args, ctx) {
 }
 
 async function slashSettings(interaction, ctx) {
-  if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [noPermEmbed()], ephemeral: true });
+  if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [noPermEmbed()], flags: MessageFlags.Ephemeral });
   await interaction.reply({ embeds: [settingsEmbed()], components: settingsRows() });
 }
 

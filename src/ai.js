@@ -211,6 +211,7 @@ async function buildMessageHistory(message, ctx, limit = 8, userContent, images 
   const speakerProfile = await buildSpeakerProfile(message, ctx);
   
   // Tag the trigger message so the AI knows exactly what to respond to.
+  const authorTag = message.member?.displayName || message.author.username;
   const taggedContent = `[THIS MESSAGE NEEDS YOUR RESPONSE — ${authorTag} <@${message.author.id}>]: ${userContent}`;
   const contentWithImages = images.length > 0
     ? buildContentParts(taggedContent, images)
@@ -255,6 +256,12 @@ function cleanResponse(text, thinkingEnabled) {
   let clean = text;
   if (!thinkingEnabled) {
     clean = clean.replace(/<think>[\s\S]*?<\/think>/gi, "");
+  }
+  // If the model hallucinated raw tool-call JSON as text, discard it.
+  // Only catch JSON that looks like a tool call (has "name" + "parameters"),
+  // not legitimate JSON responses like status objects or code blocks.
+  if (/^\s*[{[]/.test(clean) && /\b"name"\s*:/.test(clean)) {
+    try { JSON.parse(clean.trim()); return ""; } catch { /* partial JSON, keep the text */ }
   }
   return clean.trim();
 }
@@ -443,6 +450,7 @@ async function handleAiMessage(message, ctx) {
 
   if (message.content.startsWith(ctx.utils.PREFIX)) return false;
 
+  let startTime = Date.now(); // hoisted for catch-block access
   try {
     await message.channel.sendTyping();
     const tools = require("./ai/tools");
@@ -469,11 +477,15 @@ async function handleAiMessage(message, ctx) {
     const MAX_LOOPS = 5;
     let finalReply = "";
     const thinkingEnabled = settings.get("aiThinkingEnabled") === true;
-    const startTime = Date.now(); // for analytics latency tracking
+    startTime = Date.now(); // for analytics latency tracking
 
     // Pin subsequent tool-calling iterations to the first working provider
     // so the model doesn't switch mid-conversation.
     let pinnedProvider = null;
+
+    // Per-conversation add_memory call counter (prevent memory loop spam)
+    let addMemoryCallsThisTurn = 0;
+    const MAX_ADD_MEMORY_PER_TURN = 3;
 
     while (loopCount < MAX_LOOPS) {
       let response;
@@ -517,8 +529,13 @@ async function handleAiMessage(message, ctx) {
       }
 
       const { text, toolCalls } = response;
-      if (text) {
+      // Only accept text when there are NO tool calls — otherwise treat
+      // any text as a companion remark or hallucinated tool-call noise and
+      // skip it. This prevents raw JSON from leaking into finalReply when
+      // the model mixes tool calls with conversational text.
+      if (text && (!toolCalls || toolCalls.length === 0)) {
         finalReply = cleanResponse(text, thinkingEnabled);
+        break;
       }
 
       if (!toolCalls || toolCalls.length === 0) {
@@ -538,7 +555,20 @@ async function handleAiMessage(message, ctx) {
         }))
       });
 
+      // Track add_memory calls per conversation turn (prevent loops)
       for (const tc of toolCalls) {
+        if (tc.name === "add_memory") {
+          addMemoryCallsThisTurn++;
+          if (addMemoryCallsThisTurn > MAX_ADD_MEMORY_PER_TURN) {
+            messages.push({
+              role: "tool",
+              tool_call_id: tc.id,
+              name: tc.name,
+              content: "Error: Too many add_memory calls in one conversation. Please collect facts and make a single call."
+            });
+            continue;
+          }
+        }
         console.log(`[ai] Executing tool: ${tc.name} with args:`, tc.args);
         let resultStr;
         try {
@@ -562,6 +592,9 @@ async function handleAiMessage(message, ctx) {
       console.warn("[AI] Empty response after", loopCount, "tool loops");
       finalReply = "I have processed your request.";
     }
+
+    // Final sanitisation pass — strip any tool-call JSON that leaked through
+    finalReply = cleanResponse(finalReply, thinkingEnabled);
 
     const chunks = splitResponse(finalReply);
     for (let i = 0; i < chunks.length; i++) {
@@ -603,13 +636,18 @@ async function handleAiMessage(message, ctx) {
     return true;
   } catch (err) {
     console.error("AI reply error:", err.message);
-    // Log failed call to analytics
-    analyticsBuffer.push({
-      guildId: message.guild.id, userId: message.author.id,
-      provider: settings.get("aiProvider") || "groq", model: settings.getAiModel(settings.get("aiProvider") || "groq"),
-      tokens: 0, latencyMs: Date.now() - startTime, success: false, error: err.message,
-    });
-    await safe.reply(message, { content: `❌ AI error: ${err.message}` }, "AI error reply");
+    // Log failed call to analytics (defensive: startTime fallback to 0 if somehow undefined)
+    try {
+      analyticsBuffer.push({
+        guildId: message.guild.id, userId: message.author.id,
+        provider: settings.get("aiProvider") || "groq", model: settings.getAiModel(settings.get("aiProvider") || "groq"),
+        tokens: 0, latencyMs: typeof startTime === "number" ? Date.now() - startTime : 0, success: false, error: err.message,
+      });
+    } catch { /* analytics push should never crash the bot */ }
+    // Reply with error, but don't throw — prevent unhandled rejection crashing the process
+    try {
+      await safe.reply(message, { content: `❌ AI error: ${err.message}` }, "AI error reply");
+    } catch { /* best-effort — if replying fails, just log */ }
     return true;
   }
 }
@@ -657,6 +695,7 @@ function getPublicSettings() {
     aiFallbackProviders:  settings.get("aiFallbackProviders") || "",
     aiChattyMode:         settings.get("aiChattyMode") === true,
     aiChattyCooldown:     settings.get("aiChattyCooldown") ?? 60,
+    aiToolPermissions:    settings.get("aiToolPermissions") || "",
     providerStatus:       getProviderStatusSnapshot(),
   };
 }
@@ -782,6 +821,10 @@ function updateSettings(body) {
   }
 }
 
+function getActiveConvoCount() {
+  return threadBuffer.size;
+}
+
 module.exports = {
   handleAiMessage,
   getPublicSettings,
@@ -792,6 +835,7 @@ module.exports = {
   parseFallbackList,
   cleanResponse,
   getBusyProviders,
+  getActiveConvoCount,
   resolveModel: groqProvider.resolveModel,
   GROQ_MODELS: groqProvider.defaultModels,
 };

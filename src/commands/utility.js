@@ -1,4 +1,4 @@
-const { EmbedBuilder, SlashCommandBuilder, PermissionFlagsBits, REST, Routes } = require("discord.js");
+const { EmbedBuilder, SlashCommandBuilder, PermissionFlagsBits, REST, Routes, MessageFlags } = require("discord.js");
 const safe = require("../safe");
 const utils = require("../utils");
 const { MAX_PURGE, isAuthorized, noPermEmbed, errorEmbed, successEmbed } = utils;
@@ -74,9 +74,9 @@ async function prefixPurge(message, args, ctx) {
 
 async function slashPurge(interaction, ctx) {
   if (!interaction.guild.members.me.permissions.has(PermissionFlagsBits.ManageMessages))
-    return interaction.reply({ embeds: [errorEmbed("I need the `Manage Messages` permission.")], ephemeral: true });
+    return interaction.reply({ embeds: [errorEmbed("I need the `Manage Messages` permission.")], flags: MessageFlags.Ephemeral });
   const amount = interaction.options.getInteger("amount");
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   try {
     const deleted = await interaction.channel.bulkDelete(amount, true);
     await interaction.editReply({ embeds: [successEmbed(`Deleted ${deleted.size} messages.`)] });
@@ -106,7 +106,7 @@ async function slashAfk(interaction, ctx) {
   const { data } = ctx;
   data.afkUsers[interaction.user.id] = { reason, since: Date.now(), guildId: interaction.guild.id };
   data.saveAfk();
-  await interaction.reply({ content: `👋 ${interaction.user} I set your AFK: **${reason}**`, ephemeral: false });
+  await interaction.reply({ content: `👋 ${interaction.user} I set your AFK: **${reason}**`, flags: 0 });
 }
 
 // Exported for use in the messageCreate handler
@@ -171,7 +171,7 @@ async function slashReactionLog(interaction, ctx) {
   const sub     = interaction.options.getString("action");
   const channel = interaction.options.getChannel("channel");
   if (sub === "set") {
-    if (!channel) return interaction.reply({ embeds: [errorEmbed("Provide a channel.")], ephemeral: true });
+    if (!channel) return interaction.reply({ embeds: [errorEmbed("Provide a channel.")], flags: MessageFlags.Ephemeral });
     data.reactionlogs[interaction.guild.id] = { channelId: channel.id }; data.saveReactionlogs();
     await interaction.reply({ embeds: [successEmbed(`Reaction log set to ${channel}`)] });
   } else {

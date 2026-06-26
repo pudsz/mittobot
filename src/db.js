@@ -562,6 +562,20 @@ async function getAiTopUsers(guildId, days = 7, limit = 10) {
   `, [guildId, since, limit]);
 }
 
+async function getAiDailyAnalytics(guildId, days = 7) {
+  const since = Date.now() - days * 86400000;
+  return query(`
+    SELECT provider,
+           CAST(timestamp / 86400000 AS INTEGER) as day_epoch,
+           COUNT(*) as calls,
+           SUM(tokens) as tokens,
+           SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful,
+           SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failed
+    FROM ai_analytics WHERE guild_id = ? AND timestamp >= ?
+    GROUP BY provider, day_epoch ORDER BY day_epoch ASC
+  `, [guildId, since]);
+}
+
 // ── AI Personalities ─────────────────────────────────────────────────────────
 async function getPersonalities() {
   return query("SELECT * FROM ai_personalities ORDER BY id ASC");
@@ -878,6 +892,7 @@ module.exports = {
   logAiCall,
   getAiAnalytics,
   getAiTopUsers,
+  getAiDailyAnalytics,
 
   // ── AI Personalities ──────────────────────────────────────────────────────
   getPersonalities,

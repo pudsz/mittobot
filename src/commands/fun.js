@@ -1,4 +1,4 @@
-const { EmbedBuilder, SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
+const { EmbedBuilder, SlashCommandBuilder, PermissionFlagsBits, MessageFlags } = require("discord.js");
 
 const CATEGORY = "fun";
 const BLURPLE = 0x5865f2;
@@ -307,14 +307,14 @@ module.exports = [
         .addChoices({ name: "on", value: "on" }, { name: "off", value: "off" })),
     execute: async (i) => {
       const target = i.options.getMember("user");
-      if (!target) return i.reply({ embeds: [funEmbed("❌ User not found.", 0xed4245)], ephemeral: true });
+      if (!target) return i.reply({ embeds: [funEmbed("❌ User not found.", 0xed4245)], flags: MessageFlags.Ephemeral });
       const mode = i.options.getString("mode");
 
       const botMember = i.guild.members.me;
       if (!botMember.permissions.has(PermissionFlagsBits.ManageNicknames))
-        return i.reply({ embeds: [funEmbed("❌ I need **Manage Nicknames** permission.", 0xed4245)], ephemeral: true });
+        return i.reply({ embeds: [funEmbed("❌ I need **Manage Nicknames** permission.", 0xed4245)], flags: MessageFlags.Ephemeral });
       if (!target.manageable)
-        return i.reply({ embeds: [funEmbed("❌ Can't change their nickname — their role is above mine.", 0xed4245)], ephemeral: true });
+        return i.reply({ embeds: [funEmbed("❌ Can't change their nickname — their role is above mine.", 0xed4245)], flags: MessageFlags.Ephemeral });
 
       if (mode === "on") {
         const original = target.nickname || target.user.username;
@@ -324,18 +324,18 @@ module.exports = [
           await require("../femboyify").setFemboyified(i.guild.id, target.id, original);
           i.reply({ embeds: [funEmbed(`✨ ${target} → **${newNick}**`)], allowedMentions: { parse: [] } });
         } catch (err) {
-          i.reply({ embeds: [funEmbed(`❌ Failed: ${err.message}`, 0xed4245)], ephemeral: true });
+          i.reply({ embeds: [funEmbed(`❌ Failed: ${err.message}`, 0xed4245)], flags: MessageFlags.Ephemeral });
         }
       } else {
         const femboyify = require("../femboyify");
         const original = femboyify.getOriginalNick(i.guild.id, target.id);
-        if (!original) return i.reply({ embeds: [funEmbed("❌ That user isn't femboyified.", 0xed4245)], ephemeral: true });
+        if (!original) return i.reply({ embeds: [funEmbed("❌ That user isn't femboyified.", 0xed4245)], flags: MessageFlags.Ephemeral });
         try {
           await target.setNickname(original, "Unfemboyified");
           await femboyify.removeFemboyified(i.guild.id, target.id);
           i.reply({ embeds: [funEmbed(`✨ ${target} restored to **${original}**`)], allowedMentions: { parse: [] } });
         } catch (err) {
-          i.reply({ embeds: [funEmbed(`❌ Failed to restore: ${err.message}`, 0xed4245)], ephemeral: true });
+          i.reply({ embeds: [funEmbed(`❌ Failed to restore: ${err.message}`, 0xed4245)], flags: MessageFlags.Ephemeral });
         }
       }
     },

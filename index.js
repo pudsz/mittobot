@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, Partials, REST, Routes, EmbedBuilder } = require("discord.js");
+const { Client, GatewayIntentBits, Partials, REST, Routes, EmbedBuilder, MessageFlags } = require("discord.js");
 const fs   = require("fs");
 const path = require("path");
 require("dotenv").config();
@@ -53,6 +53,7 @@ const COMMAND_FILES = [
   "./src/commands/autorole",
   "./src/commands/dangerzone",
   "./src/commands/ai",
+  "./src/commands/clearmemories",
 ];
 for (const file of COMMAND_FILES) {
   const defs = require(file);
@@ -207,7 +208,7 @@ client.on("interactionCreate", async interaction => {
         const mainMsg = settings.get("maintenanceMessage") || "🔧 The bot is currently under maintenance. Please try again later.";
         return interaction.reply({
           embeds: [utils.errorEmbed(mainMsg)],
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
       }
       const execute = slashMap.get(interaction.commandName);
@@ -219,7 +220,7 @@ client.on("interactionCreate", async interaction => {
       if (!access.ok) {
         return interaction.reply({
           embeds: [utils.errorEmbed(denyMessage(access.reason, access.remain))],
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
       }
       await execute(interaction, ctx);
@@ -347,7 +348,7 @@ client.on("guildMemberUpdate", (oldMember, newMember) => {
   }
 });
 
-client.once("ready", async () => {
+client.once("clientReady", async () => {
   ctx.client = client;
   console.log(`Logged in as ${client.user.tag}`);
   client.user.setActivity(`${settings.get("prefix")}help | mambo`, { type: 3 });

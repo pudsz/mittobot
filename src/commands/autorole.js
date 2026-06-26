@@ -1,4 +1,4 @@
-const { EmbedBuilder, SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
+const { EmbedBuilder, SlashCommandBuilder, PermissionFlagsBits, MessageFlags } = require("discord.js");
 const { errorEmbed, successEmbed } = require("../utils");
 const roles = require("../roles");
 
@@ -55,9 +55,9 @@ module.exports = [
       const action = interaction.options.getString("action") || "list";
       if (action === "list") return interaction.reply({ embeds: [listEmbed(interaction.guild)], allowedMentions: { parse: [] } });
       const role = interaction.options.getRole("role");
-      if (!role) return interaction.reply({ embeds: [errorEmbed("Provide a role.")], ephemeral: true });
+      if (!role) return interaction.reply({ embeds: [errorEmbed("Provide a role.")], flags: MessageFlags.Ephemeral });
       if (role.position >= interaction.guild.members.me.roles.highest.position)
-        return interaction.reply({ embeds: [errorEmbed("That role is higher than my highest role.")], ephemeral: true });
+        return interaction.reply({ embeds: [errorEmbed("That role is higher than my highest role.")], flags: MessageFlags.Ephemeral });
       // add/remove explicitly rather than toggle for slash clarity
       const list = [...roles.getAutoroles(interaction.guild.id)];
       const idx = list.indexOf(role.id);

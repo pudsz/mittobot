@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Save, Trash2, RotateCw, Database, Plus, X, ArrowDown, Brain, Settings, Activity } from "lucide-react";
+import { Save, Trash2, RotateCw, Database, Plus, X, ArrowDown, Brain, Settings, Activity, Shield } from "lucide-react";
 import { api } from "../api.js";
 import { useToast } from "./Toast.jsx";
 import Toggle from "./Toggle.jsx";
@@ -127,6 +127,12 @@ export default function AiTab() {
   const [chattyMode, setChattyMode] = useState(false);
   const [chattyCooldown, setChattyCooldown] = useState(60);
 
+  // Tool permission states
+  const [toolPerms, setToolPerms] = useState({});
+  const TOOL_NAMES = ["warn_member", "mute_member", "kick_member", "ban_member"];
+  const PERM_LEVELS = ["all", "mod", "admin", "owner"];
+  const PERM_LABELS = { all: "Everyone", mod: "Mod (ModerateMembers)", admin: "Admin only", owner: "Owner only" };
+
   function applyState(d) {
     setS(d);
     setEnabled(!!d.aiEnabled);
@@ -158,6 +164,12 @@ export default function AiTab() {
     setFallbackProviders(raw.slice(0, 5));
     setChattyMode(!!d.aiChattyMode);
     setChattyCooldown(d.aiChattyCooldown ?? 60);
+
+    // Tool permissions
+    try {
+      const tp = d.aiToolPermissions ? JSON.parse(d.aiToolPermissions) : {};
+      setToolPerms(typeof tp === "object" ? tp : {});
+    } catch { setToolPerms({}); }
   }
 
   async function loadMemories() {
@@ -239,6 +251,7 @@ export default function AiTab() {
       aiFallbackProviders: fallbackProviders.filter(id => id && id !== provider).join(","),
       aiChattyMode: chattyMode,
       aiChattyCooldown: Number(chattyCooldown),
+      aiToolPermissions: JSON.stringify(toolPerms),
     };
     if (finalModel) body.model = finalModel;
     if (isCustom) {
@@ -631,6 +644,36 @@ export default function AiTab() {
             <label>Thinking Mode</label>
             <div className="row"><Toggle checked={thinkingEnabled} onChange={setThinkingEnabled} /><span className="muted">Long-reasoning blocks</span></div>
           </div>
+        </div>
+
+        {/* Tool Permissions */}
+        <div className="field" style={{ marginTop: 12, padding: 12, background: "rgba(255,255,255,0.02)", borderRadius: 6, border: "1px solid var(--border)" }}>
+          <label>
+            <Shield style={{ width: 14, height: 14, marginRight: 4, verticalAlign: "middle" }} />
+            Moderation Tool Permissions
+          </label>
+          <p className="muted" style={{ fontSize: 12, marginBottom: 10 }}>
+            Restrict who can trigger mod actions through the AI. Default: mod tools require ModerateMembers permission.
+          </p>
+          {TOOL_NAMES.map(tool => (
+            <div key={tool} className="row" style={{ marginBottom: 6, alignItems: "center" }}>
+              <code style={{ width: 130, fontSize: 11, flexShrink: 0 }}>{tool}</code>
+              <select
+                style={{ flex: 1, maxWidth: 240 }}
+                value={toolPerms[tool] || "mod"}
+                onChange={(e) => {
+                  const next = { ...toolPerms };
+                  if (e.target.value === "mod") delete next[tool]; // default
+                  else next[tool] = e.target.value;
+                  setToolPerms(next);
+                }}
+              >
+                {PERM_LEVELS.map(lvl => (
+                  <option key={lvl} value={lvl}>{PERM_LABELS[lvl]}</option>
+                ))}
+              </select>
+            </div>
+          ))}
         </div>
 
         <button className="btn green" onClick={saveAi} style={{ marginTop: 14 }}>

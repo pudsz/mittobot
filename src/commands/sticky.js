@@ -1,4 +1,4 @@
-const { EmbedBuilder, SlashCommandBuilder } = require("discord.js");
+const { EmbedBuilder, SlashCommandBuilder, MessageFlags } = require("discord.js");
 const safe = require("../safe");
 const { isAuthorized, noPermEmbed, errorEmbed, successEmbed } = require("../utils");
 
@@ -64,10 +64,10 @@ async function slashSticky(interaction, ctx) {
   const sub  = interaction.options.getString("action");
   const text = interaction.options.getString("text");
   if (sub === "set") {
-    if (!text) return interaction.reply({ embeds: [errorEmbed("Provide text for the sticky.")], ephemeral: true });
+    if (!text) return interaction.reply({ embeds: [errorEmbed("Provide text for the sticky.")], flags: MessageFlags.Ephemeral });
     data.stickies[interaction.channel.id] = { text, pinnedBy: interaction.user.tag, messageId: null };
     await repostSticky(interaction.channel, data);
-    await interaction.reply({ embeds: [successEmbed("Sticky set.")], ephemeral: true });
+    await interaction.reply({ embeds: [successEmbed("Sticky set.")], flags: MessageFlags.Ephemeral });
   } else {
     clearStickyDebounce(interaction.channel.id);
     const entry = data.stickies[interaction.channel.id];
@@ -77,7 +77,7 @@ async function slashSticky(interaction, ctx) {
     }
     delete data.stickies[interaction.channel.id];
     data.saveStickies();
-    await interaction.reply({ embeds: [successEmbed("Sticky removed.")], ephemeral: true });
+    await interaction.reply({ embeds: [successEmbed("Sticky removed.")], flags: MessageFlags.Ephemeral });
   }
 }
 

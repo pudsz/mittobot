@@ -1,4 +1,4 @@
-const { EmbedBuilder, SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
+const { EmbedBuilder, SlashCommandBuilder, PermissionFlagsBits, MessageFlags } = require("discord.js");
 const { errorEmbed, successEmbed } = require("../utils");
 const config = require("../config");
 
@@ -110,11 +110,11 @@ async function prefixConfig(message, args, ctx) {
 
 async function slashConfig(interaction, ctx) {
   if (!canManage(interaction.member, interaction.user.id))
-    return interaction.reply({ embeds: [errorEmbed("Only Administrators can manage command config.")], ephemeral: true });
+    return interaction.reply({ embeds: [errorEmbed("Only Administrators can manage command config.")], flags: MessageFlags.Ephemeral });
 
   const name = interaction.options.getString("command").toLowerCase();
   const def = knownCommand(ctx, name);
-  if (!def) return interaction.reply({ embeds: [errorEmbed(`Unknown command \`${name}\`.`)], ephemeral: true });
+  if (!def) return interaction.reply({ embeds: [errorEmbed(`Unknown command \`${name}\`.`)], flags: MessageFlags.Ephemeral });
 
   const action  = interaction.options.getString("action");
   if (!action) return interaction.reply({ embeds: [configEmbed(interaction.guild.id, name, def)] });
@@ -124,7 +124,7 @@ async function slashConfig(interaction, ctx) {
   const role    = interaction.options.getRole("role");
   const mentions = { channelId: channel?.id, roleId: role?.id };
   const embed = applyChange(interaction.guild.id, def, name, action, value, mentions);
-  return interaction.reply({ embeds: [embed], ephemeral: true });
+  return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }
 
 module.exports = [

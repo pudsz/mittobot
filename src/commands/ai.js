@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
+const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require("discord.js");
 const { errorEmbed, successEmbed } = require("../utils");
 const settings = require("../settings");
 const { chatWithProvider, splitMessage, parseFallbackList, cleanResponse } = require("../ai");
@@ -148,11 +148,11 @@ module.exports = [
     async execute(interaction, ctx) {
       const query = interaction.options.getString("query");
       if (!settings.get("aiEnabled")) {
-        return interaction.reply({ embeds: [errorEmbed("AI is currently disabled.")], ephemeral: true });
+        return interaction.reply({ embeds: [errorEmbed("AI is currently disabled.")], flags: MessageFlags.Ephemeral });
       }
       const chain = buildProviderChain();
       if (!chain.some(id => settings.getAiApiKey(id))) {
-        return interaction.reply({ embeds: [errorEmbed("No AI API key configured.")], ephemeral: true });
+        return interaction.reply({ embeds: [errorEmbed("No AI API key configured.")], flags: MessageFlags.Ephemeral });
       }
 
       await interaction.deferReply();

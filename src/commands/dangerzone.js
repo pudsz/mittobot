@@ -1,4 +1,4 @@
-const { EmbedBuilder, SlashCommandBuilder, ChannelType } = require("discord.js");
+const { EmbedBuilder, SlashCommandBuilder, ChannelType, MessageFlags } = require("discord.js");
 const { errorEmbed, successEmbed, parseDuration, formatDuration, resolveUserId } = require("../utils");
 const dangerzone = require("../dangerzone");
 
@@ -236,7 +236,7 @@ async function handleDangerzone(message, args, ctx) {
 
 // ─── Slash command handler ───
 async function slashDangerzone(interaction, ctx) {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const sub = interaction.options.getSubcommand();
 
   if (sub === "set") {

@@ -1,4 +1,4 @@
-const { EmbedBuilder, SlashCommandBuilder } = require("discord.js");
+const { EmbedBuilder, SlashCommandBuilder, MessageFlags } = require("discord.js");
 const { isOwner, errorEmbed, successEmbed, noPermEmbed } = require("../utils");
 const fs   = require("fs");
 const path = require("path");
@@ -105,7 +105,7 @@ module.exports = [
     prefix: handleModules,
     slash: new SlashCommandBuilder().setName("modules").setDescription("List dynamic modules (owner only)"),
     execute: async (interaction, ctx) => {
-      if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [noPermEmbed()], ephemeral: true });
+      if (!isOwner(interaction.user.id)) return interaction.reply({ embeds: [noPermEmbed()], flags: MessageFlags.Ephemeral });
       const { commandMap } = ctx;
       const files = fs.existsSync(MODULES_DIR) ? fs.readdirSync(MODULES_DIR).filter(f => f.endsWith(".js")) : [];
       if (!files.length) return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setDescription("No dynamic modules loaded.")] });
