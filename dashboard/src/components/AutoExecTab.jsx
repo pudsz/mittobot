@@ -14,6 +14,7 @@ const TRIGGER_EVENTS = [
   { id: "join", label: "On Member Join", desc: "When a new member joins" },
   { id: "leave", label: "On Member Leave", desc: "When a member leaves" },
   { id: "message", label: "On Message", desc: "When a message is sent" },
+  { id: "reaction_added", label: "On Reaction", desc: "When a reaction is added (emoji filter)" },
 ];
 
 const ACTION_TYPES = [
@@ -22,10 +23,55 @@ const ACTION_TYPES = [
   { id: "log_channel", label: "Log to Channel", desc: "Send a message to the configured log channel" },
   { id: "add_role", label: "Add Role", desc: "Assign a role to the user" },
   { id: "remove_role", label: "Remove Role", desc: "Remove a role from the user" },
+  { id: "send_channel", label: "Send to Channel", desc: "Send a message + optional role/@everyone ping to a specific channel" },
 ];
 
 function newEmptyRule() {
   return { trigger_event: "warn", conditions: {}, actions: [{ type: "dm_user", message: "" }], enabled: true, priority: 0, _isNew: true };
+}
+
+// Dropdown rows that pair a list of guild channels with bot SendMessages perm
+function ChannelSelectField({ guildId, value, onChange, placeholder = "Channel ID" }) {
+  // Side-by-side freeform input + dropdown of channels, using the shared api helper
+  const [channels, setChannels] = useState([]);
+  useEffect(() => {
+    if (!guildId) return;
+    api("GET", `/api/channels${guildQuery(guildId)}`)
+      .then((d) => setChannels((d && d.channels) || []))
+      .catch(() => setChannels([]));
+  }, [guildId]);
+  return (
+    <div style={{ display: "flex", gap: 8 }}>
+      <input
+        placeholder={placeholder}
+        value={value || ""}
+        onChange={(e) => onChange(e.target.value)}
+        style={{ width: 200 }}
+      />
+      <select
+        value=""
+        onChange={(e) => e.target.value && onChange(e.target.value)}
+        style={{ flex: 1 }}
+      >
+        <option value="">— pick a text channel —</option>
+        {channels.map((c) => (
+          <option key={c.id} value={c.id}>#{c.name}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function EmojiConditionField({ value, onChange }) {
+  // Comma-separated emoji input — supports unicode ("🟢") or "name:id" for custom.
+  const raw = Array.isArray(value) ? value.join(", ") : (value || "");
+  return (
+    <input
+      placeholder="Emoji triggers, comma-separated (e.g. 🟢,✅,👍)"
+      value={raw}
+      onChange={(e) => onChange(e.target.value.split(",").map((s) => s.trim()).filter(Boolean))}
+    />
+  );
 }
 
 export default function AutoExecTab({ guildId }) {
@@ -154,6 +200,17 @@ export default function AutoExecTab({ guildId }) {
             </select>
             <div className="hint">{TRIGGER_EVENTS.find((e) => e.id === editRule.trigger_event)?.desc || ""}</div>
           </div>
+
+          {editRule.trigger_event === "reaction_added" && (
+            <div className="field">
+              <label>Trigger Emojis</label>
+              <EmojiConditionField
+                value={editRule.conditions?.emojis}
+                onChange={(emojis) => updRule({ conditions: { ...(editRule.conditions || {}), emojis } })}
+              />
+              <div className="hint">Only fire when the reacted emoji matches one of these. Supports unicode (🟢) or custom ("name:id").</div>
+            </div>
+          )}
           <div className="field">
             <label>Priority (lower = runs first)</label>
             <input type="number" min="0" max="1000" value={editRule.priority || 0} style={{ width: 100 }} onChange={(e) => updRule({ priority: parseInt(e.target.value, 10) || 0 })} />
@@ -174,6 +231,29 @@ export default function AutoExecTab({ guildId }) {
                 )}
                 {(action.type === "add_role" || action.type === "remove_role") && (
                   <input placeholder="Role ID" value={action.roleId || ""} onChange={(e) => updAction(idx, { roleId: e.target.value })} />
+                )}
+                {action.type === "send_channel" && (
+                  <>
+                    <div className="hint" style={{ marginTop: 4 }}>Destination channel + optional ping.</div>
+                    <ChannelSelectField
+                      guildId={guildId}
+                      value={action.channelId}
+                      onChange={(channelId) => updAction(idx, { channelId })}
+                      placeholder="Destination channel ID"
+                    />
+                    <input
+                      placeholder='Mention: "everyone", "here", or a role ID'
+                      value={action.mention || ""}
+                      onChange={(e) => updAction(idx, { mention: e.target.value })}
+                      style={{ marginTop: 6 }}
+                    />
+                    <textarea
+                      style={{ minHeight: 60, marginTop: 6 }}
+                      placeholder="Message content (supports {user}, {emoji}, {message}, etc.)"
+                      value={action.message || ""}
+                      onChange={(e) => updAction(idx, { message: e.target.value })}
+                    />
+                  </>
                 )}
               </div>
             ))}

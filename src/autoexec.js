@@ -97,6 +97,21 @@ function evaluateConditions(conditions, context) {
     if (context.severity < conditions.min_severity) return false;
   }
 
+  // `emojis` — match against the reacted emoji's name, id, or "name:id" form.
+  // Accepts a single string or an array. The reacted emoji can be either the user's
+  // input (e.g. "🟢" or "✅") or have a custom ID like "name:1234567890".
+  if (conditions.emojis && context.emoji) {
+    const list = Array.isArray(conditions.emojis) ? conditions.emojis : [conditions.emojis];
+    const target = context.emoji;
+    const fullId = target.id ? `${target.name}:${target.id}` : target.name;
+    const matched = list.some(raw => {
+      const s = String(raw || "").trim();
+      if (!s) return false;
+      return s === target.name || s === fullId || (target.id && s === target.id);
+    });
+    if (!matched) return false;
+  }
+
   return true;
 }
 
@@ -106,13 +121,19 @@ function formatMessage(template, context) {
   const userStr = context.user?.id
     ? `<@${context.user.id}>`
     : (context.userId ? `<@${context.userId}>` : "Unknown");
+  const emojiStr = context.emoji?.id
+    ? `<:${context.emoji.name}:${context.emoji.id}>`
+    : (context.emoji?.name || "");
   return template
     .replace(/\{user\}/g, userStr)
     .replace(/\{username\}/g, context.username || "Unknown")
     .replace(/\{server\}/g, context.guild?.name || "Unknown")
     .replace(/\{reason\}/g, context.reason || "No reason")
     .replace(/\{duration\}/g, context.duration || "")
-    .replace(/\{mod\}/g, context.moderator || "Moderator");
+    .replace(/\{mod\}/g, context.moderator || "Moderator")
+    .replace(/\{emoji\}/g, emojiStr)
+    .replace(/\{channel\}/g, context.channel?.name || "Unknown")
+    .replace(/\{message\}/g, context.content || context.message?.content || "");
 }
 
 // Execute a single action from a rule definition.
@@ -179,6 +200,35 @@ async function executeAction(action, context) {
         if (role.position < botHighest) {
           await safe.removeRole(context.member, role, "autoexec remove_role");
         }
+        break;
+      }
+
+      case "send_channel": {
+        // Send a message to a specified channel, optionally with a role mention.
+        // - channelId: required — destination channel ID
+        // - mention:   optional — "everyone", "here", or a role ID (17-20 digits)
+        // - message:   required — text content (supports {user}, {emoji}, etc.)
+        if (!context.guild || !action.channelId) break;
+        const ch = context.guild.channels.cache.get(action.channelId);
+        if (!ch || typeof ch.send !== "function") break;
+        const botPerms = ch.permissionsFor(context.guild.members.me);
+        if (!botPerms?.has("SendMessages")) break;
+        const msg = formatMessage(action.message, context);
+        let prefix = "";
+        const mention = String(action.mention || "").trim();
+        if (mention === "everyone") prefix = "@everyone ";
+        else if (mention === "here") prefix = "@here ";
+        else if (/^\d{17,20}$/.test(mention) && context.guild.roles.cache.has(mention)) {
+          prefix = `<@&${mention}> `;
+        }
+        const content = `${prefix}${msg}`.trim();
+        if (!content) break;
+        const allowedMentions = mention === "everyone"
+          ? { parse: ["everyone"] }
+          : (mention === "here")
+            ? { parse: ["everyone"] } // "here" piggybacks on @everyone parsing
+            : (/^\d{17,20}$/.test(mention) ? { parse: ["roles"] } : { parse: [] });
+        await safe.send(ch, { content, allowedMentions }, "autoexec send_channel");
         break;
       }
     }

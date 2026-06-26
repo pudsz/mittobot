@@ -49,6 +49,7 @@ const COMMAND_FILES = [
   "./src/commands/settings",
   "./src/commands/fun",
   "./src/commands/economy",
+  "./src/commands/rpsmp",
   "./src/commands/info",
   "./src/commands/config",
   "./src/commands/reactionrole",
@@ -215,6 +216,13 @@ client.on("interactionCreate", async interaction => {
     if (interaction.isModalSubmit() && interaction.customId.startsWith("settings_modal:")) {
       return await handleSettingsModal(interaction);
     }
+    // Multiplayer RPS button clicks
+    if (interaction.isButton() && interaction.customId.startsWith("rpsmp_")) {
+      const rpsmpMod = require("./src/commands/rpsmp");
+      if (typeof rpsmpMod.handleRpsMpButton === "function") {
+        return await rpsmpMod.handleRpsMpButton(interaction);
+      }
+    }
     // Slash commands
     if (interaction.isChatInputCommand()) {
       // Maintenance mode — block slash commands for non-owners
@@ -313,9 +321,23 @@ async function logReaction(reaction, user, added) {
   safe.send(ch, { embeds: [embed] }, "reaction log");
 }
 
-client.on("messageReactionAdd", (reaction, user) => {
+client.on("messageReactionAdd", async (reaction, user) => {
   logReaction(reaction, user, true);
   roles.onReaction(reaction, user, true).catch(err => console.error("[safe] reaction role add:", err.message));
+  // Auto-exec: hydrate partials first so emoji data is complete
+  if (reaction.message?.guild) {
+    if (reaction.partial) await reaction.fetch().catch(() => null);
+    if (reaction.message.partial) await reaction.message.fetch().catch(() => null);
+    autoexec.executeTrigger(reaction.message.guild.id, "reaction_added", {
+      guild: reaction.message.guild,
+      user,
+      member: reaction.message.guild.members.cache.get(user.id) ?? await reaction.message.guild.members.fetch(user.id).catch(() => null),
+      message: reaction.message,
+      channel: reaction.message.channel,
+      content: reaction.message.content || "",
+      emoji: reaction.emoji,
+    }).catch(err => console.error("autoexec reaction_added:", err.message));
+  }
 });
 client.on("messageReactionRemove", (reaction, user) => {
   logReaction(reaction, user, false);
