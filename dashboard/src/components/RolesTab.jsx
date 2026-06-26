@@ -19,7 +19,7 @@ export default function RolesTab({ guildId }) {
 
   async function saveAutoroles() {
     try {
-      const r = await api("POST", "/api/roles/autoroles", { guildId, autoroles: [...autoSel] });
+      await api("POST", "/api/roles/autoroles", { guildId, autoroles: [...autoSel] });
       toast("Autoroles saved");
     } catch (e) {
       toast(e.message, true);

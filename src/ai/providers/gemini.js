@@ -1,5 +1,11 @@
 const { contentToGeminiParts } = require("../images");
 
+function safeJsonParse(str, toolName) {
+  try { return JSON.parse(str); } catch (e) {
+    throw new Error(`Tool "${toolName}" arguments truncated or malformed (${str?.length || 0} chars) — try increasing aiMaxTokens. ${e.message}`);
+  }
+}
+
 const DEFAULT_MODELS = [
   "gemini-2.0-flash",
   "gemini-2.0-flash-lite",
@@ -43,7 +49,7 @@ function convertMessagesToGemini(messages) {
             functionCall: {
               name: tc.function?.name || tc.name,
               args: typeof tc.function?.arguments === "string" 
-                ? JSON.parse(tc.function.arguments) 
+                ? safeJsonParse(tc.function.arguments, tc.function?.name || tc.name) 
                 : (tc.function?.arguments || tc.args || {})
             }
           });
@@ -67,7 +73,7 @@ async function chat(messages, { apiKey, model, temperature, maxTokens, topP, too
     contents,
     generationConfig: {
       temperature: temperature !== undefined ? temperature : 0.7,
-      maxOutputTokens: maxTokens || 1024,
+      maxOutputTokens: maxTokens || 4096,
     }
   };
   if (systemInstruction) body.systemInstruction = systemInstruction;
@@ -89,6 +95,7 @@ async function chat(messages, { apiKey, model, temperature, maxTokens, topP, too
         }))
       }
     ];
+    body.toolConfig = { functionCallingConfig: { mode: "AUTO" } };
   }
 
   const res = await fetch(url, {

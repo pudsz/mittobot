@@ -16,7 +16,7 @@ services:
     container_name: ggboi-bot
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3001:3001"   # bind to localhost only — proxy handles public traffic
+      - "0.0.0.0:3001:3001"   # bind to all interfaces — proxy handles public traffic
     env_file:
       - .env
     environment:

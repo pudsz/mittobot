@@ -1,6 +1,12 @@
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models";
 
+function safeJsonParse(str, toolName) {
+  try { return JSON.parse(str); } catch (e) {
+    throw new Error(`Tool "${toolName}" arguments truncated or malformed (${str?.length || 0} chars) — try increasing aiMaxTokens. ${e.message}`);
+  }
+}
+
 const DEFAULT_MODELS = [
   "llama-3.3-70b-versatile",
   "llama-3.1-8b-instant",
@@ -56,12 +62,13 @@ async function chat(messages, { apiKey, model, temperature, maxTokens, topP, too
   const body = {
     model: resolved,
     messages,
-    max_completion_tokens: maxTokens || 1024,
+    max_completion_tokens: maxTokens || 4096,
     temperature: temperature !== undefined ? temperature : 0.7,
   };
   if (topP !== undefined) body.top_p = topP;
   if (tools && tools.length > 0) {
     body.tools = tools;
+    body.tool_choice = "auto";
   }
 
   const res = await fetch(GROQ_URL, {
@@ -86,7 +93,7 @@ async function chat(messages, { apiKey, model, temperature, maxTokens, topP, too
     toolCalls: msg.tool_calls ? msg.tool_calls.map(tc => ({
       id: tc.id,
       name: tc.function.name,
-      args: JSON.parse(tc.function.arguments)
+      args: safeJsonParse(tc.function.arguments, tc.function.name)
     })) : undefined
   };
 }

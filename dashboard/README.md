@@ -20,7 +20,7 @@ npm run dev
 ```
 
 Open the printed local URL. For local development against a bot running on the
-same machine you might use e.g. `VITE_BOT_API_URL=http://localhost:3000`.
+same machine you might use e.g. `VITE_BOT_API_URL=http://0.0.0.0:3000`.
 
 > The bot's API must allow CORS from the dashboard origin (and send the
 > `Authorization` header through), since the dashboard is served from a

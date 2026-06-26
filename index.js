@@ -52,6 +52,7 @@ const COMMAND_FILES = [
   "./src/commands/reactionrole",
   "./src/commands/autorole",
   "./src/commands/dangerzone",
+  "./src/commands/ai",
 ];
 for (const file of COMMAND_FILES) {
   const defs = require(file);

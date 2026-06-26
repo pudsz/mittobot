@@ -12,7 +12,7 @@ npm start               # full local stack: SQLite + bot + API + dashboard
 `npm start` runs `scripts/dev.js`, a dependency-free launcher that:
 1. Initializes the SQLite database (creates `ggboi.sqlite` if not exists)
 2. Starts the **bot + API** (`node index.js`).
-3. Starts the **dashboard** Vite dev server on `:5173`, pointed at the local API (`VITE_BOT_API_URL=http://localhost:3001`).
+3. Starts the **dashboard** Vite dev server on `:5173`, pointed at the local API (`VITE_BOT_API_URL=http://0.0.0.0:3001`).
 
 Ctrl+C stops the bot and dashboard. Flags: `--no-dashboard`. Other scripts: `npm run bot` (bot only), `npm run dashboard` (dashboard only).
 

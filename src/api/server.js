@@ -36,6 +36,8 @@ const AI_SETTING_KEYS = new Set([
   "aiSystemPrompt", "aiAllowedChannels", "aiIgnoredChannels",
   "aiTemperature", "aiMaxTokens", "aiTopP", "aiContextLimit",
   "aiToolsEnabled", "aiMemoryEnabled", "aiThinkingEnabled",
+  "aiFallbackProviders", "aiChattyMode", "aiChattyCooldown",
+  "aiToolPermissions",
 ]);
 
 function getBotSettings() {
@@ -392,7 +394,7 @@ function startApi(ctx) {
   // Discord OAuth callback — exchange code for token, fetch user, issue JWT
   app.get("/api/auth/discord/callback", async (req, res) => {
     const { code, error: oauthError } = req.query;
-    const dashOrigin = originList[0] || "http://localhost:5173";
+    const dashOrigin = originList[0] || "http://0.0.0.0:5173";
 
     if (oauthError || !code) {
       return res.redirect(`${dashOrigin}?error=${encodeURIComponent(oauthError || "No authorization code received")}`);
@@ -544,7 +546,18 @@ function startApi(ctx) {
       }
       if (!userCanAccessGuild(req.user.sub, guildId, req.user.isOwner)) return res.status(403).json({ error: "You don't have access to this guild" });
       const aiMemory = require("../ai/memory");
-      res.json({ memories: aiMemory.forGuild(guildId) });
+      const guild = resolveGuild(guildId);
+      const raw = aiMemory.forGuild(guildId);
+      // Enrich with cached display names from the Discord guild member cache
+      const memories = raw.map(m => {
+        let displayName = null;
+        if (m.userId && guild) {
+          const member = guild.members.cache.get(m.userId);
+          if (member) displayName = member.displayName || member.user?.username || null;
+        }
+        return { ...m, displayName };
+      });
+      res.json({ memories });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -579,6 +592,97 @@ function startApi(ctx) {
         return res.status(404).json({ error: "Memory not found" });
       }
       res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ─── AI Chat (SSE streaming endpoint) ────────────────────────────────────
+  // Owner-only — streams AI responses token-by-token with a typewriter effect.
+  app.post("/api/ai/chat", requireAuth, requireOwner, async (req, res) => {
+    const { message, thinkingEnabled, guildId } = req.body || {};
+
+    if (!message || typeof message !== "string" || !message.trim()) {
+      return res.status(400).json({ error: "Message is required" });
+    }
+
+    if (!settings.get("aiEnabled")) {
+      return res.status(503).json({ error: "AI is currently disabled" });
+    }
+
+    // Set up SSE
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no", // disable nginx buffering
+    });
+
+    const send = (data) => {
+      if (res.writableEnded) return;
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    try {
+      const { chatWithProvider, parseFallbackList, cleanResponse, splitMessage } = require("../ai");
+      const system = settings.get("aiSystemPrompt") || "You are a helpful assistant.";
+      const messages = [
+        { role: "system", content: system },
+        { role: "user", content: `[Dashboard Admin]: ${message.trim()}` },
+      ];
+
+      const primaryId = settings.get("aiProvider") || "groq";
+      const fallbackIds = parseFallbackList(settings.get("aiFallbackProviders"));
+      const providerIds = [primaryId, ...fallbackIds].filter((id, i, arr) => arr.indexOf(id) === i);
+
+      const result = await chatWithProvider(providerIds, messages);
+      const response = result.result;
+      const think = thinkingEnabled !== false;
+
+      let fullText = "";
+
+      if (typeof response === "string") {
+        fullText = cleanResponse(response, think);
+      } else {
+        const { text } = response;
+        fullText = cleanResponse(text || "", think);
+      }
+
+      if (!fullText) {
+        send({ type: "error", error: "The AI returned an empty response." });
+      } else {
+        // Stream the response in small chunks with a typewriter effect
+        const chunkSize = 3;
+        for (let i = 0; i < fullText.length; i += chunkSize) {
+          const chunk = fullText.slice(i, i + chunkSize);
+          send({ type: "token", text: chunk });
+          // Small delay for typewriter feel (faster for longer texts)
+          await new Promise(r => setTimeout(r, 15 + Math.random() * 10));
+        }
+        send({ type: "done", fullText });
+      }
+    } catch (err) {
+      console.error("[api] AI chat error:", err.message);
+      send({ type: "error", error: err.message });
+    } finally {
+      if (!res.writableEnded) res.end();
+    }
+  });
+
+  // ─── AI Conversations (memories formatted as conversation history) ────────
+  app.get("/api/ai/conversations", requireAuth, async (req, res) => {
+    try {
+      const guildInfo = getGuildInfo(reqGuildId(req));
+      const guildId = guildInfo.guildId;
+      if (!guildId) return res.json({ conversations: [] });
+      if (!userCanAccessGuild(req.user.sub, guildId, req.user.isOwner)) {
+        return res.status(403).json({ error: "You don't have access to this guild" });
+      }
+      const aiMemory = require("../ai/memory");
+      const memories = aiMemory.forGuild(guildId);
+      // Sort most recent first, limit to 50
+      const sorted = memories.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 50);
+      res.json({ conversations: sorted });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -793,6 +897,10 @@ function startApi(ctx) {
       enabled: !!b.welcome.enabled,
       channelId: okChan(b.welcome.channelId) ? (b.welcome.channelId || null) : null,
       message: String(b.welcome.message || "").slice(0, 1500),
+      embedColor: String(b.welcome.embedColor || "#57f287").slice(0, 7),
+      imageUrl: String(b.welcome.imageUrl || "").slice(0, 500),
+      authorName: String(b.welcome.authorName || "").slice(0, 256),
+      title: String(b.welcome.title || "").slice(0, 256),
     };
     if (b.leave) clean.leave = {
       enabled: !!b.leave.enabled,
@@ -1192,6 +1300,53 @@ function startApi(ctx) {
     try {
       const db = require("../db");
       await db.removeProbation(guildInfo.guildId, req.params.userId);
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ─── AI Analytics ─────────────────────────────────────────────────────────
+  app.get("/api/ai/analytics", requireAuth, requireOwner, async (req, res) => {
+    try {
+      const db = require("../db");
+      const guildId = reqGuildId(req) || ctx.client?.guilds?.cache?.first?.()?.id;
+      const days = Math.min(parseInt(req.query.days, 10) || 7, 90);
+      if (!guildId) return res.json({ stats: [], topUsers: [] });
+      const stats = await db.getAiAnalytics(guildId, days);
+      const topUsers = await db.getAiTopUsers(guildId, days, 10);
+      res.json({ stats, topUsers, days });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ─── AI Personalities ─────────────────────────────────────────────────────
+  app.get("/api/ai/personalities", requireAuth, requireOwner, async (req, res) => {
+    try {
+      const db = require("../db");
+      res.json({ personalities: await db.getPersonalities() });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/ai/personalities", requireAuth, requireOwner, async (req, res) => {
+    try {
+      const db = require("../db");
+      const { name, prompt } = req.body || {};
+      if (!name || !prompt) return res.status(400).json({ error: "name and prompt required" });
+      const id = await db.addPersonality(name, prompt);
+      res.json({ ok: true, id });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/ai/personalities/:id", requireAuth, requireOwner, async (req, res) => {
+    try {
+      const db = require("../db");
+      await db.deletePersonality(Number(req.params.id));
       res.json({ ok: true });
     } catch (err) {
       res.status(500).json({ error: err.message });

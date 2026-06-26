@@ -2,6 +2,47 @@ const { PermissionFlagsBits } = require("discord.js");
 const safe = require("../safe");
 const aiMemory = require("./memory");
 
+// Resolve tool permissions from settings. Returns "all" | "mod" | "admin" | "owner".
+// Default: moderation tools require at least "mod", non-moderation tools "all".
+function getToolPermission(toolName) {
+  try {
+    const settings = require("../settings");
+    const raw = settings.get("aiToolPermissions");
+    if (!raw || typeof raw !== "string" || !raw.trim()) return null;
+    const map = JSON.parse(raw);
+    return map[toolName] || null;
+  } catch { return null; }
+}
+
+function checkToolAccess(toolName, member) {
+  const perm = getToolPermission(toolName);
+  if (!perm) {
+    // Moderation tools default to requiring at least mod
+    const modTools = new Set(["warn_member", "mute_member", "kick_member", "ban_member"]);
+    if (modTools.has(toolName)) {
+      const { OWNER_IDS } = require("../utils");
+      if (OWNER_IDS.has(member.id)) return true;
+      return member.permissions.has(PermissionFlagsBits.ModerateMembers) ||
+             member.permissions.has(PermissionFlagsBits.Administrator);
+    }
+    return true; // non-mod tools are always allowed
+  }
+
+  switch (perm) {
+    case "all": return true;
+    case "mod":
+      return member.permissions.has(PermissionFlagsBits.ModerateMembers) ||
+             member.permissions.has(PermissionFlagsBits.Administrator);
+    case "admin":
+      return member.permissions.has(PermissionFlagsBits.Administrator);
+    case "owner": {
+      const { OWNER_IDS } = require("../utils");
+      return OWNER_IDS.has(member.id);
+    }
+    default: return false;
+  }
+}
+
 const TOOL_SCHEMAS = [
   {
     name: "send_message",
@@ -263,6 +304,7 @@ async function executeTool(name, args, ctx, message) {
     }
 
     case "warn_member": {
+      if (!checkToolAccess("warn_member", message.member)) return "Permission denied: You need moderator permissions to warn members via AI.";
       const member = await safe.orNull(guild.members.fetch(args.userId), `tool: warn member ${args.userId}`);
       if (!member) return `Error: Member not found.`;
       data.addWarning(guild.id, member.id, { reason: args.reason, by: `AI Assistant (${client.user.tag})`, timestamp: Date.now() });
@@ -271,34 +313,37 @@ async function executeTool(name, args, ctx, message) {
     }
 
     case "mute_member": {
-      const member = await safe.orNull(guild.members.fetch(args.userId), `tool: mute member ${args.userId}`);
+      if (!checkToolAccess("mute_member", message.member)) return "Permission denied: You need moderator permissions to mute members via AI.";
+      const mmember = await safe.orNull(guild.members.fetch(args.userId), `tool: mute member ${args.userId}`);
       if (!member) return `Error: Member not found.`;
-      if (!guild.members.me.permissions.has(PermissionFlagsBits.ModerateMembers) || !member.moderatable) {
+      if (!guild.members.me.permissions.has(PermissionFlagsBits.ModerateMembers) || !mmember.moderatable) {
         return `Error: bot lacks permission or member is not moderatable.`;
       }
       const durMinutes = args.durationMinutes || 10;
-      await member.timeout(durMinutes * 60_000, args.reason);
-      return `Successfully muted ${member.user.tag} for ${durMinutes} minutes. Reason: ${args.reason}`;
+      await mmember.timeout(durMinutes * 60_000, args.reason);
+      return `Successfully muted ${mmember.user.tag} for ${durMinutes} minutes. Reason: ${args.reason}`;
     }
 
     case "kick_member": {
-      const member = await safe.orNull(guild.members.fetch(args.userId), `tool: kick member ${args.userId}`);
+      if (!checkToolAccess("kick_member", message.member)) return "Permission denied: You need admin permissions to kick members via AI.";
+      const kmember = await safe.orNull(guild.members.fetch(args.userId), `tool: kick member ${args.userId}`);
       if (!member) return `Error: Member not found.`;
-      if (!guild.members.me.permissions.has(PermissionFlagsBits.KickMembers) || !member.kickable) {
+      if (!guild.members.me.permissions.has(PermissionFlagsBits.KickMembers) || !kmember.kickable) {
         return `Error: bot lacks permission or member is not kickable.`;
       }
-      await member.kick(args.reason);
-      return `Successfully kicked member ${member.user.tag}. Reason: ${args.reason}`;
+      await kmember.kick(args.reason);
+      return `Successfully kicked member ${kmember.user.tag}. Reason: ${args.reason}`;
     }
 
     case "ban_member": {
-      const member = await safe.orNull(guild.members.fetch(args.userId), `tool: ban member ${args.userId}`);
+      if (!checkToolAccess("ban_member", message.member)) return "Permission denied: You need admin permissions to ban members via AI.";
+      const bmember = await safe.orNull(guild.members.fetch(args.userId), `tool: ban member ${args.userId}`);
       if (!member) return `Error: Member not found.`;
-      if (!guild.members.me.permissions.has(PermissionFlagsBits.BanMembers) || !member.bannable) {
+      if (!guild.members.me.permissions.has(PermissionFlagsBits.BanMembers) || !bmember.bannable) {
         return `Error: bot lacks permission or member is not bannable.`;
       }
-      await member.ban({ reason: args.reason, deleteMessageSeconds: 24 * 60 * 60 });
-      return `Successfully banned member ${member.user.tag}. Reason: ${args.reason}`;
+      await bmember.ban({ reason: args.reason, deleteMessageSeconds: 24 * 60 * 60 });
+      return `Successfully banned member ${bmember.user.tag}. Reason: ${args.reason}`;
     }
 
     case "add_memory": {

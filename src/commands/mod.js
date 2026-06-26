@@ -24,6 +24,8 @@ const DM_TEMPLATE_DEFAULTS = {
   mute: "🔇 You've been muted in **{server}** for {duration}. Reason: {reason}",
   kick: "👢 You've been kicked from **{server}**. Reason: {reason}",
   ban: "🔨 You've been banned from **{server}**. Reason: {reason}",
+  softban: "🔨 You've been softbanned from **{server}** (messages cleared). Reason: {reason}",
+  tempban: "🔨 You've been temporarily banned from **{server}** for {duration}. Reason: {reason}",
   unmute: "🔊 You've been unmuted in **{server}**.",
   unban: "You've been unbanned from **{server}**.",
 };
@@ -207,13 +209,55 @@ async function slashFakeMod(interaction, type) {
 // ════════════════════════════════════════════════════════════
 
 // Moderation log helper — logs every real mod action to the audit trail.
-async function logModAction(guildId, userId, modId, action, reason, details) {
+async function logModAction(guildId, userId, modId, action, reason, details, proof) {
   try {
-    await db.addModLogEntry(guildId, userId, modId, action, reason, details);
+    await db.addModLogEntry(guildId, userId, modId, action, reason, details, proof);
   } catch { /* best-effort */ }
 }
 
-async function execRealMod(respond, guild, type, member, durationMs, reason, data, authorTag, { severity = 1, moderatorId } = {}) {
+// Collect proof (attachments + replied-to message) from a prefix command message.
+// Returns null if no proof is present.
+async function collectProof(message) {
+  const proof = {};
+  let hasProof = false;
+
+  // Collect message attachments
+  if (message.attachments.size > 0) {
+    proof.attachments = message.attachments.map(a => ({
+      url: a.url,
+      name: a.name,
+      type: a.contentType || null,
+    }));
+    hasProof = true;
+  }
+
+  // Collect replied-to message
+  if (message.reference?.messageId) {
+    const replied = await safe.orNull(
+      message.channel.messages.fetch(message.reference.messageId),
+      `fetch replied msg ${message.reference.messageId}`
+    );
+    if (replied) {
+      proof.repliedMessage = {
+        content: (replied.content || "").slice(0, 1000),
+        author: replied.author?.username || "unknown",
+        authorId: replied.author?.id || "",
+      };
+      if (replied.attachments.size > 0) {
+        proof.repliedMessage.attachments = replied.attachments.map(a => ({
+          url: a.url,
+          name: a.name,
+          type: a.contentType || null,
+        }));
+      }
+      hasProof = true;
+    }
+  }
+
+  return hasProof ? proof : null;
+}
+
+async function execRealMod(respond, guild, type, member, durationMs, reason, data, authorTag, { severity = 1, moderatorId, proof } = {}) {
   try {
     const username = member.user.username;
     const userId = member.id;
@@ -225,7 +269,7 @@ async function execRealMod(respond, guild, type, member, durationMs, reason, dat
       const count = data.getWarnings(guildId, userId).length;
 
       // Log the action
-      await logModAction(guildId, userId, authorTag, "warn", reason, `severity=${severity} pts=${points}`);
+      await logModAction(guildId, userId, authorTag, "warn", reason, `severity=${severity} pts=${points}`, proof);
 
       // Send DM
       await sendPunishmentDM(guild, member, "warn", { reason, mod: authorTag });
@@ -252,7 +296,7 @@ async function execRealMod(respond, guild, type, member, durationMs, reason, dat
       if (mutedRole && member.roles.highest.position < guild.members.me.roles.highest.position) await member.roles.add(mutedRole, reason);
       await safe.timeout(member, durationMs, reason, "real mute");
 
-      await logModAction(guildId, userId, authorTag, "mute", reason, `duration=${formatDuration(durationMs)}`);
+      await logModAction(guildId, userId, authorTag, "mute", reason, `duration=${formatDuration(durationMs)}`, proof);
       await sendPunishmentDM(guild, member, "mute", { reason, duration: formatDuration(durationMs), mod: authorTag });
 
       // Auto-exec: fire rules triggered by "mute" event
@@ -267,7 +311,7 @@ async function execRealMod(respond, guild, type, member, durationMs, reason, dat
     if (type === "kick") {
       await member.kick(reason);
 
-      await logModAction(guildId, userId, authorTag, "kick", reason, "");
+      await logModAction(guildId, userId, authorTag, "kick", reason, "", proof);
       await sendPunishmentDM(guild, member, "kick", { reason, mod: authorTag });
 
       // Auto-exec: fire rules triggered by "kick" event
@@ -281,7 +325,7 @@ async function execRealMod(respond, guild, type, member, durationMs, reason, dat
     if (type === "ban") {
       await member.ban({ reason, deleteMessageSeconds: 7 * 24 * 60 * 60 });
 
-      await logModAction(guildId, userId, authorTag, "ban", reason, "7d msg delete");
+      await logModAction(guildId, userId, authorTag, "ban", reason, "7d msg delete", proof);
       await sendPunishmentDM(guild, member, "ban", { reason, mod: authorTag });
 
       // Auto-exec: fire rules triggered by "ban" event
@@ -292,6 +336,45 @@ async function execRealMod(respond, guild, type, member, durationMs, reason, dat
 
       return respond({ embeds: [successEmbed(`${username} banned | ${reason}`)] });
     }
+    if (type === "softban") {
+      // Send DM before the ban so the member object is still fresh
+      await sendPunishmentDM(guild, member, "softban", { reason, mod: authorTag });
+
+      await member.ban({ reason, deleteMessageSeconds: 7 * 24 * 60 * 60 });
+      await logModAction(guildId, userId, authorTag, "softban", reason, "7d msg delete", proof);
+
+      // Immediately unban to complete the softban (ban + instant unban = message wipe)
+      await guild.bans.remove(userId, `Softban by ${authorTag}: ${reason}`);
+
+      // Auto-exec: fire rules triggered by "softban" event
+      autoexec.executeTrigger(guildId, "softban", {
+        guild, member, user: member.user, username, userId,
+        reason, moderator: authorTag, moderatorUserId: moderatorId || null,
+      }).catch(err => console.error("autoexec softban:", err.message));
+
+      return respond({ embeds: [successEmbed(`${username} softbanned | ${reason}`)] });
+    }
+    if (type === "tempban") {
+      const expiresAt = Date.now() + durationMs;
+
+      // Send DM before the ban so the member object is still fresh
+      await sendPunishmentDM(guild, member, "tempban", { reason, duration: formatDuration(durationMs), mod: authorTag });
+
+      await member.ban({ reason, deleteMessageSeconds: 7 * 24 * 60 * 60 });
+
+      // Store in DB so the cleanup timer can auto-unban later
+      await db.setTempban(guildId, userId, expiresAt, authorTag, reason);
+      await logModAction(guildId, userId, authorTag, "tempban", reason, `duration=${formatDuration(durationMs)}`, proof);
+
+      // Auto-exec: fire rules triggered by "tempban" event
+      autoexec.executeTrigger(guildId, "tempban", {
+        guild, member, user: member.user, username, userId,
+        reason, moderator: authorTag, moderatorUserId: moderatorId || null,
+        duration: formatDuration(durationMs),
+      }).catch(err => console.error("autoexec tempban:", err.message));
+
+      return respond({ embeds: [successEmbed(`${username} banned for **${formatDuration(durationMs)}** | ${reason}`)] });
+    }
   } catch (err) {
     console.error(err);
     return respond({ embeds: [errorEmbed(`Failed: ${err.message}`)] });
@@ -301,9 +384,27 @@ async function execRealMod(respond, guild, type, member, durationMs, reason, dat
 async function handleRealMod(message, args, type, ctx) {
   const { data } = ctx;
   const userId = resolveUserId(args[0]);
-  if (!userId) return message.reply({ embeds: [errorEmbed(`Usage: $real${type} @user [severity] [reason]`)] });
+  const USAGE = {
+    warn:    `Usage: $realwarn @user [severity] [reason]`,
+    mute:    `Usage: $realmute @user [duration] [reason]`,
+    kick:    `Usage: $realkick @user [reason]`,
+    ban:     `Usage: $realban @user [reason]`,
+    softban: `Usage: $realsoftban @user [reason]`,
+    tempban: `Usage: $realtempban @user [duration] [reason]`,
+  };
+  if (!userId) return message.reply({ embeds: [errorEmbed(USAGE[type] || `Usage: $real${type} @user [reason]`)] });
   const member = await safe.orNull(message.guild.members.fetch(userId), `real mod fetch ${userId}`);
   if (!member) return message.reply({ embeds: [errorEmbed("User not found")] });
+
+  // Collect proof (attachments / replied-to message) before deletion
+  const proof = await collectProof(message);
+
+  // If proof exists, send "Saving…" + delete original first
+  if (proof) {
+    await message.channel.send({ embeds: [new EmbedBuilder().setColor(0xfee75c).setDescription("📎 Saving attachments…")] });
+    await safe.delete(message, "real mod command");
+  }
+
   let durationMs = 10 * 60_000, reasonStart = 1;
   let severity = 1;
   if (type === "warn") {
@@ -316,11 +417,16 @@ async function handleRealMod(message, args, type, ctx) {
   } else if (type === "mute") {
     if (!message.guild.members.me.permissions.has(PermissionFlagsBits.ModerateMembers)) return message.reply({ embeds: [errorEmbed("I need `Moderate Members` to mute.")] });
     const parsed = parseDuration(args[1]); if (parsed) { durationMs = parsed; reasonStart = 2; }
+  } else if (type === "tempban") {
+    if (!message.guild.members.me.permissions.has(PermissionFlagsBits.BanMembers)) return message.reply({ embeds: [errorEmbed("I need `Ban Members` permission.")] });
+    const parsed = parseDuration(args[1]); if (parsed) { durationMs = parsed; reasonStart = 2; }
   } else if (type === "kick" && !message.guild.members.me.permissions.has(PermissionFlagsBits.KickMembers)) return message.reply({ embeds: [errorEmbed("I need `Kick Members` permission.")] });
   else if  (type === "ban"  && !message.guild.members.me.permissions.has(PermissionFlagsBits.BanMembers))  return message.reply({ embeds: [errorEmbed("I need `Ban Members` permission.")] });
+  else if  (type === "softban" && !message.guild.members.me.permissions.has(PermissionFlagsBits.BanMembers)) return message.reply({ embeds: [errorEmbed("I need `Ban Members` permission.")] });
   const reason = args.slice(reasonStart).join(" ") || "No reason";
-  await execRealMod(e => message.channel.send(e), message.guild, type, member, durationMs, reason, data, message.author.tag, { severity, moderatorId: message.author.id });
-  await safe.delete(message, "real mod command");
+  await execRealMod(e => message.channel.send(e), message.guild, type, member, durationMs, reason, data, message.author.tag, { severity, moderatorId: message.author.id, proof });
+  // Delete original if not already removed by the proof-saving flow
+  if (!proof) await safe.delete(message, "real mod command");
 }
 
 async function slashRealMod(interaction, ctx, type) {
@@ -341,9 +447,16 @@ async function slashRealMod(interaction, ctx, type) {
       return interaction.editReply({ embeds: [errorEmbed("I need `Moderate Members` to mute.")] });
     const durStr = interaction.options.getString("duration");
     if (durStr) { const parsed = parseDuration(durStr); if (parsed) durationMs = parsed; }
+  } else if (type === "tempban") {
+    if (!interaction.guild.members.me.permissions.has(PermissionFlagsBits.BanMembers))
+      return interaction.editReply({ embeds: [errorEmbed("I need `Ban Members` permission.")] });
+    const durStr = interaction.options.getString("duration");
+    if (durStr) { const parsed = parseDuration(durStr); if (parsed) durationMs = parsed; }
   } else if (type === "kick" && !interaction.guild.members.me.permissions.has(PermissionFlagsBits.KickMembers))
     return interaction.editReply({ embeds: [errorEmbed("I need `Kick Members` permission.")] });
   else if  (type === "ban"  && !interaction.guild.members.me.permissions.has(PermissionFlagsBits.BanMembers))
+    return interaction.editReply({ embeds: [errorEmbed("I need `Ban Members` permission.")] });
+  else if  (type === "softban" && !interaction.guild.members.me.permissions.has(PermissionFlagsBits.BanMembers))
     return interaction.editReply({ embeds: [errorEmbed("I need `Ban Members` permission.")] });
 
   await execRealMod(e => interaction.editReply(e), interaction.guild, type, member, durationMs, reason, data, interaction.user.tag, { severity, moderatorId: interaction.user.id });
@@ -806,6 +919,8 @@ module.exports = [
   { name: "realwarn",      description: "Warn a user",           prefix: (m,a,c) => handleRealMod(m,a,"warn",c),      slash: new SlashCommandBuilder().setName("realwarn").setDescription("Warn a user").addUserOption(o => o.setName("user").setDescription("Target user").setRequired(true)).addIntegerOption(o => o.setName("severity").setDescription("Severity (1-5, more = worse)").setRequired(false).setMinValue(1).setMaxValue(5)).addStringOption(o => o.setName("reason").setDescription("Reason").setRequired(false)), execute: (i,c) => slashRealMod(i,c,"warn") },
   { name: "realkick",      description: "Kick a user",           prefix: (m,a,c) => handleRealMod(m,a,"kick",c),      slash: realModSlash("realkick",      "Kick a user"),              execute: (i,c) => slashRealMod(i,c,"kick") },
   { name: "realban",       description: "Ban a user",            prefix: (m,a,c) => handleRealMod(m,a,"ban",c),       slash: realModSlash("realban",       "Ban a user"),               execute: (i,c) => slashRealMod(i,c,"ban") },
+  { name: "realsoftban",   description: "Softban a user (ban + instant unban to clear messages)", prefix: (m,a,c) => handleRealMod(m,a,"softban",c), slash: realModSlash("realsoftban", "Softban a user (clears 7d of messages)"), execute: (i,c) => slashRealMod(i,c,"softban") },
+  { name: "realtempban",   description: "Temporarily ban a user", prefix: (m,a,c) => handleRealMod(m,a,"tempban",c), slash: realModSlash("realtempban", "Temporarily ban a user", true), execute: (i,c) => slashRealMod(i,c,"tempban") },
   { name: "realmute",      description: "Mute a user",           prefix: (m,a,c) => handleRealMod(m,a,"mute",c),      slash: realModSlash("realmute",      "Mute a user", true),        execute: (i,c) => slashRealMod(i,c,"mute") },
   { name: "realunmute",    description: "Unmute a user",         prefix: (m,a,c) => handleRealUnmute(m,a,c),          slash: realModSlash("realunmute",    "Unmute a user"),            execute: (i,c) => slashRealUnmute(i,c) },
   { name: "realunban",     description: "Unban a user",          prefix: (m,a,c) => handleRealUnban(m,a,c),           slash: realModSlash("realunban",     "Unban a user"),             execute: (i,c) => slashRealUnban(i,c) },
@@ -819,7 +934,7 @@ module.exports = [
 
 // Default permission levels (admins can override per-command via $config / dashboard).
 // kick/ban escalate to admin; everything else mod-gated by default.
-const ADMIN_DEFAULT = new Set(["ban", "kick", "realban", "realkick", "syncperms"]);
+const ADMIN_DEFAULT = new Set(["ban", "kick", "realban", "realkick", "realsoftban", "realtempban", "syncperms"]);
 for (const cmd of module.exports) {
   cmd.defaultPermission = ADMIN_DEFAULT.has(cmd.name) ? "admin" : "mod";
 }
@@ -828,8 +943,8 @@ for (const cmd of module.exports) {
 const realwarnDef = module.exports.find(c => c.name === "realwarn");
 if (realwarnDef) realwarnDef.defaultSettings = { ladder: DEFAULT_WARN_LADDER };
 
-// ─── Probation expiry cleanup (runs every 5 minutes) ──────────────────────
-let probationTimer = null;
+// ─── Probation & Tempban expiry cleanup (runs every 5 minutes) ────────────
+let cleanupTimer = null;
 let clientRef = null;
 
 // The index.js bootstrap calls this with the Discord client reference so the
@@ -853,9 +968,19 @@ async function removeExpiredProbationRole(p) {
   } catch { /* best-effort */ }
 }
 
+async function removeExpiredTempban(tb) {
+  if (!clientRef || !tb.guild_id || !tb.user_id) return;
+  try {
+    const guild = clientRef.guilds.cache.get(tb.guild_id);
+    if (!guild) return;
+    await guild.bans.remove(tb.user_id, `Tempban expired`).catch(() => {});
+    await db.removeTempban(tb.guild_id, tb.user_id);
+  } catch { /* best-effort */ }
+}
+
 function startProbationCleanup() {
-  if (probationTimer) return;
-  probationTimer = setInterval(async () => {
+  if (cleanupTimer) return;
+  cleanupTimer = setInterval(async () => {
     try {
       const all = await db.getAllProbations();
       const now = Date.now();
@@ -870,14 +995,24 @@ function startProbationCleanup() {
         }
       }
     } catch { /* best-effort */ }
+    // Also expire tempbans
+    try {
+      const tempbans = await db.getAllTempbans();
+      const now = Date.now();
+      for (const tb of tempbans) {
+        if (tb.expires_at && Number(tb.expires_at) <= now) {
+          try { await removeExpiredTempban(tb); } catch { /* best-effort */ }
+        }
+      }
+    } catch { /* best-effort */ }
   }, 5 * 60_000);
-  probationTimer.unref();
+  cleanupTimer.unref();
 }
 
 function stopProbationCleanup() {
-  if (probationTimer) {
-    clearInterval(probationTimer);
-    probationTimer = null;
+  if (cleanupTimer) {
+    clearInterval(cleanupTimer);
+    cleanupTimer = null;
   }
 }
 

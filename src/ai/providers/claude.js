@@ -1,5 +1,11 @@
 const { contentToAnthropicBlocks } = require("../images");
 
+function safeJsonParse(str, toolName) {
+  try { return JSON.parse(str); } catch (e) {
+    throw new Error(`Tool "${toolName}" arguments truncated or malformed (${str?.length || 0} chars) — try increasing aiMaxTokens. ${e.message}`);
+  }
+}
+
 const CLAUDE_URL = "https://api.anthropic.com/v1/messages";
 
 const DEFAULT_MODELS = [
@@ -32,7 +38,7 @@ function convertMessagesToAnthropic(messages) {
             id: tc.id,
             name: tc.function?.name || tc.name,
             input: typeof tc.function?.arguments === "string" 
-              ? JSON.parse(tc.function.arguments) 
+              ? safeJsonParse(tc.function.arguments, tc.function?.name || tc.name) 
               : (tc.function?.arguments || tc.args || {})
           });
         }
@@ -76,7 +82,7 @@ async function chat(messages, { apiKey, model, temperature, maxTokens, topP, too
   const { system, messages: chatMessages } = convertMessagesToAnthropic(messages);
   const body = {
     model: model || DEFAULT_MODELS[0],
-    max_tokens: maxTokens || 1024,
+    max_tokens: maxTokens || 4096,
     messages: chatMessages,
     temperature: temperature !== undefined ? temperature : 0.7,
   };
@@ -88,6 +94,7 @@ async function chat(messages, { apiKey, model, temperature, maxTokens, topP, too
       description: t.function.description,
       input_schema: t.function.parameters
     }));
+    body.tool_choice = { type: "auto" };
   }
 
   const res = await fetch(CLAUDE_URL, {

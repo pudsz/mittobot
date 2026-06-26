@@ -1,9 +1,15 @@
 // Generic provider for any OpenAI-compatible or Anthropic-compatible endpoint.
 // The user supplies a base URL (e.g. https://api.together.xyz/v1 or
-// http://localhost:11434/v1) and picks the wire format. Models are fetched
+// http://0.0.0.0:11434/v1) and picks the wire format. Models are fetched
 // live from the endpoint's /models route.
 
 const { contentToAnthropicBlocks } = require("../images");
+
+function safeJsonParse(str, toolName) {
+  try { return JSON.parse(str); } catch (e) {
+    throw new Error(`Tool "${toolName}" arguments truncated or malformed (${str?.length || 0} chars) — try increasing aiMaxTokens. ${e.message}`);
+  }
+}
 
 const DEFAULT_MODELS = [];
 
@@ -57,11 +63,14 @@ async function chatOpenAI(messages, { apiKey, model, base, temperature, maxToken
   const body = {
     model,
     messages,
-    max_completion_tokens: maxTokens || 1024,
+    max_completion_tokens: maxTokens || 4096,
     temperature: temperature !== undefined ? temperature : 0.7
   };
   if (topP !== undefined) body.top_p = topP;
-  if (tools && tools.length > 0) body.tools = tools;
+  if (tools && tools.length > 0) {
+    body.tools = tools;
+    body.tool_choice = "auto";
+  }
 
   const res = await fetch(`${base}/chat/completions`, {
     method: "POST",
@@ -72,6 +81,10 @@ async function chatOpenAI(messages, { apiKey, model, base, temperature, maxToken
     body: JSON.stringify(body),
   });
   const bodyData = await res.json().catch(() => ({}));
+  if (res.status === 429) {
+    const retryAfter = parseInt(res.headers.get("retry-after") || "3", 10);
+    throw new Error(`Custom API rate limited — retry after ${retryAfter}s`);
+  }
   if (!res.ok) throw new Error(bodyData?.error?.message || bodyData?.error || `Custom API error (${res.status})`);
   const msg = bodyData?.choices?.[0]?.message;
   if (!msg) throw new Error("Empty response from custom endpoint.");
@@ -80,7 +93,7 @@ async function chatOpenAI(messages, { apiKey, model, base, temperature, maxToken
     toolCalls: msg.tool_calls ? msg.tool_calls.map(tc => ({
       id: tc.id,
       name: tc.function.name,
-      args: JSON.parse(tc.function.arguments)
+      args: safeJsonParse(tc.function.arguments, tc.function.name)
     })) : undefined
   };
 }
@@ -89,7 +102,8 @@ async function chatOpenAI(messages, { apiKey, model, base, temperature, maxToken
 async function chatAnthropic(messages, { apiKey, model, base, temperature, maxTokens, topP, tools }) {
   let system = "";
   const out = [];
-  for (const msg of messages) {
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
     if (msg.role === "system") {
       system = system ? `${system}\n\n${msg.content}` : msg.content;
       continue;
@@ -103,8 +117,7 @@ async function chatAnthropic(messages, { apiKey, model, base, temperature, maxTo
             type: "tool_use",
             id: tc.id,
             name: tc.function?.name || tc.name,
-            input: typeof tc.function?.arguments === "string"
-              ? JSON.parse(tc.function.arguments)
+            input: typeof tc.function?.arguments === "string"              ? safeJsonParse(tc.function.arguments, tc.function?.name || tc.name) 
               : (tc.function?.arguments || tc.args || {})
           });
         }
@@ -135,7 +148,7 @@ async function chatAnthropic(messages, { apiKey, model, base, temperature, maxTo
   }
   const payload = {
     model,
-    max_tokens: maxTokens || 1024,
+    max_tokens: maxTokens || 4096,
     messages: out,
     temperature: temperature !== undefined ? temperature : 0.7
   };
@@ -147,6 +160,7 @@ async function chatAnthropic(messages, { apiKey, model, base, temperature, maxTo
       description: t.function.description,
       input_schema: t.function.parameters
     }));
+    payload.tool_choice = { type: "auto" };
   }
 
   const res = await fetch(`${base}/messages`, {
@@ -159,6 +173,10 @@ async function chatAnthropic(messages, { apiKey, model, base, temperature, maxTo
     body: JSON.stringify(payload),
   });
   const bodyData = await res.json().catch(() => ({}));
+  if (res.status === 429) {
+    const retryAfter = parseInt(res.headers.get("retry-after") || "3", 10);
+    throw new Error(`Custom API rate limited — retry after ${retryAfter}s`);
+  }
   if (!res.ok) throw new Error(bodyData?.error?.message || bodyData?.error || `Custom API error (${res.status})`);
 
   const toolCalls = [];

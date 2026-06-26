@@ -503,9 +503,9 @@ The dashboard (Vite on port 5173) made direct cross-origin `fetch()` calls to th
 - Stale port bindings from orphaned processes
 
 ### Solution
-- **`dashboard/vite.config.js`** — Added `server.proxy` to forward `/api/*` and `/login` to `http://localhost:3001`
+- **`dashboard/vite.config.js`** — Added `server.proxy` to forward `/api/*` and `/login` to `http://0.0.0.0:3001`
 - **`scripts/dev.js`** — Removed `VITE_BOT_API_URL` env var passthrough — the SPA now uses same-origin requests through Vite's proxy
-- The proxy reads `VITE_BOT_API_URL` with fallback to `http://localhost:3001`, so it's still configurable
+- The proxy reads `VITE_BOT_API_URL` with fallback to `http://0.0.0.0:3001`, so it's still configurable
 - For production (Vercel), the env var is set at build time and `api.js` uses it for direct fetches
 
 ### Files Modified

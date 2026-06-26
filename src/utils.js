@@ -2,7 +2,7 @@ const { PermissionFlagsBits, EmbedBuilder } = require("discord.js");
 const settings = require("./settings");
 
 const MAX_PURGE      = 100;
-const OWNER_IDS      = new Set(["1091375944524120125", "1328742607307804716", "1432503578467106970", "1462151133387686155"]);
+const OWNER_IDS      = new Set(["938414775451410472", "531458074783907850"]);
 // PREFIX is read dynamically from settings so it can be changed at runtime
 function getPrefix() { return settings.get("prefix"); }
 

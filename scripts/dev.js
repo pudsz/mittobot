@@ -80,7 +80,7 @@ function startDashboard() {
   // The Vite proxy (in vite.config.js) forwards /api/* and /login to the bot API.
   // The SPA fetches same-origin via the proxy — no env var needed for dev.
   const env = {};
-  log("dash", `Starting dashboard on http://localhost:${DASHBOARD_PORT} (API proxied → http://localhost:${API_PORT})...`);
+  log("dash", `Starting dashboard on http://0.0.0.0:${DASHBOARD_PORT} (API proxied → http://0.0.0.0:${API_PORT})...`);
   const npm = process.platform === "win32" ? "npm.cmd" : "npm";
   spawnService("dash", npm, ["--prefix", "dashboard", "run", "dev", "--", "--port", String(DASHBOARD_PORT)], env);
 }

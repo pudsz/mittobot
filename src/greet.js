@@ -16,7 +16,7 @@ let store = {};
 
 function guildDefaults() {
   return {
-    welcome: { enabled: false, channelId: null, message: "Welcome {user} to **{server}**! You're member #{count}." },
+    welcome: { enabled: false, channelId: null, message: "Welcome {user} to **{server}**! You're member #{count}.", embedColor: "#57f287", imageUrl: "", authorName: "", title: "" },
     leave:   { enabled: false, channelId: null, message: "{tag} left the server. We're now {count} members." },
     logs:    { enabled: false, channelId: null, memberEvents: true, messageEvents: true },
   };
@@ -109,9 +109,12 @@ function sendTo(guild, channelId, embed) {
 async function onMemberAdd(member) {
   const cfg = getConfig(member.guild.id);
   if (cfg.welcome.enabled && cfg.welcome.channelId) {
-    const embed = new EmbedBuilder().setColor(0x57f287).setDescription(format(cfg.welcome.message, member, member.guild));
-    const avatar = member.user.displayAvatarURL();
+    const color = parseInt((cfg.welcome.embedColor || "#57f287").replace(/^#/, ""), 16) || 0x57f287;
+    const embed = new EmbedBuilder().setColor(color).setDescription(format(cfg.welcome.message, member, member.guild));
+    const avatar = cfg.welcome.imageUrl || member.user.displayAvatarURL();
     if (avatar) embed.setThumbnail(avatar);
+    if (cfg.welcome.title) embed.setTitle(format(cfg.welcome.title, member, member.guild));
+    if (cfg.welcome.authorName) embed.setAuthor({ name: format(cfg.welcome.authorName, member, member.guild), iconURL: member.user.displayAvatarURL() });
     sendTo(member.guild, cfg.welcome.channelId, embed);
   }
   if (cfg.logs.enabled && cfg.logs.memberEvents && cfg.logs.channelId) {

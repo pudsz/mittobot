@@ -63,11 +63,19 @@ body {
 ::-webkit-scrollbar-thumb:hover { background: var(--surface-hover); }
 
 /* ═══════════════════════════════════════════════════════════
-   ANIMATIONS — minimal, functional
+   ANIMATIONS — smooth, polished
    ═══════════════════════════════════════════════════════════ */
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeSlideRight {
+  from { opacity: 0; transform: translateX(-12px); }
+  to { opacity: 1; transform: translateX(0); }
 }
 @keyframes slideDown {
   from { opacity: 0; max-height: 0; }
@@ -76,6 +84,14 @@ body {
 @keyframes shimmer {
   0% { background-position: -200% 0; }
   100% { background-position: 200% 0; }
+}
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.03); }
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -361,12 +377,14 @@ aside nav button {
   text-align: left;
   width: 100%;
   transition: all var(--transition-fast);
+  position: relative;
 }
-aside nav button svg { width: 16px; height: 16px; flex-shrink: 0; }
+aside nav button svg { width: 16px; height: 16px; flex-shrink: 0; transition: transform var(--transition-fast); }
 aside nav button:hover {
   color: var(--text);
   background: var(--bg-hover);
 }
+aside nav button:hover svg { transform: translateX(2px); }
 aside nav button.active {
   color: var(--text);
   background: var(--surface);
@@ -482,7 +500,7 @@ main {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   PANELS / CARDS — flat, bordered
+   PANELS / CARDS — flat, bordered, with hover depth
    ═══════════════════════════════════════════════════════════ */
 .panel {
   background: var(--bg-alt);
@@ -490,6 +508,16 @@ main {
   border-radius: var(--radius-md);
   padding: 20px;
   margin-bottom: 16px;
+  transition: border-color var(--transition-base), box-shadow var(--transition-base);
+  animation: fadeSlideIn 0.3s ease both;
+}
+.panel:nth-child(1) { animation-delay: 0s; }
+.panel:nth-child(2) { animation-delay: 0.05s; }
+.panel:nth-child(3) { animation-delay: 0.1s; }
+.panel:nth-child(4) { animation-delay: 0.15s; }
+.panel:hover {
+  border-color: var(--surface-hover);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.15);
 }
 .panel.compact { padding: 14px; }
 .panel h2 {
@@ -1036,7 +1064,7 @@ pre {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   TOAST NOTIFICATIONS
+   TOAST NOTIFICATIONS — smooth slide-up
    ═══════════════════════════════════════════════════════════ */
 .toast {
   position: fixed;
@@ -1048,8 +1076,8 @@ pre {
   padding: 10px 16px;
   border-radius: var(--radius-sm);
   opacity: 0;
-  transform: translateY(8px);
-  transition: all var(--transition-base);
+  transform: translateY(8px) scale(0.97);
+  transition: all 0.25s cubic-bezier(0.22, 1, 0.36, 1);
   pointer-events: none;
   box-shadow: var(--shadow-md);
   z-index: 1000;
@@ -1060,10 +1088,19 @@ pre {
 }
 .toast.show {
   opacity: 1;
-  transform: translateY(0);
+  transform: translateY(0) scale(1);
   pointer-events: auto;
 }
 .toast.err { border-left-color: var(--red); }
+
+/* Cursor blink for streaming text */
+.cursor-blink {
+  animation: blink 0.8s ease infinite;
+}
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
 
 /* ═══════════════════════════════════════════════════════════
    AI TAB — range slider
@@ -1167,26 +1204,166 @@ input[type="range"]::-moz-range-thumb {
 .ladder-row .lbl { color: var(--text-muted); font-size: 11px; }
 
 /* ═══════════════════════════════════════════════════════════
-   MOD LOG VIEWER
+   MOD LOG VIEWER — rich, expandable
    ═══════════════════════════════════════════════════════════ */
+.mod-stats-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.stat-pill {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 64px;
+  transition: all var(--transition-base);
+  animation: fadeSlideIn 0.35s ease both;
+}
+.stat-pill:nth-child(1) { animation-delay: 0s; }
+.stat-pill:nth-child(2) { animation-delay: 0.06s; }
+.stat-pill:nth-child(3) { animation-delay: 0.12s; }
+.stat-pill:nth-child(4) { animation-delay: 0.18s; }
+.stat-pill:nth-child(5) { animation-delay: 0.24s; }
+.stat-pill:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+  border-color: var(--surface-hover);
+}
+.stat-pill-value {
+  font-size: 20px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  line-height: 1.2;
+}
+.stat-pill-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.mod-log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
 .mod-log-row {
   display: grid;
-  grid-template-columns: 1fr 1fr 1.5fr 0.8fr auto;
+  grid-template-columns: 90px 140px 1fr 110px 30px;
   gap: 8px;
   align-items: center;
-  padding: 6px 10px;
+  padding: 8px 12px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  margin-bottom: 3px;
   font-size: 12px;
+  transition: all var(--transition-fast);
+  opacity: 0;
 }
-.mod-log-row .action-label { font-weight: 600; }
-.mod-log-row .action-label.warn { color: var(--orange); }
-.mod-log-row .action-label.mute { color: var(--accent); }
-.mod-log-row .action-label.kick { color: var(--red); }
-.mod-log-row .action-label.ban { color: var(--red); font-weight: 700; }
-.mod-log-row .action-label.unmute { color: var(--green); }
+.mod-log-row.visible {
+  animation: fadeSlideIn 0.25s ease both;
+}
+.mod-log-row:hover {
+  background: var(--bg-hover);
+  border-color: var(--surface-hover);
+}
+.mod-log-cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mod-log-action {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+  font-size: 11px;
+}
+.mod-log-users {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.3;
+}
+.mod-log-user-row code {
+  font-size: 10px;
+  background: rgba(88,166,255,0.06);
+}
+.mod-log-reason {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.mod-log-time {
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: right;
+}
+
+@media (max-width: 900px) {
+  .mod-log-row {
+    grid-template-columns: 60px 1fr 80px 25px;
+    gap: 4px;
+    padding: 6px 8px;
+    font-size: 11px;
+  }
+  .mod-log-users { display: none; }
+  .mod-log-action { font-size: 10px; }
+  .mod-stats-row { gap: 4px; }
+  .stat-pill { padding: 6px 10px; min-width: 48px; }
+  .stat-pill-value { font-size: 16px; }
+}
+@media (max-width: 480px) {
+  .mod-log-row {
+    grid-template-columns: 50px 1fr 60px 20px;
+    gap: 3px;
+    padding: 5px 6px;
+  }
+  .mod-log-reason { display: none; }
+  .mod-log-action { font-size: 9px; }
+}
+.mod-log-expand {
+  display: flex;
+  justify-content: center;
+  color: var(--text-muted);
+  transition: color var(--transition-fast);
+}
+.mod-log-row:hover .mod-log-expand { color: var(--text); }
+
+.mod-log-detail {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  padding: 12px 16px;
+  margin-top: -2px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  animation: slideDown 0.2s ease;
+}
+.mod-log-detail > div {
+  margin-bottom: 6px;
+  line-height: 1.5;
+}
+.mod-log-detail > div:last-child { margin-bottom: 0; }
+.mod-log-detail strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.mod-log-detail pre {
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  font-size: 11px;
+  background: var(--surface);
+  max-height: 200px;
+}
 
 /* ═══════════════════════════════════════════════════════════
    AUTOMOD RULE ROWS
@@ -1207,9 +1384,9 @@ input[type="range"]::-moz-range-thumb {
 .automod-rule .ar-name { font-weight: 600; flex: 1; }
 
 /* ═══════════════════════════════════════════════════════════
-   TAB TRANSITIONS
+   TAB TRANSITIONS — smooth slide-in
    ═══════════════════════════════════════════════════════════ */
-.tab { animation: fadeIn 0.2s ease; }
+.tab { animation: fadeSlideRight 0.25s ease; }
 
 /* ═══════════════════════════════════════════════════════════
    RESPONSIVE – TABLET

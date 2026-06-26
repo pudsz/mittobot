@@ -126,6 +126,7 @@ function init() {
       action    TEXT,
       reason    TEXT,
       details   TEXT,
+      proof     TEXT,
       timestamp BIGINT
     );
 
@@ -208,7 +209,40 @@ function init() {
       timestamp     BIGINT,
       PRIMARY KEY (guild_id, user_id)
     );
+
+    CREATE TABLE IF NOT EXISTS tempbans (
+      guild_id   TEXT,
+      user_id    TEXT,
+      expires_at BIGINT,
+      mod_id     TEXT,
+      reason     TEXT,
+      PRIMARY KEY (guild_id, user_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS ai_analytics (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id   TEXT,
+      user_id    TEXT,
+      provider   TEXT,
+      model      TEXT,
+      tokens     INTEGER DEFAULT 0,
+      latency_ms INTEGER DEFAULT 0,
+      success    INTEGER DEFAULT 1,
+      error      TEXT,
+      timestamp  BIGINT
+    );
+    CREATE INDEX IF NOT EXISTS ai_analytics_ts ON ai_analytics (timestamp);
+
+    CREATE TABLE IF NOT EXISTS ai_personalities (
+      id      INTEGER PRIMARY KEY AUTOINCREMENT,
+      name    TEXT NOT NULL,
+      prompt  TEXT NOT NULL
+    );
   `);
+
+  // Migrations for columns added after initial table creation
+  try { db.exec("ALTER TABLE moderation_log ADD COLUMN proof TEXT"); } catch { /* column already exists */ }
+
   console.log("[db] SQLite schema ready.");
 }
 
@@ -419,8 +453,8 @@ async function getModLogForUser(guildId, userId, limit = 50) {
   return query("SELECT * FROM moderation_log WHERE guild_id = ? AND user_id = ? ORDER BY timestamp DESC LIMIT ?", [guildId, userId, limit]);
 }
 
-async function addModLogEntry(guildId, userId, modId, action, reason, details) {
-  db.prepare("INSERT INTO moderation_log (guild_id, user_id, mod_id, action, reason, details, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)").run(guildId, userId, modId, action, reason || "", details || "", Date.now());
+async function addModLogEntry(guildId, userId, modId, action, reason, details, proof) {
+  db.prepare("INSERT INTO moderation_log (guild_id, user_id, mod_id, action, reason, details, proof, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(guildId, userId, modId, action, reason || "", details || "", proof ? JSON.stringify(proof) : null, Date.now());
 }
 
 // ── DM Templates ───────────────────────────────────────────────────────
@@ -499,6 +533,51 @@ async function setAutoExecRule(guildId, rule) {
 
 async function deleteAutoExecRule(id) {
   db.prepare("DELETE FROM autoexec_rules WHERE id = ?").run(id);
+}
+
+// ── AI Analytics ───────────────────────────────────────────────────────────
+async function logAiCall(guildId, userId, provider, model, tokens, latencyMs, success, error) {
+  db.prepare(`
+    INSERT INTO ai_analytics (guild_id, user_id, provider, model, tokens, latency_ms, success, error, timestamp)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(guildId, userId, provider, model || "", tokens || 0, latencyMs || 0, success ? 1 : 0, error || null, Date.now());
+}
+
+async function getAiAnalytics(guildId, days = 7) {
+  const since = Date.now() - days * 86400000;
+  return query(`
+    SELECT provider, COUNT(*) as calls, SUM(tokens) as tokens, SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful,
+           SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failed,
+           ROUND(AVG(latency_ms)) as avg_latency_ms
+    FROM ai_analytics WHERE guild_id = ? AND timestamp >= ? GROUP BY provider ORDER BY calls DESC
+  `, [guildId, since]);
+}
+
+async function getAiTopUsers(guildId, days = 7, limit = 10) {
+  const since = Date.now() - days * 86400000;
+  return query(`
+    SELECT user_id, COUNT(*) as calls
+    FROM ai_analytics WHERE guild_id = ? AND timestamp >= ? AND user_id IS NOT NULL
+    GROUP BY user_id ORDER BY calls DESC LIMIT ?
+  `, [guildId, since, limit]);
+}
+
+// ── AI Personalities ─────────────────────────────────────────────────────────
+async function getPersonalities() {
+  return query("SELECT * FROM ai_personalities ORDER BY id ASC");
+}
+
+async function addPersonality(name, prompt) {
+  const info = db.prepare("INSERT INTO ai_personalities (name, prompt) VALUES (?, ?)").run(name.trim(), prompt.trim());
+  return info.lastInsertRowid;
+}
+
+async function updatePersonality(id, name, prompt) {
+  db.prepare("UPDATE ai_personalities SET name = ?, prompt = ? WHERE id = ?").run(name.trim(), prompt.trim(), Number(id));
+}
+
+async function deletePersonality(id) {
+  db.prepare("DELETE FROM ai_personalities WHERE id = ?").run(Number(id));
 }
 
 // ── AI memories ──────────────────────────────────────────────────────────
@@ -641,10 +720,6 @@ async function setDangerzoneConfig(guildId, cfg) {
   `).run(guildId, JSON.stringify(cfg.channels || {}));
 }
 
-function close() {
-  db.close();
-}
-
 // ── Femboyified Users ────────────────────────────────────────────────────
 async function getAllFemboyifiedUsers() {
   return query("SELECT * FROM femboyified_users");
@@ -662,6 +737,26 @@ async function setFemboyifiedUser(guildId, userId, originalNick) {
 
 async function removeFemboyifiedUser(guildId, userId) {
   db.prepare("DELETE FROM femboyified_users WHERE guild_id = ? AND user_id = ?").run(guildId, userId);
+}
+
+// ── Tempbans ─────────────────────────────────────────────────────────────
+async function getAllTempbans() {
+  return query("SELECT * FROM tempbans");
+}
+
+async function setTempban(guildId, userId, expiresAt, modId, reason) {
+  db.prepare(`
+    INSERT INTO tempbans (guild_id, user_id, expires_at, mod_id, reason)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(guild_id, user_id) DO UPDATE SET
+      expires_at = excluded.expires_at,
+      mod_id = excluded.mod_id,
+      reason = excluded.reason
+  `).run(guildId, userId, expiresAt, modId, reason);
+}
+
+async function removeTempban(guildId, userId) {
+  db.prepare("DELETE FROM tempbans WHERE guild_id = ? AND user_id = ?").run(guildId, userId);
 }
 
 function close() {
@@ -702,6 +797,9 @@ module.exports = {
   getAllWarnings,
   addWarning,
   clearWarnings,
+  getWarningsSince,
+  getTotalWarningPoints,
+  getWarningCount,
 
   // ── AI memories ──────────────────────────────────────────────────────────
   getAiMemories,
@@ -740,4 +838,50 @@ module.exports = {
   getAllFemboyifiedUsers,
   setFemboyifiedUser,
   removeFemboyifiedUser,
+
+  // ── Tempbans ─────────────────────────────────────────────────────────────
+  getAllTempbans,
+  setTempban,
+  removeTempban,
+
+  // ── Mod Notes ────────────────────────────────────────────────────────────
+  getModNotes,
+  addModNote,
+  deleteModNote,
+
+  // ── Probation ────────────────────────────────────────────────────────────
+  getProbation,
+  setProbation,
+  removeProbation,
+  getAllProbations,
+
+  // ── Moderation Log ───────────────────────────────────────────────────────
+  getModLog,
+  getModLogForUser,
+  addModLogEntry,
+
+  // ── DM Templates ─────────────────────────────────────────────────────────
+  getDmTemplate,
+  setDmTemplate,
+  getAllDmTemplates,
+
+  // ── Extended Automod ─────────────────────────────────────────────────────
+  getExtendedAutomod,
+  setExtendedAutomod,
+
+  // ── Auto-Execute Rules Engine ────────────────────────────────────────────
+  getAutoExecRules,
+  setAutoExecRule,
+  deleteAutoExecRule,
+
+  // ── AI Analytics ──────────────────────────────────────────────────────────
+  logAiCall,
+  getAiAnalytics,
+  getAiTopUsers,
+
+  // ── AI Personalities ──────────────────────────────────────────────────────
+  getPersonalities,
+  addPersonality,
+  updatePersonality,
+  deletePersonality,
 };

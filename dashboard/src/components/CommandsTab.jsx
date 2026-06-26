@@ -70,23 +70,56 @@ function FeatureGrid() {
   );
 }
 
-function LadderEditor({ ladder, setLadder }) {
+function LadderEditor({ ladder, setLadder, roles }) {
   if (!ladder.length) {
     return <span className="muted">No steps — warnings won't auto-escalate.</span>;
   }
+  const threshold = (s) => s.threshold ?? s.count ?? 1;
   const upd = (i, patch) => setLadder(ladder.map((s, j) => (j === i ? { ...s, ...patch } : s)));
   const del = (i) => setLadder(ladder.filter((_, j) => j !== i));
   return (
     <>
       {ladder.map((step, i) => (
-        <div className="row" style={{ marginBottom: 8 }} key={i}>
-          <span className="muted" style={{ width: 64, fontSize: 12 }}>warns:</span>
-          <input type="number" min="1" value={step.count} style={{ width: 70 }} onChange={(e) => upd(i, { count: parseInt(e.target.value, 10) || 1 })} />
-          <select value={step.action} style={{ width: 110 }} onChange={(e) => upd(i, { action: e.target.value })}>
-            {["none", "mute", "kick", "ban"].map((a) => <option key={a} value={a}>{a}</option>)}
-          </select>
-          <input value={step.duration || ""} placeholder="10m" style={{ width: 80 }} onChange={(e) => upd(i, { duration: e.target.value.trim() })} />
-          <button className="btn danger" onClick={() => del(i)} style={{ padding: "6px 10px" }}>✕</button>
+        <div key={i} style={{ marginBottom: 8 }}>
+          <div className="row" style={{ marginBottom: 4 }}>
+            <span className="muted" style={{ width: 48, fontSize: 12 }}>type:</span>
+            <select value={step.type || "count"} style={{ width: 100 }} onChange={(e) => upd(i, { type: e.target.value })}>
+              <option value="count">warns</option>
+              <option value="points">points</option>
+            </select>
+            <span className="muted" style={{ width: 52, fontSize: 12 }}>at:</span>
+            <input type="number" min="1" value={threshold(step)} style={{ width: 70 }} onChange={(e) => upd(i, { threshold: parseInt(e.target.value, 10) || 1 })} />
+            <select value={step.action} style={{ width: 110 }} onChange={(e) => upd(i, { action: e.target.value })}>
+              {["none", "mute", "kick", "ban", "probation"].map((a) => <option key={a} value={a}>{a}</option>)}
+            </select>
+            {(step.action !== "probation") && (
+              <input value={step.duration || ""} placeholder="10m" style={{ width: 80 }} onChange={(e) => upd(i, { duration: e.target.value.trim() })} />
+            )}
+            <button className="btn danger" onClick={() => del(i)} style={{ padding: "6px 10px" }}>✕</button>
+          </div>
+          {step.action === "probation" && (
+            <div className="row" style={{ marginLeft: 0, alignItems: "flex-start" }}>
+              <span className="muted" style={{ fontSize: 11, width: 48, marginTop: 6, flexShrink: 0 }}>role:</span>
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <DropdownSelect
+                  items={roles || []}
+                  selected={step.probationRoleId ? new Set([step.probationRoleId]) : new Set()}
+                  onToggle={(roleId) => {
+                    upd(i, { probationRoleId: step.probationRoleId === roleId ? "" : roleId });
+                  }}
+                  prefix="@"
+                  placeholder="Select probation role..."
+                />
+              </div>
+              <span className="muted" style={{ fontSize: 11, marginTop: 6, flexShrink: 0 }}>duration:</span>
+              <input
+                value={step.probationDuration || ""}
+                placeholder="7d"
+                style={{ width: 80, fontSize: 12 }}
+                onChange={(e) => upd(i, { probationDuration: e.target.value.trim() })}
+              />
+            </div>
+          )}
         </div>
       ))}
     </>
@@ -113,7 +146,7 @@ function CommandBody({ cmd, data, onSaved }) {
       cooldown: parseInt(cooldown, 10) || 0,
       allowedChannels: [...allowed], blockedChannels: [...blocked], allowedRoles: [...roles],
     };
-    if (ladder) body.settings = { ladder: ladder.filter((s) => s.count >= 1) };
+    if (ladder) body.settings = { ladder: ladder.filter((s) => (s.threshold ?? s.count) >= 1) };
     try {
       const r = await api("POST", "/api/commands/" + encodeURIComponent(cmd.name), { guildId: data.guildId, ...body });
       onSaved(cmd.name, r.config);
@@ -167,8 +200,8 @@ function CommandBody({ cmd, data, onSaved }) {
         <div className="field">
           <label>Warn escalation ladder — auto-punish at each warning count</label>
           <div className="muted" style={{ marginBottom: 8 }}>action: none / mute / kick / ban. Duration (e.g. 10m, 1h, 1d) applies to mute only.</div>
-          <LadderEditor ladder={ladder} setLadder={setLadder} />
-          <button className="btn secondary" style={{ marginTop: 8 }} onClick={() => setLadder([...ladder, { count: ladder.length + 1, action: "mute", duration: "10m" }])}>+ Add step</button>
+          <LadderEditor ladder={ladder} setLadder={setLadder} roles={data.roles} />
+          <button className="btn secondary" style={{ marginTop: 8 }} onClick={() => setLadder([...ladder, { type: "count", threshold: ladder.length + 1, action: "mute", duration: "10m" }])}>+ Add step</button>
         </div>
       )}
       <div className="row" style={{ marginTop: 15 }}>

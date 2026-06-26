@@ -3,7 +3,7 @@ import {
   Activity, Terminal, ShieldAlert, MessageSquareCode, ShieldCheck,
   Settings, Sparkles, Blocks, Database, KeyRound, LogOut, FolderSync,
   Gauge, ScrollText, StickyNote, Zap, ShieldPlus, Mail, RefreshCw,
-  Users, Cpu, Disc, Flame,
+  Users, Cpu, Disc, Flame, FolderOpen, MessageSquare,
 } from "lucide-react";
 import { api, setToken, clearToken, onUnauthorized, BASE } from "./api.js";
 import { ToastProvider } from "./components/Toast.jsx";
@@ -22,8 +22,10 @@ import DmTemplateTab from "./components/DmTemplateTab.jsx";
 import AutoExecTab from "./components/AutoExecTab.jsx";
 import UserNotesTab from "./components/UserNotesTab.jsx";
 import ExtendedAutomodTab from "./components/ExtendedAutomodTab.jsx";
+import CasesTab from "./components/CasesTab.jsx";
 import RoleMembersTab from "./components/RoleMembersTab.jsx";
 import DangerZoneTab from "./components/DangerZoneTab.jsx";
+import AiChatTab from "./components/AiChatTab.jsx";
 
 // ─── Guild-management tabs — available to any guild admin ────────────────────
 const USER_TABS = [
@@ -35,6 +37,7 @@ const USER_TABS = [
   { id: "roles",      label: "Roles",      Icon: ShieldCheck },
   { id: "rolemembers",label: "Role Members",Icon: Users },
   { id: "channels",   label: "Channels",   Icon: FolderSync },
+  { id: "cases",      label: "Cases",      Icon: FolderOpen },
   { id: "modlog",     label: "Mod Log",    Icon: ScrollText },
   { id: "modnotes",   label: "User Notes", Icon: StickyNote },
   { id: "dmtemplates",label: "DM Templates",Icon: Mail },
@@ -46,6 +49,7 @@ const USER_TABS = [
 const ADMIN_TABS = [
   { id: "settings", label: "Settings", Icon: Gauge },
   { id: "ai",       label: "AI Assistant", Icon: Sparkles },
+  { id: "aichat",   label: "AI Chat", Icon: MessageSquare },
   { id: "modules",  label: "Modules",  Icon: Blocks },
   { id: "data",     label: "Data",     Icon: Database },
 ];
@@ -287,6 +291,7 @@ function Dashboard({ user, onLogout, isAdminMode, onToggleMode }) {
           {tab === "roles" && <RolesTab guildId={guildId} />}
           {tab === "rolemembers" && <RoleMembersTab guildId={guildId} />}
           {tab === "channels" && <ChannelsTab guildId={guildId} />}
+          {tab === "cases" && <CasesTab guildId={guildId} />}
           {tab === "modlog" && <ModerationLogTab guildId={guildId} />}
           {tab === "modnotes" && <UserNotesTab guildId={guildId} />}
           {tab === "dmtemplates" && <DmTemplateTab guildId={guildId} />}
@@ -295,6 +300,7 @@ function Dashboard({ user, onLogout, isAdminMode, onToggleMode }) {
           {tab === "extautomod" && <ExtendedAutomodTab guildId={guildId} />}
           {tab === "settings" && <SettingsTab onReset={() => setAiKey((k) => k + 1)} />}
           {tab === "ai" && <AiTab key={aiKey} />}
+          {tab === "aichat" && <AiChatTab guildId={guildId} />}
           {tab === "modules" && <ModulesTab />}
           {tab === "data" && <DataTab />}
         </main>
@@ -402,6 +408,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
     onUnauthorized(showLogin);
     attemptConnect();
     return () => {
