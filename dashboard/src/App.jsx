@@ -1,67 +1,10 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import {
-  Activity, Terminal, ShieldAlert, MessageSquareCode, ShieldCheck,
-  Settings, Sparkles, Blocks, Database, KeyRound, LogOut, FolderSync,
-  Gauge, ScrollText, StickyNote, Zap, ShieldPlus, Mail, RefreshCw,
-  Users, Cpu, Disc, Flame, FolderOpen, MessageSquare, TrendingUp, CalendarDays, HardDrive, Coins,
-} from "lucide-react";
+import { Routes, Route, useNavigate } from "react-router-dom";
+import { Disc, RefreshCw, KeyRound } from "lucide-react";
 import { api, setToken, clearToken, onUnauthorized, BASE } from "./api.js";
 import { ToastProvider } from "./components/Toast.jsx";
-import StatusTab from "./components/StatusTab.jsx";
-import CommandsTab from "./components/CommandsTab.jsx";
-import AutomodTab from "./components/AutomodTab.jsx";
-import GreetTab from "./components/GreetTab.jsx";
-import RolesTab from "./components/RolesTab.jsx";
-import ChannelsTab from "./components/ChannelsTab.jsx";
-import SettingsTab from "./components/SettingsTab.jsx";
-import AiTab from "./components/AiTab.jsx";
-import ModulesTab from "./components/ModulesTab.jsx";
-import DataTab from "./components/DataTab.jsx";
-import ModerationLogTab from "./components/ModerationLogTab.jsx";
-import DmTemplateTab from "./components/DmTemplateTab.jsx";
-import AutoExecTab from "./components/AutoExecTab.jsx";
-import UserNotesTab from "./components/UserNotesTab.jsx";
-import ExtendedAutomodTab from "./components/ExtendedAutomodTab.jsx";
-import CasesTab from "./components/CasesTab.jsx";
-import ScheduleTab from "./components/ScheduleTab.jsx";
-import BackupTab from "./components/BackupTab.jsx";
-import EconomyTab from "./components/EconomyTab.jsx";
-import RoleMembersTab from "./components/RoleMembersTab.jsx";
-import DangerZoneTab from "./components/DangerZoneTab.jsx";
-import AiChatTab from "./components/AiChatTab.jsx";
-import AnalyticsTab from "./components/AnalyticsTab.jsx";
-import ErrorBoundary from "./components/ErrorBoundary.jsx";
-
-// ─── Guild-management tabs — available to any guild admin ────────────────────
-const USER_TABS = [
-  { id: "status",     label: "Status",     Icon: Activity },
-  { id: "commands",   label: "Commands",   Icon: Terminal },
-  { id: "automod",    label: "Automod",    Icon: ShieldAlert },
-  { id: "extautomod", label: "Ext. Automod", Icon: ShieldPlus },
-  { id: "greet",      label: "Greeting & Logs", Icon: MessageSquareCode },
-  { id: "roles",      label: "Roles",      Icon: ShieldCheck },
-  { id: "rolemembers",label: "Role Members",Icon: Users },
-  { id: "channels",   label: "Channels",   Icon: FolderSync },
-  { id: "cases",      label: "Cases",      Icon: FolderOpen },
-  { id: "schedule",   label: "Schedule",   Icon: CalendarDays },
-  { id: "backup",     label: "Backups",    Icon: HardDrive },
-  { id: "economy",    label: "Economy",   Icon: Coins },
-  { id: "modlog",     label: "Mod Log",    Icon: ScrollText },
-  { id: "modnotes",   label: "User Notes", Icon: StickyNote },
-  { id: "dmtemplates",label: "DM Templates",Icon: Mail },
-  { id: "autoexec",   label: "Auto Rules", Icon: Zap },
-  { id: "dangerzone", label: "Dangerzone", Icon: Flame },
-];
-
-// ─── Global/critical admin tabs — only visible to bot owners ─────────────────
-const ADMIN_TABS = [
-  { id: "settings", label: "Settings", Icon: Gauge },
-  { id: "ai",       label: "AI Assistant", Icon: Sparkles },
-  { id: "aichat",   label: "AI Chat", Icon: MessageSquare },
-  { id: "analytics", label: "AI Analytics", Icon: TrendingUp },
-  { id: "modules",  label: "Modules",  Icon: Blocks },
-  { id: "data",     label: "Data",     Icon: Database },
-];
+import HomePage from "./pages/HomePage.jsx";
+import DashboardPage from "./pages/DashboardPage.jsx";
 
 // ─── Login ───────────────────────────────────────────────────────────────────
 function Login({ onLoggedIn }) {
@@ -157,277 +100,6 @@ function Login({ onLoggedIn }) {
   );
 }
 
-// ─── Dashboard shell (used by both user and admin views) ─────────────────────
-function Dashboard({ user, onLogout, isAdminMode, onToggleMode }) {
-  const [tab, setTab] = useState("status");
-  const [headerStatus, setHeaderStatus] = useState("loading...");
-  const [guilds, setGuilds] = useState([]);
-  const [guildId, setGuildId] = useState("");
-  const [paletteOpen, setPaletteOpen] = useState(false);
-  const [paletteQuery, setPaletteQuery] = useState("");
-  const contentRef = useRef(null);
-
-  const activeTabs = isAdminMode ? [...USER_TABS, ...ADMIN_TABS] : USER_TABS;
-
-  // Ctrl+K / Cmd+K command palette + Alt+1-9 quick tab switching
-  useEffect(() => {
-    function onKey(e) {
-      if ((e.key === "k" || e.key === "K") && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        setPaletteOpen(prev => !prev);
-        setPaletteQuery("");
-        return;
-      }
-      if (e.key === "Escape") { setPaletteOpen(false); return; }
-      // Alt+1-9 for quick tab switching (skip the input/textarea focus)
-      if (e.altKey && e.key >= "1" && e.key <= "9") {
-        const tag = document.activeElement?.tagName;
-        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-        const idx = parseInt(e.key, 10) - 1;
-        if (idx < activeTabs.length) {
-          e.preventDefault();
-          setTab(activeTabs[idx].id);
-        }
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [activeTabs]);
-
-  const paletteItems = activeTabs.map(t => ({ type: "tab", label: t.label, id: t.id, Icon: t.Icon }));
-  const filteredPalette = paletteQuery.trim()
-    ? paletteItems.filter(t => t.label.toLowerCase().includes(paletteQuery.toLowerCase()))
-    : paletteItems;
-
-  async function fetchGuilds() {
-    try {
-      const { guilds: list } = await api("GET", "/api/guilds");
-      setGuilds(list);
-      if (list.length > 0 && !guildId) setGuildId(list[0].id);
-    } catch { /* ignore */ }
-  }
-
-  useEffect(() => {
-    let alive = true;
-    async function tick() {
-      try {
-        const s = await api("GET", "/api/status");
-        if (alive) setHeaderStatus((s.tag || "offline") + " · " + s.ping + "ms");
-      } catch { /* ignore */ }
-    }
-    tick();
-    fetchGuilds();
-    const t = setInterval(tick, 5000);
-    return () => { alive = false; clearInterval(t); };
-  }, []);
-
-  const [aiKey, setAiKey] = useState(0);
-
-  // When switching between admin/user mode, reset to a tab that exists in both
-  useEffect(() => {
-    const currentExists = activeTabs.some(t => t.id === tab);
-    if (!currentExists) setTab("status");
-  }, [isAdminMode]);
-
-  // Scroll to top when switching tabs
-  useEffect(() => {
-    contentRef.current?.scrollTo({ top: 0, behavior: "instant" });
-  }, [tab]);
-
-  return (
-    <div id="app">
-      <aside>
-        <div className="brand-header">
-          <span className="brand-title">ggboi</span>
-          {isAdminMode && <span className="badge owner" style={{ fontSize: 9, padding: "1px 5px" }}>admin</span>}
-        </div>
-        <div className="status-container">
-          <span className="status-dot"></span>
-          <span>{headerStatus}</span>
-        </div>
-
-        {user && (
-          <div className="user-info">
-            <img
-              className="user-avatar"
-              src={
-                user.avatar
-                  ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png`
-                  : `https://cdn.discordapp.com/embed/avatars/${Number(user.id) % 5}.png`
-              }
-              alt=""
-              referrerPolicy="no-referrer"
-            />
-            <div className="user-details">
-              <span className="user-name">{user.tag}</span>
-              {user.isOwner && <span className="badge owner">owner</span>}
-            </div>
-          </div>
-        )}
-
-        {guilds.length > 1 && (
-          <div className="guild-selector">
-            <select value={guildId} onChange={(e) => setGuildId(e.target.value)}>
-              {guilds.map((g) => (
-                <option key={g.id} value={g.id}>{g.name} ({g.memberCount})</option>
-              ))}
-            </select>
-          </div>
-        )}
-        {guilds.length === 1 && (
-          <div className="guild-selector muted" style={{ padding: "0 8px", fontSize: 11 }}>
-            {guilds[0].name}
-          </div>
-        )}
-
-        <nav>
-          <div className="nav-section-label">Guild</div>
-          {USER_TABS.map(({ id, label, Icon }) => (
-            <button
-              key={id}
-              title={label}
-              className={tab === id ? "active" : ""}
-              onClick={() => setTab(id)}
-            >
-              <Icon /> <span>{label}</span>
-            </button>
-          ))}
-          {isAdminMode && (
-            <>
-              <hr style={{ margin: "8px 0" }} />
-              <div className="nav-section-label">Admin</div>
-              {ADMIN_TABS.map(({ id, label, Icon }) => (
-                <button
-                  key={id}
-                  title={label}
-                  className={tab === id ? "active" : ""}
-                  onClick={() => setTab(id)}
-                >
-                  <Icon /> <span>{label}</span>
-                </button>
-              ))}
-            </>
-          )}
-        </nav>
-
-        <div className="sidebar-footer">
-          {user?.isOwner && (
-            <button
-              className="btn"
-              onClick={onToggleMode}
-              style={{ width: "100%", justifyContent: "center", marginBottom: 4, fontSize: 12 }}
-            >
-              <Cpu style={{ width: 14, height: 14 }} />
-              <span>{isAdminMode ? "Switch to User View" : "Switch to Admin View"}</span>
-            </button>
-          )}
-          <button className="btn" onClick={onLogout} style={{ width: "100%", justifyContent: "center" }}>
-            <LogOut /> <span>Log out</span>
-          </button>
-        </div>
-      </aside>
-
-      <div className="content-area" ref={contentRef}>
-        <header>
-          <h1>ggboi / {activeTabs.find(t => t.id === tab)?.label || tab}</h1>
-          <div className="spacer"></div>
-          <span className="muted" style={{ fontSize: 10, opacity: 0.5 }}>Alt+1-9 to switch tabs</span>
-        </header>
-        <main>
-          <ErrorBoundary resetKey={tab + guildId}>
-            {tab === "status" && <StatusTab onStatus={(s) => setHeaderStatus((s.tag || "offline") + " · " + s.ping + "ms")} admin={isAdminMode} />}
-            {tab === "commands" && <CommandsTab guildId={guildId} />}
-            {tab === "automod" && <AutomodTab guildId={guildId} />}
-            {tab === "greet" && <GreetTab guildId={guildId} />}
-            {tab === "roles" && <RolesTab guildId={guildId} />}
-            {tab === "rolemembers" && <RoleMembersTab guildId={guildId} />}
-            {tab === "channels" && <ChannelsTab guildId={guildId} />}
-            {tab === "cases" && <CasesTab guildId={guildId} />}
-            {tab === "schedule" && <ScheduleTab guildId={guildId} />}
-            {tab === "backup" && <BackupTab guildId={guildId} />}
-            {tab === "economy" && <EconomyTab guildId={guildId} />}
-            {tab === "modlog" && <ModerationLogTab guildId={guildId} />}
-            {tab === "modnotes" && <UserNotesTab guildId={guildId} />}
-            {tab === "dmtemplates" && <DmTemplateTab guildId={guildId} />}
-            {tab === "autoexec" && <AutoExecTab guildId={guildId} />}
-            {tab === "dangerzone" && <DangerZoneTab guildId={guildId} />}
-            {tab === "extautomod" && <ExtendedAutomodTab guildId={guildId} />}
-            {tab === "settings" && <SettingsTab onReset={() => setAiKey((k) => k + 1)} />}
-            {tab === "ai" && <AiTab key={aiKey} />}
-            {tab === "aichat" && <AiChatTab guildId={guildId} />}
-            {tab === "analytics" && <AnalyticsTab />}
-            {tab === "modules" && <ModulesTab />}
-            {tab === "data" && <DataTab />}
-          </ErrorBoundary>
-        </main>
-      </div>
-
-      {/* ─── Command Palette (Ctrl+K) ─── */}
-      {paletteOpen && (
-        <div
-          style={{
-            position: "fixed", inset: 0, zIndex: 2000,
-            background: "rgba(0,0,0,0.6)", display: "flex", justifyContent: "center",
-            paddingTop: "15vh",
-          }}
-          onClick={() => setPaletteOpen(false)}
-        >
-          <div
-            style={{
-              background: "var(--bg-alt)", border: "1px solid var(--border)",
-              borderRadius: "var(--radius-lg)", width: 520, maxWidth: "90vw",
-              boxShadow: "0 8px 32px rgba(0,0,0,0.5)", overflow: "hidden",
-              animation: "scaleIn 0.15s ease",
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", borderBottom: "1px solid var(--border)" }}>
-              <input
-                autoFocus
-                placeholder="Search tabs and actions..."
-                value={paletteQuery}
-                onChange={(e) => setPaletteQuery(e.target.value)}
-                style={{ flex: 1, border: "none", background: "none", fontSize: 14, padding: 4, outline: "none" }}
-              />
-              <span style={{ fontSize: 11, color: "var(--text-muted)", background: "var(--surface)", padding: "2px 6px", borderRadius: 4, border: "1px solid var(--border)" }}>↵</span>
-            </div>
-            <div style={{ maxHeight: 360, overflowY: "auto", padding: "4px 0" }}>
-              {filteredPalette.length === 0 ? (
-                <div className="muted" style={{ padding: 20, textAlign: "center", fontSize: 13 }}>No results</div>
-              ) : (
-                filteredPalette.map((item, i) => (
-                  <div
-                    key={item.id}
-                    style={{
-                      display: "flex", alignItems: "center", gap: 10, padding: "8px 16px",
-                      cursor: "pointer", fontSize: 13, transition: "background 0.1s",
-                      background: i === 0 ? "var(--surface)" : "transparent",
-                    }}
-                    className="palette-item"
-                    onClick={() => { setTab(item.id); setPaletteOpen(false); }}
-                    onMouseEnter={(e) => {
-                      [...e.currentTarget.parentElement.children].forEach(el => el.style.background = "transparent");
-                      e.currentTarget.style.background = "var(--surface)";
-                    }}
-                  >
-                    <item.Icon style={{ width: 16, height: 16, color: "var(--text-muted)" }} />
-                    <span>{item.label}</span>
-                  </div>
-                ))
-              )}
-            </div>
-            <div style={{ borderTop: "1px solid var(--border)", padding: "6px 16px", fontSize: 10, color: "var(--text-muted)", display: "flex", gap: 12 }}>
-              <span>↑↓ navigate</span>
-              <span>↵ select</span>
-              <span>Esc close</span>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function ConnectingScreen({ retryCount, onRetry, maxRetries }) {
   const pct = Math.min(retryCount / maxRetries, 1);
   const isFailed = retryCount >= maxRetries;
@@ -477,10 +149,30 @@ function ConnectingScreen({ retryCount, onRetry, maxRetries }) {
   );
 }
 
+function AppRoutes({ user, onLogout, isAdminMode, onToggleMode }) {
+  return (
+    <Routes>
+      <Route path="/" element={<HomePage user={user} onLogout={onLogout} />} />
+      <Route
+        path="/dashboard"
+        element={
+          <DashboardPage
+            user={user}
+            onLogout={onLogout}
+            isAdminMode={isAdminMode}
+            onToggleMode={onToggleMode}
+          />
+        }
+      />
+    </Routes>
+  );
+}
+
 export default function App() {
+  const navigate = useNavigate();
   const [authed, setAuthed] = useState(null);    // null=loading, true=logged in, false=show login
   const [user, setUser] = useState(null);        // user info from /api/me
-  const [isAdminMode, setIsAdminMode] = useState(false); // admin vs user view toggle
+  const [isAdminMode, setIsAdminMode] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
   const showLogin = useCallback(() => setAuthed(false), []);
   const timerRef = useRef(null);
@@ -488,11 +180,21 @@ export default function App() {
 
   const MAX_RETRIES = 8;
 
-  // Handle Discord OAuth callback — extract token from URL
+  // Handle Discord OAuth callback
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get("token");
-    const error = params.get("error");
+    let token = null;
+    let error = null;
+    const hash = window.location.hash.slice(1);
+    if (hash) {
+      const hashParams = new URLSearchParams(hash);
+      token = hashParams.get("token");
+      error = hashParams.get("error");
+    }
+    if (!token && !error) {
+      const params = new URLSearchParams(window.location.search);
+      token = params.get("token");
+      error = params.get("error");
+    }
     if (token) {
       setToken(token);
       window.history.replaceState({}, document.title, window.location.pathname);
@@ -544,11 +246,13 @@ export default function App() {
   function logout() {
     clearToken();
     setAuthed(false);
+    navigate("/");
   }
 
-  function toggleMode() {
+  const toggleMode = useCallback(() => {
     setIsAdminMode((prev) => !prev);
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <ToastProvider>
@@ -559,7 +263,7 @@ export default function App() {
           onRetry={retry}
         />
       ) : authed ? (
-        <Dashboard
+        <AppRoutes
           user={user}
           onLogout={logout}
           isAdminMode={isAdminMode}

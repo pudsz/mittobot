@@ -44,9 +44,9 @@ async function load() {
       store[row.guild_id] = {
         enabled: row.enabled === 1,
         logChannelId: row.log_channel_id,
-        ignoredChannels: JSON.parse(row.ignored_channels || "[]"),
-        ignoredRoles: JSON.parse(row.ignored_roles || "[]"),
-        rules: JSON.parse(row.rules || "{}"),
+        ignoredChannels: db.safeJsonParse(row.ignored_channels, []),
+        ignoredRoles: db.safeJsonParse(row.ignored_roles, []),
+        rules: db.safeJsonParse(row.rules, {}),
       };
     }
     // Load extended automod config
@@ -54,13 +54,23 @@ async function load() {
     const exRows = await db.query("SELECT * FROM automod_extended");
     for (const row of exRows) {
       exStore[row.guild_id] = {
-        link_blacklist: JSON.parse(row.link_blacklist || "[]"),
-        link_whitelist: JSON.parse(row.link_whitelist || "[]"),
+        link_blacklist: db.safeJsonParse(row.link_blacklist, []),
+        link_whitelist: db.safeJsonParse(row.link_whitelist, []),
+        link_action: row.link_action || "delete",
         repeated_text: row.repeated_text === 1,
         repeated_text_count: row.repeated_text_count || 3,
+        repeated_text_action: row.repeated_text_action || "delete",
         emoji_spam: row.emoji_spam === 1,
         emoji_max: row.emoji_max || 5,
+        emoji_action: row.emoji_action || "delete",
+        blocked_emojis_enabled: row.blocked_emojis_enabled === 1,
+        blocked_emojis: db.safeJsonParse(row.blocked_emojis, []),
+        blocked_emojis_action: row.blocked_emojis_action || "delete",
+        blocked_reaction_emojis_enabled: row.blocked_reaction_emojis_enabled === 1,
+        blocked_reaction_emojis: db.safeJsonParse(row.blocked_reaction_emojis, []),
+        blocked_reaction_action: row.blocked_reaction_action || "delete",
         zalgo_enabled: row.zalgo_enabled === 1,
+        zalgo_action: row.zalgo_action || "delete",
       };
     }
   } catch (e) {
@@ -82,6 +92,12 @@ function getExtendedConfig(guildId) {
     emoji_spam: false,
     emoji_max: 5,
     emoji_action: "delete",
+    blocked_emojis_enabled: false,
+    blocked_emojis: [],
+    blocked_emojis_action: "delete",
+    blocked_reaction_emojis_enabled: false,
+    blocked_reaction_emojis: [],
+    blocked_reaction_action: "delete",
     zalgo_enabled: false,
     zalgo_action: "delete",
   };
@@ -123,6 +139,7 @@ function setConfig(guildId, patch) {
 
 // ─── Spam tracker: per guild+user recent message timestamps (in-memory) ───
 const spamTracker = new Map(); // key `${guildId}:${userId}` -> number[] timestamps
+const SPAM_TRACKER_MAX_SIZE = 1000; // Maximum number of user spam histories to track
 
 // Periodic cleanup: every 5 minutes, purge entries older than the longest window
 const SPAM_CLEANUP_INTERVAL = 5 * 60_000;
@@ -137,6 +154,16 @@ function startSpamCleanup() {
       const valid = timestamps.filter(t => t > cutoff);
       if (valid.length === 0) spamTracker.delete(key);
       else spamTracker.set(key, valid);
+    }
+    // Size-based eviction: if we exceed max size, remove oldest entries
+    if (spamTracker.size > SPAM_TRACKER_MAX_SIZE) {
+      const entries = Array.from(spamTracker.entries()).sort((a, b) => {
+        const aLatest = a[1].length ? a[1][a[1].length - 1] : 0;
+        const bLatest = b[1].length ? b[1][b[1].length - 1] : 0;
+        return aLatest - bLatest;
+      });
+      const toRemove = entries.slice(0, spamTracker.size - SPAM_TRACKER_MAX_SIZE);
+      for (const [key] of toRemove) spamTracker.delete(key);
     }
   }, SPAM_CLEANUP_INTERVAL);
   spamCleanupTimer.unref();
@@ -214,6 +241,59 @@ function emojiCount(content) {
   return matches ? matches.length : 0;
 }
 
+function normalizeEmojiToken(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const custom = raw.match(/^<a?:([^:>\s]+):(\d+)>$/);
+  if (custom) return custom[2];
+  const nameId = raw.match(/^[^:>\s]+:(\d+)$/);
+  if (nameId) return nameId[1];
+  if (/^\d{5,}$/.test(raw)) return raw;
+  return raw.toLowerCase();
+}
+
+function emojiAliasesFromReactionEmoji(emoji) {
+  const out = new Set();
+  if (!emoji) return out;
+  if (emoji.id) {
+    out.add(emoji.id);
+    if (emoji.name) out.add(`${emoji.name}:${emoji.id}`.toLowerCase());
+    out.add(`<${emoji.animated ? "a" : ""}:${emoji.name}:${emoji.id}>`.toLowerCase());
+  }
+  if (emoji.name) out.add(emoji.name.toLowerCase());
+  return out;
+}
+
+function emojiTokensFromContent(content) {
+  const out = new Set();
+  const customRe = /<a?:[^:>\s]+:(\d+)>/g;
+  let m;
+  while ((m = customRe.exec(content || ""))) out.add(m[1]);
+  const matches = String(content || "").match(EMOJI_RE) || [];
+  for (const match of matches) out.add(match.toLowerCase());
+  return out;
+}
+
+function hasBlockedMessageEmoji(content, blocked) {
+  if (!blocked?.length) return false;
+  const tokens = emojiTokensFromContent(content);
+  if (!tokens.size) return false;
+  return blocked.some(e => {
+    const normalized = normalizeEmojiToken(e);
+    return normalized && tokens.has(normalized);
+  });
+}
+
+function hasBlockedReactionEmoji(emoji, blocked) {
+  if (!blocked?.length) return false;
+  const aliases = emojiAliasesFromReactionEmoji(emoji);
+  if (!aliases.size) return false;
+  return blocked.some(e => {
+    const normalized = normalizeEmojiToken(e);
+    return normalized && aliases.has(normalized);
+  });
+}
+
 function hasZalgo(content) {
   const matches = content.match(ZALGO_RE);
   if (!matches) return false;
@@ -243,6 +323,22 @@ async function logAction(guild, cfg, message, ruleName, action) {
   safe.send(ch, { embeds: [embed] }, "automod log");
 }
 
+async function logReactionAction(guild, cfg, reaction, user, ruleName, action) {
+  if (!cfg.logChannelId) return;
+  const ch = guild.channels.cache.get(cfg.logChannelId);
+  if (!ch) return;
+  const emojiLabel = reaction.emoji?.id
+    ? `<${reaction.emoji.animated ? "a" : ""}:${reaction.emoji.name}:${reaction.emoji.id}>`
+    : reaction.emoji?.name || "unknown";
+  const embed = new EmbedBuilder()
+    .setColor(0xed4245)
+    .setTitle("🛡️ Automod")
+    .setDescription(`**Rule:** ${ruleName}\n**Action:** ${action}\n**User:** ${user.tag || user.id} (<@${user.id}>)\n**Channel:** <#${reaction.message.channel.id}>\n**Emoji:** ${emojiLabel}`)
+    .addFields({ name: "Message", value: `[Jump to message](${reaction.message.url})` })
+    .setTimestamp();
+  safe.send(ch, { embeds: [embed] }, "automod reaction log");
+}
+
 // Carry out a rule's action. Returns the action label that succeeded.
 async function enforce(message, rule, ruleName) {
   const action = rule.action || "delete";
@@ -259,6 +355,37 @@ async function enforce(message, rule, ruleName) {
     if (action === "warn") {
       const warn = await safe.orNull(message.channel.send(`⚠️ <@${message.author.id}>, your message was removed (**${ruleName}**).`), `automod warn msg: ${ruleName}`);
       if (warn) setTimeout(() => safe.delete(warn, `automod warn delete: ${ruleName}`), 5000);
+    }
+  } catch { /* best-effort */ }
+  return action;
+}
+
+async function enforceReaction(reaction, user, member, rule, ruleName) {
+  const action = rule.action || "delete";
+  try {
+    await safe.orNull(reaction.users.remove(user.id), `automod remove reaction: ${ruleName}`);
+    if (action === "mute") {
+      const ms = rule.muteMs || 5 * 60_000;
+      if (reaction.message.guild.members.me.permissions.has(PermissionFlagsBits.ModerateMembers) && member?.moderatable) {
+        await safe.timeout(member, ms, `Automod: ${ruleName}`, `automod reaction timeout: ${ruleName}`);
+      }
+    }
+    if (action === "kick") {
+      if (reaction.message.guild.members.me.permissions.has(PermissionFlagsBits.KickMembers) && member?.kickable) {
+        await safe.kick(member, `Automod: ${ruleName}`, `automod reaction kick: ${ruleName}`);
+      }
+    }
+    if (action === "ban") {
+      if (reaction.message.guild.members.me.permissions.has(PermissionFlagsBits.BanMembers) && member?.bannable) {
+        await safe.ban(member, { reason: `Automod: ${ruleName}` }, `automod reaction ban: ${ruleName}`);
+      }
+    }
+    if (action === "warn") {
+      const warn = await safe.orNull(
+        reaction.message.channel.send(`⚠️ <@${user.id}>, that reaction is not allowed (**${ruleName}**).`),
+        `automod reaction warn msg: ${ruleName}`
+      );
+      if (warn) setTimeout(() => safe.delete(warn, `automod reaction warn delete: ${ruleName}`), 5000);
     }
   } catch { /* best-effort */ }
   return action;
@@ -299,6 +426,9 @@ async function checkMessage(message) {
   if (exCfg.emoji_spam && emojiCount(content) > (exCfg.emoji_max || 5)) {
     const a = await enforce(message, { action: exCfg.emoji_action || "delete" }, "Emoji spam"); await logAction(message.guild, cfg, message, "Emoji spam", a); return true;
   }
+  if (exCfg.blocked_emojis_enabled && hasBlockedMessageEmoji(content, exCfg.blocked_emojis)) {
+    const a = await enforce(message, { action: exCfg.blocked_emojis_action || "delete" }, "Blocked emoji"); await logAction(message.guild, cfg, message, "Blocked emoji", a); return true;
+  }
   if (exCfg.zalgo_enabled && hasZalgo(content)) {
     const a = await enforce(message, { action: exCfg.zalgo_action || "delete" }, "Zalgo/unicode abuse"); await logAction(message.guild, cfg, message, "Zalgo/unicode abuse", a); return true;
   }
@@ -312,9 +442,40 @@ async function checkMessage(message) {
   return false;
 }
 
+async function checkReaction(reaction, user) {
+  if (user?.bot || !reaction.message?.guild) return false;
+  const guild = reaction.message.guild;
+  const cfg = getConfig(guild.id);
+  if (!cfg.enabled) return false;
+
+  const message = reaction.message;
+  if (cfg.ignoredChannels.includes(message.channel.id)) return false;
+
+  const member = guild.members.cache.get(user.id) || await safe.orNull(guild.members.fetch(user.id), "automod fetch reaction member");
+  if (!member) return false;
+  if (OWNER_IDS.has(user.id)) return false;
+  if (member.permissions.has(PermissionFlagsBits.ManageMessages)) return false;
+  if (cfg.ignoredRoles.length && member.roles.cache.some(r => cfg.ignoredRoles.includes(r.id))) return false;
+
+  const exCfg = getExtendedConfig(guild.id);
+  if (!exCfg.blocked_reaction_emojis_enabled) return false;
+  if (!hasBlockedReactionEmoji(reaction.emoji, exCfg.blocked_reaction_emojis)) return false;
+
+  const action = await enforceReaction(
+    reaction,
+    user,
+    member,
+    { action: exCfg.blocked_reaction_action || "delete" },
+    "Blocked reaction emoji"
+  );
+  await logReactionAction(guild, cfg, reaction, user, "Blocked reaction emoji", action);
+  return true;
+}
+
 module.exports = {
-  load, save, getConfig, setConfig, checkMessage,
+  load, save, getConfig, setConfig, checkMessage, checkReaction,
   getExtendedConfig, setExtendedConfig,
   startSpamCleanup, stopSpamCleanup,
   RULE_DEFAULTS, AUTOMOD_FILE,
+  _test: { hasBlockedMessageEmoji, hasBlockedReactionEmoji, normalizeEmojiToken },
 };

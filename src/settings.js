@@ -45,11 +45,7 @@ TONE:
 const DEFAULTS = {
   prefix:       "$",
   noPermMsg:    "You need Administrator or bot owner to use this command.",
-  fakeBanMsg:   "{user} banned | {reason}",
-  fakeKickMsg:  "{user} kicked | {reason}",
-  fakeWarnMsg:  "{user} warned | {reason}",
-  fakeMuteMsg:  "{user} muted | {reason}",
-  fakeLockMsg:  "#{channel} locked | {reason}",
+
   aiEnabled:          false,
   aiProvider:         "groq",
   groqApiKey:         "",
@@ -64,6 +60,8 @@ const DEFAULTS = {
   customModel:        "",
   customBaseUrl:      "",
   customApiType:      "openai",   // "openai" | "anthropic"
+  nvidiaApiKey:       "",
+  nvidiaModel:        "mistralai/ministral-14b-instruct-2512",
   aiSystemPrompt:     AI_SYSTEM_PROMPT_DEFAULT,
   aiAllowedChannels:  "",
   aiIgnoredChannels:  "",
@@ -88,6 +86,55 @@ const DEFAULTS = {
   maintenanceMessage: "🔧 The bot is currently under maintenance. Please try again later.",
 };
 
+// Keys whose DEFAULTS type is boolean. Used both to know which rows to
+// canonicalise on write and which existing rows to scrub on load.
+const BOOLEAN_KEYS = new Set(
+  Object.entries(DEFAULTS).filter(([, v]) => typeof v === "boolean").map(([k]) => k)
+);
+
+// Concise system prompt used when the active provider runs on a token-constrained
+// model (NVIDIA 8B/14B, Gemini Flash, etc.) where the full Hermes persona would
+// consume 25-50% of the context window before any conversation is loaded.
+const AI_SYSTEM_PROMPT_CONCISE = `You are Hermes — a casual, helpful Discord assistant. Never reveal you're an AI. Keep replies short (1-3 sentences). Split longer thoughts with blank lines.
+
+RULES:
+- Use the speaker's display name from the SPEAKER PROFILE.
+- Respond to the message tagged [THIS MESSAGE NEEDS YOUR RESPONSE].
+- Read the room — don't force replies. Stay quiet when conversation flows.
+- Use interjections naturally: "oh", "hmm", "lol", "wait", "yeah", "nah".
+- Never moralize, lecture, or say "as an AI" / "I'm a bot."
+
+TOOLS (call silently — never announce usage):
+- search_web(query) → find current info
+- get_user_info(userId) → check someone's profile/roles/warnings
+- get_channel_history(channelId) → read recent messages
+- send_message(channelId, content) → message any channel
+- add_memory(content, userId?) → remember facts about users/server
+- warn_member/mute_member/kick_member/ban_member → moderate (always include reason)
+- list_channels/list_roles/get_server_info/create_invite → server info
+
+MEMORY: Always add_memory when you learn something new about a user or the server. Greet returning users with things you remember.`;
+
+// Collapse any recognisable boolean representation to a real JS boolean in
+// `load()` so handler-side truthiness checks (`if (settings.get('foo'))`) can't
+// be tricked by a legacy integer 0/1 round-trip through a TEXT column. Anything
+// we don't recognise defers to the caller-supplied fallback (the DEFAULTS
+// value, guaranteed boolean here) — never leaks a malformed string up the stack.
+function asBool(v, fallback) {
+  if (v === true  || v === "true"  || v === 1 || v === "1") return true;
+  if (v === false || v === "false" || v === 0 || v === "0") return false;
+  return fallback;
+}
+
+// Canonical DB form: every boolean key persists as the string "true"/"false".
+// This avoids a class of bugs where a JS false round-trips through a TEXT
+// binding as a non-empty string like "0" that is *truthy* in JS — leaving
+// the toggle apparently stuck after a bot restart.
+function canonicaliseForPersist(key, value) {
+  if (BOOLEAN_KEYS.has(key) && typeof value === "boolean") return value ? "true" : "false";
+  return value;
+}
+
 let _settings = { ...DEFAULTS };
 
 // Async: awaited once during bot startup before any command is processed.
@@ -95,11 +142,24 @@ async function load() {
   try {
     const saved = await db.getGlobalSettings();
     _settings = { ...DEFAULTS, ...saved };
-    // Normalise stringified booleans that may have been stored by older
-    // dashboard versions or direct DB writes — avoids truthiness bugs.
-    for (const [k, v] of Object.entries(_settings)) {
-      if (v === "true") _settings[k] = true;
-      else if (v === "false") _settings[k] = false;
+    // Normalise every boolean-keyed row to a real JS boolean, regardless of
+    // how it ended up in the DB ("true"/"false" canonical, "1"/"0"/1/0 legacy).
+    // Non-boolean keys pass through unchanged.
+    for (const k of Object.keys(_settings)) {
+      if (BOOLEAN_KEYS.has(k)) _settings[k] = asBool(_settings[k], DEFAULTS[k]);
+    }
+    // Heal legacy rows in-place: any boolean-keyed value that doesn't already
+    // match the canonical "true"/"false" form gets re-persisted. Best-effort,
+    // doesn't block startup. Without this the DB silently keeps potholes
+    // forever and every restart repeats the normalisation work.
+    for (const k of Object.keys(saved)) {
+      if (!BOOLEAN_KEYS.has(k)) continue;
+      const raw = saved[k];
+      const isCanonical = raw === "true" || raw === "false";
+      const canonical = isCanonical ? raw : (asBool(raw, DEFAULTS[k]) ? "true" : "false");
+      if (canonical !== raw) {
+        db.setGlobalSetting(k, canonical).catch(e => console.error(`[settings] Failed to migrate ${k}:`, e));
+      }
     }
   } catch (e) {
     console.error("Failed to load settings from db:", e);
@@ -107,17 +167,19 @@ async function load() {
   }
 }
 
-// Persist every key (used for bulk operations like reset-to-defaults).
+// Persist all keys (used for bulk operations like reset-to-defaults).
 // The in-memory cache is authoritative at runtime; persistence is best-effort.
 function save() {
-  Promise.all(Object.entries(_settings).map(([k, v]) => db.setGlobalSetting(k, v)))
+  const pairs = Object.entries(_settings).map(([k, v]) => [k, canonicaliseForPersist(k, v)]);
+  Promise.all(pairs.map(([k, v]) => db.setGlobalSetting(k, v)))
     .catch(e => console.error("Failed to save settings to db:", e));
 }
 
 function get(key) { return _settings[key] ?? DEFAULTS[key]; }
 function set(key, value) {
   _settings[key] = value;
-  db.setGlobalSetting(key, value).catch(e => console.error("Failed to persist setting:", e));
+  db.setGlobalSetting(key, canonicaliseForPersist(key, value))
+    .catch(e => console.error("Failed to persist setting:", e));
 }
 function getAll() { return { ..._settings }; }
 
@@ -151,7 +213,7 @@ function setAiModel(providerId, model) {
 }
 
 function hydrateAiKeysFromEnv() {
-  let changed = false;
+  const changed = [];
   for (const meta of listProviders()) {
     const provider = getProvider(meta.id);
     if (!provider) continue;
@@ -161,17 +223,16 @@ function hydrateAiKeysFromEnv() {
       const val = process.env[envVar];
       if (val) {
         _settings[provider.keyField] = val;
-        changed = true;
+        changed.push(provider.keyField);
         break;
       }
     }
   }
-  if (changed) save();
-}
-
-// Replace template vars in fake mod messages
-function formatFakeMsg(template, vars = {}) {
-  return template.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? `{${k}}`);
+  if (changed.length) {
+    // Only persist the keys that actually changed
+    Promise.all(changed.map(k => db.setGlobalSetting(k, canonicaliseForPersist(k, _settings[k]))))
+      .catch(e => console.error("Failed to persist AI keys:", e));
+  }
 }
 
 module.exports = {
@@ -181,8 +242,8 @@ module.exports = {
   set,
   getAll,
   DEFAULTS,
-  formatFakeMsg,
   AI_SYSTEM_PROMPT_DEFAULT,
+  AI_SYSTEM_PROMPT_CONCISE,
   getActiveProvider,
   getAiApiKey,
   getAiModel,

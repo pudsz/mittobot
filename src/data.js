@@ -6,9 +6,10 @@ const data = {
   reactionlogs: {},
   afkUsers:     {},
   customRoles:  {},
+  _loading: false,
 
   // The in-memory caches above are authoritative at runtime; each save* method
-  // mirrors the relevant cache into Postgres in the background (best-effort).
+  // mirrors the relevant cache in the background (best-effort).
   saveStickies() {
     db.replaceStickies(this.stickies).catch(e => console.error("persist stickies:", e.message));
   },
@@ -25,39 +26,46 @@ const data = {
     db.replaceCustomRoles(this.customRoles).catch(e => console.error("persist customRoles:", e.message));
   },
 
-  // Async: awaited once during bot startup.
+  // Async: awaited once during bot startup. Mutex prevents concurrent reloads
+  // from the API (POST /api/data/reload) from racing with one another.
   async load() {
-    this.stickies = {};
-    for (const row of await db.getStickies()) {
-      try { this.stickies[row.channel_id] = JSON.parse(row.content); } catch { /* ignore */ }
-    }
+    if (this._loading) return;
+    this._loading = true;
+    try {
+      this.stickies = {};
+      for (const row of await db.getStickies()) {          const parsedSticky = db.safeJsonParse(row.content, null);
+          if (parsedSticky !== null) this.stickies[row.channel_id] = parsedSticky;
+      }
 
-    this.warnings = {};
-    for (const row of await db.getAllWarnings()) {
-      const g = (this.warnings[row.guild_id] ??= {});
-      const u = (g[row.user_id] ??= []);
-      u.push({
-        reason: row.reason,
-        by: row.by,
-        timestamp: Number(row.timestamp),
-        severity: row.severity || 1,
-        points: row.points || 1,
-      });
-    }
+      this.warnings = {};
+      for (const row of await db.getAllWarnings()) {
+        const g = (this.warnings[row.guild_id] ??= {});
+        const u = (g[row.user_id] ??= []);
+        u.push({
+          reason: row.reason,
+          by: row.by,
+          timestamp: Number(row.timestamp),
+          severity: row.severity || 1,
+          points: row.points || 1,
+        });
+      }
 
-    this.reactionlogs = {};
-    for (const row of await db.getReactionLogs()) {
-      this.reactionlogs[row.guild_id] = { channelId: row.channel_id };
-    }
+      this.reactionlogs = {};
+      for (const row of await db.getReactionLogs()) {
+        this.reactionlogs[row.guild_id] = { channelId: row.channel_id };
+      }
 
-    this.afkUsers = {};
-    for (const row of await db.getAfkUsers()) {
-      this.afkUsers[row.user_id] = { reason: row.reason, since: Number(row.since), guildId: row.guild_id };
-    }
+      this.afkUsers = {};
+      for (const row of await db.getAfkUsers()) {
+        this.afkUsers[row.user_id] = { reason: row.reason, since: Number(row.since), guildId: row.guild_id };
+      }
 
-    this.customRoles = {};
-    for (const row of await db.getCustomRoles()) {
-      (this.customRoles[row.guild_id] ??= {})[row.user_id] = row.role_id;
+      this.customRoles = {};
+      for (const row of await db.getCustomRoles()) {
+        (this.customRoles[row.guild_id] ??= {})[row.user_id] = row.role_id;
+      }
+    } finally {
+      this._loading = false;
     }
   },
 

@@ -46,11 +46,11 @@ async function load() {
       g[row.command] = {
         enabled: row.enabled === 1,
         permission: row.permission,
-        allowedRoles: JSON.parse(row.allowed_roles || "[]"),
-        allowedChannels: JSON.parse(row.allowed_channels || "[]"),
-        blockedChannels: JSON.parse(row.blocked_channels || "[]"),
+        allowedRoles: db.safeJsonParse(row.allowed_roles, []),
+        allowedChannels: db.safeJsonParse(row.allowed_channels, []),
+        blockedChannels: db.safeJsonParse(row.blocked_channels, []),
         cooldown: row.cooldown,
-        settings: JSON.parse(row.settings || "{}"),
+        settings: db.safeJsonParse(row.settings, {}),
       };
     }
   } catch (e) {
@@ -105,6 +105,21 @@ function reset(guildId, command) {
 // ─── Cooldown tracking (in-memory; resets on restart) ───
 // key: `${guildId}:${command}:${userId}` -> timestamp(ms) when cooldown expires
 const cooldowns = new Map();
+const COOLDOWNS_MAX_SIZE = 5000; // Maximum number of cooldown entries to track
+
+// Evict expired entries every 15 minutes to prevent unbounded growth
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, until] of cooldowns) {
+    if (now >= until) cooldowns.delete(key);
+  }
+  // Size-based eviction: if we exceed max size, remove oldest entries
+  if (cooldowns.size > COOLDOWNS_MAX_SIZE) {
+    const entries = Array.from(cooldowns.entries()).sort((a, b) => a[1] - b[1]);
+    const toRemove = entries.slice(0, cooldowns.size - COOLDOWNS_MAX_SIZE);
+    for (const [key] of toRemove) cooldowns.delete(key);
+  }
+}, 15 * 60_000).unref();
 
 // Returns remaining seconds if on cooldown, or 0 if clear (and arms the cooldown).
 function checkCooldown(guildId, command, userId, seconds, now) {

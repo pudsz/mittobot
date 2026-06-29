@@ -15,8 +15,8 @@ async function load() {
         id: row.id,
         guild_id: row.guild_id,
         trigger_event: row.trigger_event,
-        conditions: JSON.parse(row.conditions || "{}"),
-        actions: JSON.parse(row.actions || "[]"),
+        conditions: db.safeJsonParse(row.conditions, {}),
+        actions: db.safeJsonParse(row.actions, []),
         enabled: row.enabled === 1,
         priority: row.priority || 0,
       });
@@ -47,8 +47,8 @@ async function reloadGuild(guildId) {
       id: row.id,
       guild_id: row.guild_id,
       trigger_event: row.trigger_event,
-      conditions: JSON.parse(row.conditions || "{}"),
-      actions: JSON.parse(row.actions || "[]"),
+      conditions: db.safeJsonParse(row.conditions, {}),
+      actions: db.safeJsonParse(row.actions, []),
       enabled: row.enabled === 1,
       priority: row.priority || 0,
     }));
@@ -133,6 +133,7 @@ function formatMessage(template, context) {
     .replace(/\{mod\}/g, context.moderator || "Moderator")
     .replace(/\{emoji\}/g, emojiStr)
     .replace(/\{channel\}/g, context.channel?.name || "Unknown")
+    .replace(/\{messageId\}/g, context.message?.id || context.messageId || "")
     .replace(/\{message\}/g, context.content || context.message?.content || "");
 }
 

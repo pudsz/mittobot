@@ -77,10 +77,20 @@ Both `prefix` and `slash`/`execute` are optional — a command can be prefix-onl
 | `src/greet.js` | Welcome/leave messages + member/message audit logs (greet.json) |
 | `src/roles.js` | Autoroles + reaction-role mappings + event handlers (roles.json) |
 | `src/dangerzone.js` | Per-guild dangerzone trap channels — auto-punish on message (dangerzone_config) |
+| `src/autoexec.js` | Per-guild "auto rules" engine: event triggers → conditions → actions (autoexec_rules) |
+| `src/economy.js` | Virtual currency store: balances, daily/work cooldowns, transfers (economy_users) |
+| `src/scheduler.js` | One-shot + recurring scheduled messages, fired by a setInterval tick (scheduled_messages) |
+| `src/backup.js` | Server config snapshots (roles/channels/settings) + restore (server_backups) |
+| `src/roletracker.js` | Tracks role membership for the dashboard's Role Members view (tracked_roles) |
+| `src/femboyify.js` | Joke text-transform persisted per user (femboyified_users) |
+| `src/safe.js` | Safe wrappers for Discord API calls — log-and-return-null instead of silent catch |
 | `src/utils.js` | Shared helpers: `isOwner`, `isAuthorized`, `parseDuration`, embed factories |
-| `src/ai.js` | AI message routing, provider dispatch, settings read/write |
+| `src/ai.js` | AI message routing, provider dispatch, tool loop, memory/conversation persistence |
 | `src/ai/providers/` | One file per AI provider (groq, openai, claude, gemini, custom) |
-| `src/commands/` | Built-in command modules (incl. `fun.js`, `info.js`, `mod.js`) |
+| `src/ai/tools.js` | AI function-calling tool schemas + execution + per-tool permission gating |
+| `src/ai/memory.js` | Persistent AI memory (user / server / DM scopes), in-memory cache (ai_memories) |
+| `src/ai/images.js` | Vision support — downloads + validates Discord image attachments → base64 data URIs |
+| `src/commands/` | Built-in command modules (incl. `fun.js`, `info.js`, `mod.js`, `economy.js`, `utility.js`) |
 | `src/api/server.js` | Public HTTP API (JWT auth + CORS) the dashboard consumes; started on `ready` |
 | `dashboard/` | Standalone Vite + React dashboard SPA (its own package; deploy to Vercel) |
 | `scripts/migrate-sqlite-to-postgres.js` | One-time legacy `bot.db` → Postgres migration (`npm run migrate`) |
@@ -97,10 +107,17 @@ synchronously then persist to SQLite in the background (best-effort; errors are
 logged). This keeps the bot fast and lets it scale to multiple instances sharing
 one database.
 
-Tables (created by `db.init()`): `global_settings`, `command_config`,
-`automod_config`, `greet_config`, `roles_config`, `dangerzone_config`, `stickies`, `warnings`,
-`reaction_logs`, `afk_users`, `custom_roles`. JSON-shaped columns are stored as
-TEXT (modules `JSON.parse` them); booleans as `INTEGER` 0/1.
+Tables (created by `db.init()`): config/state — `global_settings`, `command_config`,
+`automod_config`, `automod_extended`, `greet_config`, `roles_config`, `dangerzone_config`,
+`autoexec_rules`, `scheduled_messages`, `server_backups`, `dm_templates`, `tracked_roles`,
+`femboyified_users`; data stores — `stickies`, `warnings`, `mod_notes`, `probation`,
+`moderation_log`, `tempbans`, `reaction_logs`, `afk_users`, `custom_roles`, `economy_users`;
+AI — `ai_memories`, `ai_conversations`, `ai_analytics`, `ai_personalities`. JSON-shaped
+columns are stored as TEXT (modules `JSON.parse` them); booleans as `INTEGER` 0/1.
+
+Note: although `src/db.js` is the only datastore, a few module header comments still
+reference Postgres (legacy). The runtime is SQLite-only; `scripts/migrate-sqlite-to-postgres.js`
+is an unused legacy migration.
 
 For data stores, mutate `data.<store>` directly and call `data.save<Store>()`
 (stickies / afk / reactionlogs / customRoles persist via a transactional
@@ -114,12 +131,42 @@ Owners can configure via `$settings` / `/settings` (interactive button+modal GUI
 
 ### AI System
 
-`src/ai.js` handles `handleAiMessage` — fires when the bot is @mentioned or someone replies to a bot message. Routes to the active provider via `src/ai/providers/`. Providers expose:
-- `chat(messages, { apiKey, model, ... })` — send messages, return reply string
+`src/ai.js` handles `handleAiMessage` — fires when the bot is @mentioned, someone
+replies to a bot message, in DMs (if `aiDmEnabled`), or randomly in "chatty mode"
+(`aiChattyMode` with `aiChattyCooldown`). Behavior is driven by `ai*` settings keys
+(see `DEFAULTS` in `src/settings.js`): `aiEnabled`, `aiProvider`, `aiModel`, `aiApiKey`,
+`aiSystemPrompt`, `aiTemperature`/`aiTopP`/`aiMaxTokens`, `aiContextLimit`, `aiKeyword`,
+`aiAllowedChannels`/`aiIgnoredChannels`, `aiFallbackProviders` (tried in order on error),
+`aiThinkingEnabled`, plus the four feature flags below.
+
+**Providers** (`src/ai/providers/`, registered in `index.js`) expose:
+- `chat(messages, { apiKey, model, ... })` — send messages, return reply (or tool calls)
 - `listModels(apiKey, opts)` — optional, fetches model list for the dashboard
 - `resolveModel(model)` — optional, normalizes model IDs (Groq only currently)
 
-Adding a new provider: create `src/ai/providers/myprovider.js` following the existing pattern and register it in `src/ai/providers/index.js`.
+Add a provider: create `src/ai/providers/myprovider.js` and register it in `index.js`.
+
+**Tools / function calling** (`src/ai/tools.js`, gated by `aiToolsEnabled`). The AI can
+call Discord actions (send_message, warn/mute/kick/ban_member, add/remove_role,
+purge_messages, create_channel, web search, user lookups, etc.) in a multi-turn tool loop.
+Each tool is permission-gated by `checkToolAccess(toolName, member)`: moderation tools
+default to `mod`, `create_channel` to `admin`; overrides live in the `aiToolPermissions`
+settings JSON (`{toolName: "all"|"mod"|"admin"|"owner"}`). Web/browser tools are gated by
+`aiBrowserEnabled`.
+
+**Memory** (`src/ai/memory.js`, gated by `aiMemoryEnabled`). Persistent facts in three
+scopes: per-user (`guildId`+`userId`), per-server (`guildId`, null user), and DM
+(`guildId="dm"`). After each successful exchange the bot fire-and-forgets fact extraction
+and stores results; `recall()`/`recallDm()` inject relevant facts into the prompt. Caches
+in memory like the other stores; oldest entries pruned past per-scope caps. Users clear
+their own via `$clearmymemories`.
+
+**Conversation history** (`ai_conversations` table). Per-`(guild,user)` turn log appended
+via `db.addConversationTurn`, replayed for continuity, trimmed by `trimConversationHistory`.
+The dashboard's AI Chat/Analytics tabs read this and `ai_analytics`.
+
+**Vision** (`src/ai/images.js`). Supported image attachments (png/jpeg/gif/webp, ≤8 MB,
+≤4 per message) are downloaded and converted to base64 data URIs for provider vision formats.
 
 ### Dynamic Modules
 
@@ -160,6 +207,41 @@ Per-guild "trap channel" system designed to catch hacked accounts posting scam l
 Config shape: `{ [guildId]: { channels: { [channelId]: { action, timeoutMs, logChannelId, exemptRoles[], reason } } } }`. Persisted to SQLite table `dangerzone_config`. Exempt users: bot owners, ManageGuild holders, and roles in the per-channel `exemptRoles` list.
 
 Managed via `$dangerzone` / `/dangerzone` (subcommands: `set`, `remove`, `list`, `info`, `log`, `exempt`, `unexempt`, `reason`). The `checkMessage()` hook runs in `messageCreate` right after automod and before all other processing.
+
+### messageCreate Pipeline Order
+
+The order in `index.js`'s `messageCreate` matters — each guard short-circuits the rest:
+1. `handleAiMessage` early-path (replies / mentions / DM), then `automod.checkMessage` →
+   `dangerzone.checkMessage` (return if either acted).
+2. `autoexec.executeTrigger(guildId, "message", …)` if the guild has rules.
+3. Command routing (prefix → `checkAccess` → handler).
+4. `handleStickyRepost` (non-command messages in sticky channels).
+5. `handleAiMessage` fallback (chatty mode / keyword).
+
+### Auto Rules / Autoexec (`src/autoexec.js`)
+
+Per-guild event-driven automation: **trigger → conditions → actions**. Triggers are fired
+from event handlers — `message` (in `messageCreate`), `join`/`leave` (`guildMember*`),
+`reaction_added` (`messageReactionAdd`). Rules persist to `autoexec_rules`; `hasRules` is a
+fast cache check before `executeTrigger` runs. Managed from the dashboard **Auto Rules** tab.
+
+### Economy (`src/economy.js`)
+
+Virtual-currency store (category `fun`, table `economy_users`, keyed by `(guild,user)`):
+wallet/bank balances + `last_daily`/`last_work` cooldown timestamps. Commands in
+`src/commands/economy.js`: `$balance`, `$daily`, `$work`, `$pay`, `$leaderboard`, `$gamble`,
+`$rob` (slash: `/economy <sub>`). Dashboard **Economy** tab.
+
+### Scheduler (`src/scheduler.js`)
+
+One-shot and recurring (`daily`/`weekly`/`monthly`) scheduled messages in
+`scheduled_messages`, fired by a `setInterval` tick started on `ready`. Managed via
+`$schedule` / `/schedule` (admin-gated via `config.memberLevel`) and the dashboard.
+
+### Backups (`src/backup.js`)
+
+Snapshots of server config (roles, channels, settings) to `server_backups`, with restore.
+Managed via `$backup` (admin-only) and the dashboard **Backups** tab.
 
 ### Fake vs Real Moderation
 

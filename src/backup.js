@@ -76,6 +76,21 @@ function serializeGuild(guild) {
 
 // ─── Restore a guild from a backup snapshot ───────────────────────────────
 
+// Apply permission overwrites for a created channel/category, resolving roles by name.
+async function applyOverwrites(target, overwrites, guild) {
+  for (const ow of overwrites) {
+    const role = guild.roles.cache.find(r => r.name === ow.roleName);
+    if (!role) {
+      console.warn(`[backup] Overwrite skipped: role "${ow.roleName}" not found`);
+      continue;
+    }
+    await target.permissionOverwrites.create(role.id, {
+      Allow: BigInt(ow.allow || "0"),
+      Deny: BigInt(ow.deny || "0"),
+    }, { reason: "Backup restore" }).catch(() => {});
+  }
+}
+
 async function restoreGuild(guild, data, options = {}) {
   const { skipRoles = false, skipChannels = false, dryRun = false } = options;
   const log = [];
@@ -133,17 +148,9 @@ async function restoreGuild(guild, data, options = {}) {
               position: cat.position,
               reason: "Server backup restore",
             });
-            // Apply overwrites (resolve roles by name)
             if (cat.overwrites?.length) {
-              for (const ow of cat.overwrites) {
-                const role = freshGuild.roles.cache.find(r => r.name === ow.roleName);
-                if (!role) continue;
-                await created.permissionOverwrites.create(role.id, {
-                  Allow: BigInt(ow.allow || "0"),
-                  Deny: BigInt(ow.deny || "0"),
-                }, { reason: "Backup restore" }).catch(() => {});
-                summary.overwritesApplied++;
-              }
+              await applyOverwrites(created, cat.overwrites, freshGuild);
+              summary.overwritesApplied += cat.overwrites.length;
             }
           }
           log.push(`Category created: ${cat.name}`);
@@ -181,17 +188,9 @@ async function restoreGuild(guild, data, options = {}) {
               defaultAutoArchiveDuration: ch.defaultAutoArchiveDuration || undefined,
               reason: "Server backup restore",
             });
-            // Apply overwrites (resolve roles by name)
             if (ch.overwrites?.length) {
-              for (const ow of ch.overwrites) {
-                const role = freshGuild.roles.cache.find(r => r.name === ow.roleName);
-                if (!role) continue;
-                await created.permissionOverwrites.create(role.id, {
-                  Allow: BigInt(ow.allow || "0"),
-                  Deny: BigInt(ow.deny || "0"),
-                }, { reason: "Backup restore" }).catch(() => {});
-                summary.overwritesApplied++;
-              }
+              await applyOverwrites(created, ch.overwrites, freshGuild);
+              summary.overwritesApplied += ch.overwrites.length;
             }
           }
           log.push(`Channel created: ${ch.parentName ? `${ch.parentName}/` : ""}#${ch.name}`);
@@ -223,10 +222,9 @@ async function get(guildId) {
 
 async function getById(id) {
   const row = await db.getBackup(id);
-  if (!row) return null;
-  let data = {};
-  try { data = JSON.parse(row.data); } catch { /* ignore */ }
-  return { ...row, data };
+  if (!row) return null;      let data = {};
+      try { data = db.safeJsonParse(row.data, {}); } catch { /* ignore */ }
+      return { ...row, data };
 }
 
 async function remove(id) {

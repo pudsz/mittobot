@@ -1,8 +1,20 @@
 const { PermissionFlagsBits, EmbedBuilder } = require("discord.js");
 const settings = require("./settings");
+const validation = require("./validation");
 
 const MAX_PURGE      = 100;
-const OWNER_IDS      = new Set(["938414775451410472", "531458074783907850"]);
+// OWNER_IDS from environment variable (comma-separated) or fallback to empty set
+const OWNER_IDS      = new Set(
+  (process.env.OWNER_IDS || "")
+    .split(",")
+    .map(id => id.trim())
+    .filter(id => /^\d{17,20}$/.test(id))
+);
+
+// Warn if no owner IDs are set (except in test environments)
+if (OWNER_IDS.size === 0 && process.env.NODE_ENV !== "test") {
+  console.warn("[utils] No OWNER_IDS set in environment variables. Bot owner commands will not work.");
+}
 // PREFIX is read dynamically from settings so it can be changed at runtime
 function getPrefix() { return settings.get("prefix"); }
 
@@ -48,7 +60,15 @@ function formatDuration(ms) {
 }
 
 function resolveUserId(arg) {
-  return arg?.match(/^<@!?(\d+)>$/)?.[1] ?? (/^\d{17,20}$/.test(arg) ? arg : null);
+  if (!arg) return null;
+  // Handle mention format <@123456789> or <@!123456789>
+  const mentionMatch = arg.match(/^<@!?(\d+)>$/);
+  if (mentionMatch) {
+    const id = mentionMatch[1];
+    return validation.isValidUserId(id) ? id : null;
+  }
+  // Handle raw ID
+  return validation.isValidUserId(arg) ? arg : null;
 }
 
 module.exports = {
@@ -57,4 +77,5 @@ module.exports = {
   getPrefix, isOwner, isAuthorized, canCreateCustomRole,
   successEmbed, errorEmbed, noPermEmbed,
   parseDuration, formatDuration, resolveUserId,
+  validation,
 };

@@ -55,14 +55,14 @@ function ProofSection({ proof }) {
           ) : <span className="muted" style={{ fontSize: 11 }}>[no text content]</span>}
           {proof.repliedMessage.attachments?.length > 0 && (
             <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
-              {proof.repliedMessage.attachments.map((a, i) => <AttachmentThumb key={i} att={a} />)}
+              {proof.repliedMessage.attachments.map((a) => <AttachmentThumb key={a.id || a.url} att={a} />)}
             </div>
           )}
         </div>
       )}
       {proof.attachments?.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-          {proof.attachments.map((a, i) => <AttachmentThumb key={i} att={a} />)}
+          {proof.attachments.map((a) => <AttachmentThumb key={a.id || a.url} att={a} />)}
         </div>
       )}
     </div>

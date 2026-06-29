@@ -1,10 +1,6 @@
+const crypto = require("crypto");
+const { safeJsonParse } = require("../parse");
 const { contentToGeminiParts } = require("../images");
-
-function safeJsonParse(str, toolName) {
-  try { return JSON.parse(str); } catch (e) {
-    throw new Error(`Tool "${toolName}" arguments truncated or malformed (${str?.length || 0} chars) — try increasing aiMaxTokens. ${e.message}`);
-  }
-}
 
 const DEFAULT_MODELS = [
   "gemini-2.0-flash",
@@ -120,7 +116,7 @@ async function chat(messages, { apiKey, model, temperature, maxTokens, topP, too
       }
       if (part.functionCall) {
         toolCalls.push({
-          id: `gemini-${Date.now()}-${Math.random()}`,
+          id: `gemini-${crypto.randomUUID()}`,
           name: part.functionCall.name,
           args: part.functionCall.args
         });

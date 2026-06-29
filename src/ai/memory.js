@@ -1,7 +1,9 @@
 // Persistent AI memory. In-memory cache is authoritative at runtime; writes
-// persist per-row to Postgres (mirrors the src/data.js philosophy). Two scopes:
-//   - user memories  (guildId + userId)  → facts about a specific member
-//   - server memories (guildId, userId null) → general facts about the server
+// persist per-row to SQLite (mirrors the src/data.js philosophy). Scopes:
+//   - guild user memories   (guildId + userId) → facts about a specific member
+//   - guild server memories (guildId + null)   → facts about the server
+//   - DM memories           ("dm" + userId)    → private facts for one DM user
+// Memories replace the previous concept of "facts" (renamed for terminology clarity).
 const db = require("../db");
 
 const MAX_CONTENT = 600;       // clamp a single memory
@@ -31,33 +33,42 @@ async function load() {
   }
 }
 
+// All memories tied to a specific user in a guild.
 function forUser(guildId, userId) {
   return items.filter(m => m.guildId === guildId && m.userId === userId);
 }
 
-function serverFacts(guildId) {
+// All server-wide memories (no specific user) in a guild.
+function serverMemories(guildId) {
   return items.filter(m => m.guildId === guildId && !m.userId);
 }
 
-// Everything visible in a guild (server facts + every user's facts).
+// Everything visible in a guild (server memories + every user's memories).
 function forGuild(guildId) {
   return items.filter(m => m.guildId === guildId);
 }
 
-// What to inject into the prompt for a given speaker: this user's facts plus
-// server-wide facts, most-recent first, capped.
+// What to inject into the prompt for a given speaker: this user's memories plus
+// server-wide memories, most-recent first, capped.
 function recall(guildId, userId, limit = 25) {
   const mine = forUser(guildId, userId);
-  const server = serverFacts(guildId);
+  const server = serverMemories(guildId);
   return [...mine, ...server]
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, limit);
 }
 
+// Recall memories for a DM user. DMs intentionally do not read user_id=NULL
+// "server" memories from the "dm" sentinel, so one DM cannot leak into another.
+function recallDm(userId, limit = 15) {
+  const mine = forUser("dm", userId);
+  return mine.sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
+}
+
 async function prune(guildId, userId) {
   const scope = userId
     ? items.filter(m => m.guildId === guildId && m.userId === userId)
-    : serverFacts(guildId);
+    : serverMemories(guildId);
   const cap = userId ? MAX_PER_USER : MAX_PER_SERVER;
   if (scope.length <= cap) return;
   const excess = scope.sort((a, b) => a.createdAt - b.createdAt).slice(0, scope.length - cap);
@@ -109,4 +120,8 @@ async function clear(guildId) {
   }
 }
 
-module.exports = { load, add, forget, clear, forUser, serverFacts, forGuild, recall };
+module.exports = {
+  load, add, forget, clear,
+  forUser, serverMemories, forGuild,
+  recall, recallDm,
+};

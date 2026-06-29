@@ -34,6 +34,7 @@ const AI_SETTING_KEYS = new Set([
   "claudeApiKey", "claudeModel",
   "geminiApiKey", "geminiModel",
   "customApiKey", "customModel", "customBaseUrl", "customApiType",
+  "nvidiaApiKey", "nvidiaModel",
   "aiSystemPrompt", "aiAllowedChannels", "aiIgnoredChannels",
   "aiTemperature", "aiMaxTokens", "aiTopP", "aiContextLimit",
   "aiToolsEnabled", "aiMemoryEnabled", "aiThinkingEnabled",
@@ -67,16 +68,36 @@ function startApi(ctx) {
 
   // Command rate tracking (rolling window for dashboard display)
   const cmdTimes = [];
+  const CMD_TIMES_MAX_SIZE = 1000; // Maximum number of command timestamps to track
   ctx.commandRate = () => {
     const now = Date.now();
     const cutoff = now - 60_000;
     while (cmdTimes.length && cmdTimes[0] < cutoff) cmdTimes.shift();
     return cmdTimes.length;
   };
-  ctx.trackCommand = () => { cmdTimes.push(Date.now()); };
-  // Allow the bot to share a process secret across instances; fall back to an
-  // ephemeral one (fine for a single instance, tokens reset on restart).
-  const JWT_SECRET = process.env.DASHBOARD_JWT_SECRET || crypto.randomBytes(32).toString("hex");
+  ctx.trackCommand = () => {
+    cmdTimes.push(Date.now());
+    // Size-based eviction: if we exceed max size, remove oldest entries
+    if (cmdTimes.length > CMD_TIMES_MAX_SIZE) {
+      cmdTimes.splice(0, cmdTimes.length - CMD_TIMES_MAX_SIZE);
+    }
+  };
+  // Periodic cleanup to ensure array doesn't grow unbounded (every 5 minutes)
+  setInterval(() => {
+    const now = Date.now();
+    const cutoff = now - 60_000;
+    while (cmdTimes.length && cmdTimes[0] < cutoff) cmdTimes.shift();
+  }, 5 * 60_000).unref();    // JWT secret - required in production for stable sessions across restarts
+    let JWT_SECRET = process.env.DASHBOARD_JWT_SECRET;
+    if (!JWT_SECRET) {
+      if (process.env.NODE_ENV === "production") {
+        console.error("[api] DASHBOARD_JWT_SECRET is required in production. Set it to a stable 64-character hex string.");
+        console.error("[api] Generate one with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"");
+        return; // Disable API if no secret in production
+      }
+      JWT_SECRET = crypto.randomBytes(32).toString("hex");
+      console.warn("[api] DASHBOARD_JWT_SECRET not set - using ephemeral secret (tokens will be invalidated on restart). Set it for production.");
+    }
   const TOKEN_TTL  = process.env.DASHBOARD_TOKEN_TTL || "7d";
 
   // Discord OAuth config
@@ -99,17 +120,23 @@ function startApi(ctx) {
   }
 
   const app = express();
+  app.set('trust proxy', 1);
 
   // CORS: restrict to the dashboard origin(s). DASHBOARD_ORIGIN may be a
-  // comma-separated list; if unset, allow all (dev only — warn loudly).
+  // comma-separated list; required in production for security.
   const originList = (process.env.DASHBOARD_ORIGIN || "")
     .split(",").map(s => s.trim()).filter(Boolean);
   if (!originList.length) {
-    console.warn("[api] DASHBOARD_ORIGIN not set — allowing all origins (set it to your Vercel URL in production).");
+    if (process.env.NODE_ENV === "production") {
+      console.error("[api] DASHBOARD_ORIGIN is required in production for CORS security. Set it to your dashboard URL(s).");
+      console.error("[api] Example: DASHBOARD_ORIGIN=https://your-dashboard.vercel.app,https://localhost:5173");
+      return; // Disable API if no origin whitelist in production
+    }
+    console.warn("[api] DASHBOARD_ORIGIN not set — allowing all origins (DEV ONLY). Set it for production.");
   }
   app.use(cors({
     origin: originList.length ? originList : true,
-    methods: ["GET", "POST", "DELETE", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   }));
   app.use(express.json({ limit: "1mb" }));
@@ -129,6 +156,7 @@ function startApi(ctx) {
   const apiRateMap = new Map();
   const API_RATE_MAX = 300;        // requests per window
   const API_RATE_WINDOW = 60_000;  // per 60 seconds
+  const API_RATE_MAX_SIZE = 1000;  // Maximum number of IPs to track
 
   function checkApiRateLimit(ip) {
     const now = Date.now();
@@ -151,6 +179,12 @@ function startApi(ctx) {
     for (const [ip, entry] of apiRateMap) {
       if (Date.now() - entry.windowStart > API_RATE_WINDOW) apiRateMap.delete(ip);
     }
+    // Size-based eviction: if we exceed max size, remove oldest entries
+    if (apiRateMap.size > API_RATE_MAX_SIZE) {
+      const entries = Array.from(apiRateMap.entries()).sort((a, b) => a[1].windowStart - b[1].windowStart);
+      const toRemove = entries.slice(0, apiRateMap.size - API_RATE_MAX_SIZE);
+      for (const [ip] of toRemove) apiRateMap.delete(ip);
+    }
   }, 5 * 60_000).unref();
 
   // Apply general rate limiter to all /api/* routes
@@ -171,16 +205,11 @@ function startApi(ctx) {
     next();
   });
 
-  // Global error handler (catch-all for thrown errors in routes)
-  app.use((err, req, res, _next) => {
-    console.error("[api] Unhandled error:", err.message);
-    res.status(500).json({ error: "Internal server error" });
-  });
-
   // ── Simple in-memory rate limiter for login ──
   const loginAttempts = new Map();
   const LOGIN_RATE_LIMIT = 10; // max attempts
   const LOGIN_RATE_WINDOW = 60_000; // per 60 seconds
+  const LOGIN_RATE_MAX_SIZE = 500; // Maximum number of IPs to track
 
   function checkLoginRateLimit(ip) {
     const now = Date.now();
@@ -203,12 +232,21 @@ function startApi(ctx) {
     for (const [ip, entry] of loginAttempts) {
       if (Date.now() - entry.windowStart > LOGIN_RATE_WINDOW) loginAttempts.delete(ip);
     }
+    // Size-based eviction: if we exceed max size, remove oldest entries
+    if (loginAttempts.size > LOGIN_RATE_MAX_SIZE) {
+      const entries = Array.from(loginAttempts.entries()).sort((a, b) => a[1].windowStart - b[1].windowStart);
+      const toRemove = entries.slice(0, loginAttempts.size - LOGIN_RATE_MAX_SIZE);
+      for (const [ip] of toRemove) loginAttempts.delete(ip);
+    }
   }, 2 * 60_000).unref();
 
   function requireAuth(req, res, next) {
     const header = req.headers.authorization || "";
     const token = header.startsWith("Bearer ") ? header.slice(7) : null;
     if (!token) return res.status(401).json({ error: "Unauthorized" });
+    if (!JWT_SECRET) {
+      return res.status(500).json({ error: "Server configuration error" });
+    }
     try {
       const payload = jwt.verify(token, JWT_SECRET);
       req.user = payload; // { sub: userId, tag, avatar, isOwner }
@@ -266,7 +304,9 @@ function startApi(ctx) {
       id: g.id,
       name: g.name,
       memberCount: g.memberCount,
-      iconURL: g.iconURL({ size: 64 }),
+      icon: g.icon,
+      channelCount: g.channels.cache.size,
+      roleCount: Math.max(0, g.roles.cache.size - 1), // exclude @everyone
     }));
   }
 
@@ -376,6 +416,9 @@ function startApi(ctx) {
   // Password login (fallback when Discord OAuth is not configured)
   app.post("/login", (req, res) => {
     if (!PASSWORD) return res.status(501).json({ error: "Password login not configured" });
+    if (!JWT_SECRET) {
+      return res.status(500).json({ error: "Server configuration error - JWT secret not set" });
+    }
     const ip = req.ip || req.connection?.remoteAddress || "unknown";
     const rateCheck = checkLoginRateLimit(ip);
     if (!rateCheck.allowed) {
@@ -389,26 +432,58 @@ function startApi(ctx) {
     res.json({ ok: true, token });
   });
 
+  // OAuth state store for CSRF protection
+  const oauthStateStore = new Map();
+  const OAUTH_STATE_TTL = 600_000; // 10 minutes
+  const OAUTH_STATE_MAX_SIZE = 200; // Maximum number of OAuth states to track
+
   // Discord OAuth — redirect user to Discord's consent screen
   app.get("/api/auth/discord", (req, res) => {
     if (!HAS_DISCORD_OAUTH) {
       return res.status(501).json({ error: "Discord OAuth not configured" });
     }
+    const state = crypto.randomBytes(16).toString("hex");
+    oauthStateStore.set(state, { createdAt: Date.now() });
     const url = new URL("https://discord.com/api/oauth2/authorize");
     url.searchParams.set("client_id", DISCORD_CLIENT_ID);
     url.searchParams.set("redirect_uri", DISCORD_REDIRECT_URI);
     url.searchParams.set("response_type", "code");
     url.searchParams.set("scope", "identify guilds");
+    url.searchParams.set("state", state);
     res.redirect(url.toString());
   });
 
+  // Periodic cleanup of expired OAuth states
+  setInterval(() => {
+    const cutoff = Date.now() - OAUTH_STATE_TTL;
+    for (const [s, entry] of oauthStateStore) {
+      if (entry.createdAt < cutoff) oauthStateStore.delete(s);
+    }
+    // Size-based eviction: if we exceed max size, remove oldest entries
+    if (oauthStateStore.size > OAUTH_STATE_MAX_SIZE) {
+      const entries = Array.from(oauthStateStore.entries()).sort((a, b) => a[1].createdAt - b[1].createdAt);
+      const toRemove = entries.slice(0, oauthStateStore.size - OAUTH_STATE_MAX_SIZE);
+      for (const [s] of toRemove) oauthStateStore.delete(s);
+    }
+  }, 120_000).unref();
+
   // Discord OAuth callback — exchange code for token, fetch user, issue JWT
   app.get("/api/auth/discord/callback", async (req, res) => {
-    const { code, error: oauthError } = req.query;
+    const { code, state, error: oauthError } = req.query;
     const dashOrigin = originList[0] || "http://0.0.0.0:5173";
 
     if (oauthError || !code) {
-      return res.redirect(`${dashOrigin}?error=${encodeURIComponent(oauthError || "No authorization code received")}`);
+      return res.redirect(`${dashOrigin}#error=${encodeURIComponent(oauthError || "No authorization code received")}`);
+    }
+
+    // Verify state to prevent CSRF
+    if (!state || !oauthStateStore.has(state)) {
+      return res.redirect(`${dashOrigin}#error=${encodeURIComponent("Invalid OAuth state — try logging in again")}`);
+    }
+    oauthStateStore.delete(state);
+
+    if (!JWT_SECRET) {
+      return res.redirect(`${dashOrigin}#error=${encodeURIComponent("Server configuration error - JWT secret not set")}`);
     }
 
     try {
@@ -448,10 +523,10 @@ function startApi(ctx) {
       );
 
       console.log(`[api] Discord OAuth login: ${tag} (${user.id}) isOwner=${isOwner}`);
-      res.redirect(`${dashOrigin}?token=${encodeURIComponent(token)}`);
+      res.redirect(`${dashOrigin}#token=${encodeURIComponent(token)}`);
     } catch (err) {
       console.error("[api] Discord OAuth callback error:", err.message);
-      res.redirect(`${dashOrigin}?error=${encodeURIComponent(err.message)}`);
+      res.redirect(`${dashOrigin}#error=${encodeURIComponent(err.message)}`);
     }
   });
 
@@ -635,6 +710,10 @@ function startApi(ctx) {
 
   app.delete("/api/ai/memories/:id", requireAuth, async (req, res) => {
     try {
+      const dbMod = require("../db");
+      const row = dbMod.get("SELECT guild_id FROM ai_memories WHERE id = ?", Number(req.params.id));
+      if (!row || !userCanAccessGuild(req.user.sub, row.guild_id, req.user.isOwner))
+        return res.status(404).json({ error: "Not found" });
       const id = Number(req.params.id);
       const aiMemory = require("../ai/memory");
       const deleted = await aiMemory.forget(id);
@@ -647,10 +726,43 @@ function startApi(ctx) {
     }
   });
 
+  // Bulk-memory wiper. Owner-only since it can drop every learned fact.
+  // Body shape: { guildId?, scope: "all" | "server" | "user", userId? }
+  //   - scope="all"   → wipe every memory (across all guilds) that matches guildId (if any)
+  //   - scope="server"→ wipe only `user_id IS NULL` rows (server-wide context)
+  //   - scope="user"  → wipe only that user's memories (userId required)
+  //
+  // ⚠️ scope="all" with no guildId wipes EVERY guild's ai_memories rows in one
+  //    shot. Owner-only is the only safeguard; intentional, worth knowing
+  //    when wiring UI affordances to this endpoint.
+  app.post("/api/ai/memories/clear", requireAuth, requireOwner, async (req, res) => {
+    try {
+      const { scope, userId, guildId: bodyGuild } = req.body || {};
+      if (!["all", "server", "user"].includes(scope)) {
+        return res.status(400).json({ error: "scope must be all|server|user" });
+      }
+      if (scope === "user" && !(userId && String(userId).trim())) {
+        return res.status(400).json({ error: "userId required when scope=user" });
+      }
+      const db = require("../db");
+      let userFilter;
+      if (scope === "all") userFilter = undefined;
+      else if (scope === "server") userFilter = null;
+      else userFilter = String(userId).trim();
+      // Optional guild scoping — falls back to reqGuildId() so per-guild wipes
+      // are still possible from the dashboard.
+      const guildId = bodyGuild || reqGuildId(req) || null;
+      const cleared = await db.clearAiMemories({ guildId, userId: userFilter });
+      res.json({ ok: true, cleared });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ─── AI Chat (SSE streaming endpoint) ────────────────────────────────────
   // Owner-only — streams AI responses token-by-token with a typewriter effect.
   app.post("/api/ai/chat", requireAuth, requireOwner, async (req, res) => {
-    const { message, thinkingEnabled, guildId } = req.body || {};
+    const { message, history, thinkingEnabled, guildId, model: modelOverride } = req.body || {};
 
     if (!message || typeof message !== "string" || !message.trim()) {
       return res.status(400).json({ error: "Message is required" });
@@ -668,26 +780,55 @@ function startApi(ctx) {
       "X-Accel-Buffering": "no", // disable nginx buffering
     });
 
+    let clientClosed = false;
+    res.on("close", () => { clientClosed = true; });
+
     const send = (data) => {
-      if (res.writableEnded) return;
+      if (clientClosed || res.writableEnded) return;
       res.write(`data: ${JSON.stringify(data)}\n\n`);
     };
 
     try {
-      const { chatWithProvider, parseFallbackList, cleanResponse, splitMessage } = require("../ai");
-      const system = settings.get("aiSystemPrompt") || "You are a helpful assistant.";
+      const { chatWithProvider, parseFallbackList, cleanResponse } = require("../ai");
+      const db = require("../db");
+      const guild = guildId ? resolveGuild(guildId) : null;
+      const resolvedPrompt = await db.resolvePrompt({ guildId: guild?.id || guildId || null, channelId: null });
+      const system = resolvedPrompt?.prompt || settings.get("aiSystemPrompt") || "You are a helpful assistant.";
+      const sanitizedHistory = Array.isArray(history)
+        ? history
+          .filter(m => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
+          .map(m => ({ role: m.role, content: m.content.trim().slice(0, 2000) }))
+          .filter(m => m.content)
+          .slice(-12)
+        : [];
+      const dashboardContext = [
+        "Dashboard playground context:",
+        guild ? `- Selected guild: ${guild.name} (${guild.id})` : "- No selected guild.",
+        "- This is a private admin playground chat, not a live Discord channel.",
+        "- Use the transcript above as this playground's local conversation history.",
+      ].join("\n");
       const messages = [
-        { role: "system", content: system },
+        { role: "system", content: `${system}\n\n${dashboardContext}` },
+        ...sanitizedHistory,
         { role: "user", content: `[Dashboard Admin]: ${message.trim()}` },
       ];
 
       const primaryId = settings.get("aiProvider") || "groq";
       const fallbackIds = parseFallbackList(settings.get("aiFallbackProviders"));
       const providerIds = [primaryId, ...fallbackIds].filter((id, i, arr) => arr.indexOf(id) === i);
+      const overrideModel = typeof modelOverride === "string" && modelOverride.trim()
+        ? modelOverride.trim()
+        : null;
 
-      const result = await chatWithProvider(providerIds, messages);
+      const result = await chatWithProvider(providerIds, messages, {
+        providerId: overrideModel ? primaryId : null,
+        model: overrideModel,
+        disableTools: true,
+      });
       const response = result.result;
-      const think = thinkingEnabled !== false;
+      const think = typeof thinkingEnabled === "boolean"
+        ? thinkingEnabled
+        : settings.get("aiThinkingEnabled") === true;
 
       let fullText = "";
 
@@ -701,21 +842,23 @@ function startApi(ctx) {
       if (!fullText) {
         send({ type: "error", error: "The AI returned an empty response." });
       } else {
+        send({ type: "meta", providerId: result.providerId, model: result.model, promptSource: resolvedPrompt?.source || "settings" });
         // Stream the response in small chunks with a typewriter effect
         const chunkSize = 3;
         for (let i = 0; i < fullText.length; i += chunkSize) {
+          if (clientClosed) break;
           const chunk = fullText.slice(i, i + chunkSize);
           send({ type: "token", text: chunk });
           // Small delay for typewriter feel (faster for longer texts)
           await new Promise(r => setTimeout(r, 15 + Math.random() * 10));
         }
-        send({ type: "done", fullText });
+        send({ type: "done", fullText, providerId: result.providerId, model: result.model });
       }
     } catch (err) {
       console.error("[api] AI chat error:", err.message);
       send({ type: "error", error: err.message });
     } finally {
-      if (!res.writableEnded) res.end();
+      if (!clientClosed && !res.writableEnded) res.end();
     }
   });
 
@@ -738,6 +881,204 @@ function startApi(ctx) {
     }
   });
 
+  // ─── AI Conversation Logs (per-user chat history viewer) ────────────────
+  app.get("/api/ai/conversations/logs", requireAuth, async (req, res) => {
+    try {
+      const guildId = reqGuildId(req);
+      const scope = req.query.scope || null;
+      const channelId = req.query.channelId || null;
+      const userId = req.query.userId || null;
+      const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
+
+      if (!guildId) return res.json({ logs: [], users: [], scope });
+      if (!userCanAccessGuild(req.user.sub, guildId, req.user.isOwner)) {
+        return res.status(403).json({ error: "You don't have access to this guild" });
+      }
+
+      const db = require("../db");
+      // When scope is "private", DMs are global to the bot (no guild affiliation).
+      // Skip the guild filter so all DM users surface regardless of selected guild.
+      // When scope is "global", only match the selected guild's channel threads.
+      // When no scope is set, include both guild threads and DM users for this guild.
+      const effectiveGuildId = (scope === "private") ? null : guildId;
+      const userRows = db.getConversationUsers({ guildId: effectiveGuildId, scope });
+      const guild = resolveGuild(guildId);
+
+      // Enrich user/channel list with display names; channel rows fall back to #name.
+      const enrichedUsers = userRows.map(u => {
+        const channel = u.channel_id && guild ? guild.channels.cache.get(u.channel_id) : null;
+        let displayName = channel?.name || u.user_id || u.channel_id || "channel";
+        let avatarUrl = null;
+        if (u.user_id && guild) {
+          const member = guild.members.cache.get(u.user_id);
+          if (member) {
+            displayName = member.displayName || member.user?.username || u.user_id;
+            try {
+              avatarUrl = member.user.displayAvatarURL({ size: 128, forceStatic: false }) || null;
+            } catch { /* keep null */ }
+          }
+        }
+        return {
+          scope: u.scope,
+          guildId: u.guild_id,
+          channelId: u.channel_id,
+          channelName: channel?.name || null,
+          userId: u.user_id,
+          displayName,
+          avatarUrl,
+          lastActive: u.last_active,
+        };
+      });
+
+      // Fetch logs by scope + thread filter; otherwise most recent in this guild.
+      let logs = [];
+      if (scope === "private" && userId) {
+        const asc = db.getConversationHistory("private", { userId }, limit);
+        logs = asc.reverse();
+      } else if (scope === "global" && channelId) {
+        const asc = db.getConversationHistory("global", { guildId, channelId }, limit);
+        logs = asc.reverse();
+      } else {
+        // When scope is "private", don't pass guildId since DMs have no guild.
+        // For "global" or no scope, pass guildId to scope the results.
+        logs = db.getConversationLogs({ scope, guildId: effectiveGuildId, channelId, userId, limit });
+      }
+
+      const enrichedLogs = logs.map(row => {
+        const channel = row.channel_id && guild ? guild.channels.cache.get(row.channel_id) : null;
+        let displayName = channel?.name || row.user_id || row.channel_id || "channel";
+        if (row.user_id && guild) {
+          const member = guild.members.cache.get(row.user_id);
+          if (member) displayName = member.displayName || member.user?.username || row.user_id;
+        }
+        return {
+          id: row.id,
+          scope: row.scope,
+          guildId: row.guild_id,
+          channelId: row.channel_id,
+          channelName: channel?.name || null,
+          userId: row.user_id,
+          displayName,
+          role: row.role,
+          content: row.content,
+          timestamp: row.timestamp,
+        };
+      });
+
+      res.json({ logs: enrichedLogs, users: enrichedUsers, guildId, scope: scope || null });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Owner-only diagnostic: distribution of ai_conversations rows so an admin
+  // can verify whether their data is actually persisted (and where). Useful
+  // when the dashboard shows empty but the DB claims to have rows. NULL is
+  // returned as JSON null rather than a string sentinel so it remains
+  // unambiguous for downstream consumers.
+  app.get("/api/ai/conversations/diag", requireAuth, requireOwner, async (req, res) => {
+    try {
+      const db = require("../db");
+      // Bare SELECTs already return JS `null` for SQL NULL columns, so the
+      // rows can be sent through unchanged — no COALESCE mapping needed.
+      const total = db.db.prepare("SELECT COUNT(*) as count FROM ai_conversations").get().count;
+      const byScope = db.db.prepare(
+        "SELECT scope, COUNT(*) as count FROM ai_conversations GROUP BY scope ORDER BY count DESC"
+      ).all();
+      const byGuild = db.db.prepare(
+        "SELECT guild_id, COUNT(*) as count FROM ai_conversations GROUP BY guild_id ORDER BY count DESC LIMIT 10"
+      ).all();
+      const byThread = db.db.prepare(
+        `SELECT scope, guild_id, channel_id, user_id, COUNT(*) as count, MAX(timestamp) as last_active
+         FROM ai_conversations
+         GROUP BY scope, guild_id, channel_id, user_id
+         ORDER BY last_active DESC
+         LIMIT 10`
+      ).all();
+      const sample = db.db.prepare(
+        "SELECT id, scope, guild_id, channel_id, user_id, role, length(content) as content_length, timestamp FROM ai_conversations ORDER BY timestamp DESC LIMIT 3"
+      ).all();
+      res.json({ total, byScope, byGuild, byThread, sample });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Layered system prompts (default -> guild -> channel); most specific tier wins.
+  app.get("/api/ai/prompts", requireAuth, requireOwner, async (req, res) => {
+    try {
+      const db = require("../db");
+      const rows = await db.listPrompts();
+      const guild = reqGuildId(req) ? resolveGuild(reqGuildId(req)) : null;
+      const channelsByName = {};
+      if (guild) {
+        for (const c of guild.channels.cache.values()) {
+          if (typeof c.lockPermissions === "function") {
+            channelsByName[c.id] = { id: c.id, name: c.name };
+          }
+        }
+      }
+      const resolved = guild
+        ? await db.resolvePrompt({ guildId: guild.id, channelId: null })
+        : { prompt: null, source: null };
+      const fallback = settings.get("aiSystemPrompt") || null;
+      const out = { default: null, guild: null, channels: {}, resolved, fallback, raw: rows };
+      for (const r of rows) {
+        if (r.scope === "default" && r.target_id === "*") out.default = r.prompt;
+        else if (r.scope === "guild") out.guild = { targetId: r.target_id, prompt: r.prompt, updatedAt: r.updated_at };
+        else if (r.scope === "channel") {
+          out.channels[r.target_id] = {
+            targetId: r.target_id,
+            prompt: r.prompt,
+            updatedAt: r.updated_at,
+            channel: channelsByName[r.target_id] || null,
+          };
+        }
+      }
+      res.json(out);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put("/api/ai/prompts", requireAuth, requireOwner, async (req, res) => {
+    try {
+      const { scope, targetId, prompt } = req.body || {};
+      if (!["default", "guild", "channel"].includes(scope)) {
+        return res.status(400).json({ error: "scope must be default|guild|channel" });
+      }
+      if (scope === "guild" && (!targetId || !resolveGuild(targetId))) {
+        return res.status(400).json({ error: "Invalid guild targetId" });
+      }
+      if (scope === "channel" && targetId) {
+        let found = false;
+        for (const g of ctx.client?.guilds?.cache?.values() || []) {
+          if (g.channels.cache.get(targetId)) { found = true; break; }
+        }
+        if (!found) return res.status(400).json({ error: "Invalid channel targetId" });
+      }
+      const db = require("../db");
+      await db.upsertPrompt(scope, targetId, prompt || "");
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/ai/prompts", requireAuth, requireOwner, async (req, res) => {
+    try {
+      const { scope, targetId } = req.query;
+      if (!["default", "guild", "channel"].includes(scope)) {
+        return res.status(400).json({ error: "scope must be default|guild|channel" });
+      }
+      const db = require("../db");
+      await db.deletePrompt(scope, targetId);
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ─── Feature categories ──────────────────────────────────────────────────
   app.get("/api/features", requireAuth, (req, res) => {
     const cats = features.listCategories().map(cat => {
@@ -749,7 +1090,7 @@ function startApi(ctx) {
     res.json({ features: cats });
   });
 
-  app.post("/api/features", requireAuth, (req, res) => {
+  app.post("/api/features", requireAuth, requireOwner, (req, res) => {
     const { id, enabled } = req.body || {};
     const cat = features.getCategory(typeof id === "string" ? id : "");
     if (!cat) return res.status(400).json({ error: "Unknown feature category" });
@@ -909,7 +1250,8 @@ function startApi(ctx) {
     const guildInfo = getGuildInfo(reqGuildId(req));
     const guildId = guildInfo.guildId;
     if (!guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
-    if (!userCanAccessGuild(req.user.sub, guildId, req.user.isOwner)) return res.status(403).json({ error: "You don't have access to this guild" });    const body = req.body || {};
+    if (!userCanAccessGuild(req.user.sub, guildId, req.user.isOwner)) return res.status(403).json({ error: "You don't have access to this guild" });
+    const body = req.body || {};
     const patch = {};
     if (typeof body.enabled === "boolean") patch.enabled = body.enabled;
     if (body.logChannelId === null || /^\d{17,20}$/.test(body.logChannelId || "")) patch.logChannelId = body.logChannelId || null;
@@ -1235,8 +1577,11 @@ function startApi(ctx) {
 
   app.delete("/api/modnotes/:id", requireAuth, async (req, res) => {
     try {
-      const db = require("../db");
-      await db.deleteModNote(parseInt(req.params.id, 10));
+      const dbMod = require("../db");
+      const row = dbMod.get("SELECT guild_id FROM mod_notes WHERE id = ?", parseInt(req.params.id, 10));
+      if (!row || !userCanAccessGuild(req.user.sub, row.guild_id, req.user.isOwner))
+        return res.status(404).json({ error: "Not found" });
+      await dbMod.deleteModNote(parseInt(req.params.id, 10));
       res.json({ ok: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -1304,6 +1649,7 @@ function startApi(ctx) {
       const backupMod = require("../backup");
       const entry = await backupMod.getById(parseInt(req.params.id, 10));
       if (!entry) return res.status(404).json({ error: "Backup not found" });
+      if (entry.guild_id !== guildInfo.guildId) return res.status(403).json({ error: "Backup does not belong to this guild" });
       const result = await backupMod.restoreGuild(guild, entry.data);
       res.json({ ok: true, log: result.log.slice(0, 50), summary: result.summary });
     } catch (err) {
@@ -1317,6 +1663,9 @@ function startApi(ctx) {
     if (!userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
       return res.status(403).json({ error: "You don't have access to this guild" });
     try {
+      const dbMod = require("../db");
+      const row = dbMod.get("SELECT guild_id FROM server_backups WHERE id = ?", parseInt(req.params.id, 10));
+      if (!row || row.guild_id !== guildInfo.guildId) return res.status(404).json({ error: "Not found" });
       const backupMod = require("../backup");
       await backupMod.remove(parseInt(req.params.id, 10));
       res.json({ ok: true });
@@ -1371,6 +1720,9 @@ function startApi(ctx) {
     if (!userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
       return res.status(403).json({ error: "You don't have access to this guild" });
     try {
+      const dbMod = require("../db");
+      const row = dbMod.get("SELECT guild_id FROM scheduled_messages WHERE id = ?", parseInt(req.params.id, 10));
+      if (!row || row.guild_id !== guildInfo.guildId) return res.status(404).json({ error: "Not found" });
       const schedMod = require("../scheduler");
       await schedMod.remove(parseInt(req.params.id, 10));
       res.json({ ok: true });
@@ -1387,7 +1739,7 @@ function startApi(ctx) {
     try {
       const db = require("../db");
       const rules = await db.getAutoExecRules(guildInfo.guildId);
-      res.json({ rules: rules.map(r => ({ ...r, conditions: JSON.parse(r.conditions), actions: JSON.parse(r.actions) })) });
+      res.json({ rules: rules.map(r => ({ ...r, conditions: db.safeJsonParse(r.conditions, {}), actions: db.safeJsonParse(r.actions, []) })) });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -1413,9 +1765,11 @@ function startApi(ctx) {
 
   app.delete("/api/autoexec/:id", requireAuth, async (req, res) => {
     try {
-      const db = require("../db");
-      await db.deleteAutoExecRule(parseInt(req.params.id, 10));
-      // Invalidate runtime cache — reload all guilds (we don't know which guild the rule belonged to)
+      const dbMod = require("../db");
+      const row = dbMod.get("SELECT guild_id FROM autoexec_rules WHERE id = ?", parseInt(req.params.id, 10));
+      if (!row || !userCanAccessGuild(req.user.sub, row.guild_id, req.user.isOwner))
+        return res.status(404).json({ error: "Not found" });
+      await dbMod.deleteAutoExecRule(parseInt(req.params.id, 10));
       const autoexec = require("../autoexec");
       await autoexec.reload();
       res.json({ ok: true });
@@ -1541,6 +1895,157 @@ function startApi(ctx) {
   });
 
   // ─── Economy ──────────────────────────────────────────────────────────────
+  // ─── Economy ──────────────────────────────────────────────────────────────
+  // Get economy config for a guild
+  app.get("/api/economy/config", requireAuth, async (req, res) => {
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (!guildInfo.guildId) return res.json({ config: null, hasGuild: false });
+    if (!userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    try {
+      const economy = require("../economy");
+      const cfg = await economy.getConfig(guildInfo.guildId);
+      res.json({ config: cfg, defaults: economy.DEFAULTS, hasGuild: true, guildId: guildInfo.guildId });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Update economy config (payouts, rates, odds)
+  app.post("/api/economy/config", requireAuth, async (req, res) => {
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (!guildInfo.guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    if (!userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    try {
+      const economy = require("../economy");
+      const body = req.body || {};
+      const patch = {};
+      if (Number.isInteger(body.dailyAmount) && body.dailyAmount >= 1) patch.dailyAmount = body.dailyAmount;
+      if (Number.isInteger(body.workMin) && body.workMin >= 1) patch.workMin = body.workMin;
+      if (Number.isInteger(body.workMax) && body.workMax >= body.workMin) patch.workMax = body.workMax;
+      if (Number.isFinite(body.interestRate) && body.interestRate >= 0 && body.interestRate <= 100) patch.interestRate = body.interestRate;
+      if (Number.isFinite(body.taxRate) && body.taxRate >= 0 && body.taxRate <= 100) patch.taxRate = body.taxRate;
+      if (Number.isFinite(body.gambleOdds) && body.gambleOdds >= 0 && body.gambleOdds <= 1) patch.gambleOdds = body.gambleOdds;
+      const cfg = await economy.saveConfig(guildInfo.guildId, patch);
+      res.json({ ok: true, config: cfg });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Economy stats
+  app.get("/api/economy/stats", requireAuth, async (req, res) => {
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (!guildInfo.guildId) return res.json({ stats: null, hasGuild: false });
+    if (!userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    try {
+      const economy = require("../economy");
+      const stats = await economy.getStats(guildInfo.guildId);
+      const guild = resolveGuild(guildInfo.guildId);
+      let richestName = null;
+      if (stats.richestUserId && guild) {
+        const member = guild.members.cache.get(stats.richestUserId);
+        if (member) richestName = member.displayName || member.user?.username || null;
+      }
+      res.json({ stats: { ...stats, richestName }, guildId: guildInfo.guildId, hasGuild: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Reset economy
+  app.post("/api/economy/reset", requireAuth, async (req, res) => {
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (!guildInfo.guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    if (!userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    try {
+      const economy = require("../economy");
+      await economy.resetEconomy(guildInfo.guildId);
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Economy shop items
+  app.get("/api/economy/shop", requireAuth, async (req, res) => {
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (!guildInfo.guildId) return res.json({ items: [], hasGuild: false });
+    if (!userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    try {
+      const economy = require("../economy");
+      const items = await economy.getShopItems(guildInfo.guildId);
+      const guild = resolveGuild(guildInfo.guildId);
+      const enriched = items.map(item => {
+        let roleName = null;
+        if (item.role_id && guild) {
+          const role = guild.roles.cache.get(item.role_id);
+          if (role) roleName = role.name;
+        }
+        return { id: item.id, guildId: item.guild_id, name: item.name, description: item.description, price: item.price, roleId: item.role_id, roleName, stock: item.stock };
+      });
+      res.json({ items: enriched, roles: guildInfo.roles, guildId: guildInfo.guildId, hasGuild: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/economy/shop", requireAuth, async (req, res) => {
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (!guildInfo.guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    if (!userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    const { name, description, price, roleId, stock } = req.body || {};
+    if (!name || !price || price < 1) return res.status(400).json({ error: "name and price (>= 1) are required" });
+    try {
+      const economy = require("../economy");
+      const id = await economy.addShopItem(guildInfo.guildId, name.slice(0, 100), description?.slice(0, 500) || "", price, roleId || null, stock ?? -1);
+      res.json({ ok: true, id });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/economy/shop/:id", requireAuth, async (req, res) => {
+    try {
+      const dbMod = require("../db");
+      const row = dbMod.get("SELECT guild_id FROM economy_shop WHERE id = ?", parseInt(req.params.id, 10));
+      if (!row || !userCanAccessGuild(req.user.sub, row.guild_id, req.user.isOwner))
+        return res.status(404).json({ error: "Not found" });
+      const economy = require("../economy");
+      await economy.deleteShopItem(parseInt(req.params.id, 10));
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch("/api/economy/shop/:id", requireAuth, async (req, res) => {
+    try {
+      const dbMod = require("../db");
+      const row = dbMod.get("SELECT guild_id FROM economy_shop WHERE id = ?", parseInt(req.params.id, 10));
+      if (!row || !userCanAccessGuild(req.user.sub, row.guild_id, req.user.isOwner))
+        return res.status(404).json({ error: "Not found" });
+      const economy = require("../economy");
+      const patch = {};
+      const body = req.body || {};
+      if (body.name !== undefined) patch.name = String(body.name).slice(0, 100);
+      if (body.description !== undefined) patch.description = String(body.description).slice(0, 500);
+      if (Number.isInteger(body.price) && body.price >= 1) patch.price = body.price;
+      if (body.roleId !== undefined) patch.role_id = body.roleId || null;
+      if (Number.isInteger(body.stock) && body.stock >= -1) patch.stock = body.stock;
+      if (Object.keys(patch).length === 0) return res.status(400).json({ error: "No valid fields to update" });
+      await economy.updateShopItem(parseInt(req.params.id, 10), patch);
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get("/api/economy/leaderboard", requireAuth, async (req, res) => {
     const guildInfo = getGuildInfo(reqGuildId(req));
     if (!guildInfo.guildId) return res.json({ leaderboard: [], hasGuild: false });
@@ -1562,6 +2067,78 @@ function startApi(ctx) {
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // ─── Embed Templates ──────────────────────────────────────────────────────
+  app.get("/api/embeds", requireAuth, async (req, res) => {
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (!guildInfo.guildId) return res.json({ templates: [], hasGuild: false });
+    if (!userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    try {
+      const db = require("../db");
+      const templates = await db.getEmbedTemplates(guildInfo.guildId);
+      res.json({ templates: templates.map(t => ({ ...t, embed: db.safeJsonParse(t.embed_json, {}) })), hasGuild: true, guildId: guildInfo.guildId });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/embeds", requireAuth, async (req, res) => {
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (!guildInfo.guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    if (!userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    const { name, embed, id } = req.body || {};
+    if (!name || !embed) return res.status(400).json({ error: "name and embed are required" });
+    try {
+      const db = require("../db");
+      const savedId = await db.saveEmbedTemplate(guildInfo.guildId, name.slice(0, 100), JSON.stringify(embed), id || null);
+      res.json({ ok: true, id: savedId });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/embeds/:id", requireAuth, async (req, res) => {
+    try {
+      const dbMod = require("../db");
+      const row = dbMod.get("SELECT guild_id FROM embed_templates WHERE id = ?", parseInt(req.params.id, 10));
+      if (!row || !userCanAccessGuild(req.user.sub, row.guild_id, req.user.isOwner))
+        return res.status(404).json({ error: "Not found" });
+      const db = require("../db");
+      await db.deleteEmbedTemplate(parseInt(req.params.id, 10));
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/embeds/send", requireAuth, requireOwner, async (req, res) => {
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (!guildInfo.guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    const guild = resolveGuild(guildInfo.guildId);
+    if (!guild) return res.status(400).json({ error: "Guild not found" });
+    const { channelId, content, embed } = req.body || {};
+    if (!channelId) return res.status(400).json({ error: "channelId required" });
+    try {
+      const channel = guild.channels.cache.get(channelId);
+      if (!channel) return res.status(400).json({ error: "Channel not found" });
+      const payload = { content: content?.slice(0, 2000) || null };
+      if (embed && Object.keys(embed).length > 0) {
+        payload.embeds = [embed];
+      }
+      const msg = await channel.send(payload);
+      res.json({ ok: true, messageId: msg.id });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Global error handler (catch-all for thrown errors in routes)
+  app.use((err, req, res, _next) => {
+    console.error("[api] Unhandled error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
   });
 
   app.listen(PORT, "0.0.0.0", () => {

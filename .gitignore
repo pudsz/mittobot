@@ -13,3 +13,5 @@ dashboard/node_modules/
 dashboard/dist/
 dashboard/.env
 dashboard/.env.local
+Freebuff2API/
+.aider*

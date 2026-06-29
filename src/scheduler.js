@@ -4,6 +4,7 @@ const { EmbedBuilder } = require("discord.js");
 
 // In-memory cache: scheduleId -> { id, guildId, channelId, content, embedJson, scheduledAt, recurrence, enabled, timer, failCount }
 const schedules = new Map();
+let schedulesGeneration = 0; // bumped on reload() to invalidate stale timer callbacks
 const MAX_CONSECUTIVE_FAILURES = 5; // Disable schedule after N consecutive send failures
 
 // ─── Time helpers ─────────────────────────────────────────────────────────
@@ -123,7 +124,7 @@ function scheduleMessage(row) {
 
 async function fireSchedule(id) {
   const entry = schedules.get(id);
-  if (!entry) return;
+  if (!entry || entry.isStale?.()) return;
 
   const { guildId, channelId, content, embedJson, recurrence, client } = entry;
   entry.failCount = entry.failCount || 0;
@@ -136,21 +137,21 @@ async function fireSchedule(id) {
   try {
     const guild = client.guilds.cache.get(guildId);
     if (!guild) {
-      console.warn(`[scheduler] Guild ${guildId} not found for schedule #${id}`);
-      handleSendFailure(entry, id);
+      console.warn(`[scheduler] Guild ${guildId} not found for schedule #${id} — disabling immediately`);
+      disableForever(entry, id);
       return;
     }
     const channel = guild.channels.cache.get(channelId);
     if (!channel) {
-      console.warn(`[scheduler] Channel ${channelId} not found for schedule #${id}`);
-      handleSendFailure(entry, id);
+      console.warn(`[scheduler] Channel ${channelId} not found for schedule #${id} — disabling immediately`);
+      disableForever(entry, id);
       return;
     }
 
     // Send the message (plain or embed)
     if (embedJson) {
       try {
-        const embedData = JSON.parse(embedJson);
+        const embedData = db.safeJsonParse(embedJson, null);
         const embed = new EmbedBuilder(embedData);
         await safe.send(channel, { content: content || null, embeds: [embed] }, `scheduled #${id}`);
       } catch {
@@ -198,18 +199,26 @@ async function fireSchedule(id) {
 }
 
 // Increment failure counter; disable schedule after max consecutive failures.
-// For recurring schedules where guild/channel no longer exists, this prevents
-// hitting an error every day forever.
 async function handleSendFailure(entry, id) {
   entry.failCount = (entry.failCount || 0) + 1;
   if (entry.failCount >= MAX_CONSECUTIVE_FAILURES) {
     console.error(`[scheduler] Disabling schedule #${id} after ${entry.failCount} consecutive failures`);
-    entry.enabled = 0;
-    if (entry.timer) clearTimeout(entry.timer);
-    entry.timer = null;
-    await db.updateScheduledMessage(id, { enabled: 0 });
-    schedules.delete(id);
+    await disableSchedule(id, entry);
   }
+}
+
+// Disable immediately for permanent failures (missing guild/channel).
+async function disableForever(entry, id) {
+  console.error(`[scheduler] Disabling schedule #${id} — permanent failure`);
+  await disableSchedule(id, entry);
+}
+
+async function disableSchedule(id, entry) {
+  entry.enabled = 0;
+  if (entry.timer) clearTimeout(entry.timer);
+  entry.timer = null;
+  await db.updateScheduledMessage(id, { enabled: 0 });
+  schedules.delete(id);
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────
@@ -224,7 +233,7 @@ async function load(client) {
       const existing = schedules.get(row.id);
       if (existing?.timer) clearTimeout(existing.timer);
 
-      const entry = { ...row, client, timer: null };
+      const entry = scheduleEntry(client, row);
       const timer = scheduleMessage(row);
       if (timer) {
         entry.timer = timer;
@@ -242,7 +251,8 @@ async function load(client) {
   }
 }
 
-function reload() {
+async function reload() {
+  schedulesGeneration++;
   for (const [, entry] of schedules) {
     if (entry.timer) clearTimeout(entry.timer);
   }
@@ -250,13 +260,22 @@ function reload() {
   return load(clientRef);
 }
 
+// Track the generation at creation so stale timer callbacks (from a previous
+// reload()) exit early instead of operating on stale or missing entries.
+function scheduleEntry(client, row) {
+  const gen = schedulesGeneration;
+  return {
+    ...row, client, timer: null, gen,
+    isStale() { return gen !== schedulesGeneration; },
+  };
+}
+
 async function create(guildId, channelId, content, scheduledAt, recurrence, createdBy, embedJson) {
   const id = await db.addScheduledMessage(guildId, channelId, content, scheduledAt, recurrence, createdBy, embedJson);
-  const entry = {
+  const entry = scheduleEntry(clientRef, {
     id, guildId, channelId, content, embedJson,
     scheduledAt, recurrence, enabled: 1, createdBy,
-    client: clientRef, timer: null,
-  };
+  });
   const timer = scheduleMessage({ id, scheduled_at: scheduledAt });
   if (timer) {
     entry.timer = timer;

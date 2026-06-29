@@ -117,6 +117,10 @@ const client = new Client({
     GatewayIntentBits.GuildMessageReactions,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildPresences,
+    // Required to receive messageCreate events in DMs (DM AI). Without this the
+    // bot never sees direct messages at all, regardless of aiDmEnabled.
+    GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.DirectMessageReactions,
   ],
   partials: [Partials.Message, Partials.Channel, Partials.Reaction],
 });
@@ -153,6 +157,7 @@ client.on("messageCreate", async message => {
         member: message.member,
         username: message.author.username,
         userId: message.author.id,
+        messageId: message.id,
         message,
         content: message.content,
         channel: message.channel,
@@ -198,6 +203,7 @@ client.on("messageCreate", async message => {
       return;
     }
     try {
+      if (typeof ctx.trackCommand === "function") ctx.trackCommand();
       await handler.prefix(message, args, ctx);
     } catch (err) {
       console.error(`Error executing command ${command}:`, err);
@@ -246,6 +252,7 @@ client.on("interactionCreate", async interaction => {
           flags: MessageFlags.Ephemeral,
         });
       }
+      if (typeof ctx.trackCommand === "function") ctx.trackCommand();
       await execute(interaction, ctx);
     }
   } catch (err) {
@@ -322,16 +329,18 @@ async function logReaction(reaction, user, added) {
 }
 
 client.on("messageReactionAdd", async (reaction, user) => {
-  logReaction(reaction, user, true);
+  logReaction(reaction, user, true).catch(err => console.error("[safe] reaction log:", err.message));
   roles.onReaction(reaction, user, true).catch(err => console.error("[safe] reaction role add:", err.message));
   // Auto-exec: hydrate partials first so emoji data is complete
   if (reaction.message?.guild) {
     if (reaction.partial) await reaction.fetch().catch(() => null);
     if (reaction.message.partial) await reaction.message.fetch().catch(() => null);
+    automod.checkReaction(reaction, user).catch(err => console.error("[safe] automod reaction:", err.message));
     autoexec.executeTrigger(reaction.message.guild.id, "reaction_added", {
       guild: reaction.message.guild,
       user,
       member: reaction.message.guild.members.cache.get(user.id) ?? await reaction.message.guild.members.fetch(user.id).catch(() => null),
+      messageId: reaction.message.id,
       message: reaction.message,
       channel: reaction.message.channel,
       content: reaction.message.content || "",
@@ -340,7 +349,7 @@ client.on("messageReactionAdd", async (reaction, user) => {
   }
 });
 client.on("messageReactionRemove", (reaction, user) => {
-  logReaction(reaction, user, false);
+  logReaction(reaction, user, false).catch(err => console.error("[safe] reaction log:", err.message));
   roles.onReaction(reaction, user, false).catch(err => console.error("[safe] reaction role remove:", err.message));
 });
 

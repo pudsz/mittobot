@@ -3,13 +3,8 @@
 // http://0.0.0.0:11434/v1) and picks the wire format. Models are fetched
 // live from the endpoint's /models route.
 
+const { safeJsonParse } = require("../parse");
 const { contentToAnthropicBlocks } = require("../images");
-
-function safeJsonParse(str, toolName) {
-  try { return JSON.parse(str); } catch (e) {
-    throw new Error(`Tool "${toolName}" arguments truncated or malformed (${str?.length || 0} chars) — try increasing aiMaxTokens. ${e.message}`);
-  }
-}
 
 const DEFAULT_MODELS = [];
 

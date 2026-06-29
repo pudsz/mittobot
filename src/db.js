@@ -31,6 +31,23 @@ async function withTransaction(fn) {
   return db.transaction(fn)();
 }
 
+// Safe JSON parsing with validation and fallback
+function safeJsonParse(jsonString, fallback) {
+  if (typeof jsonString !== "string") return fallback;
+  try {
+    const parsed = JSON.parse(jsonString);
+    // Validate that parsed result is expected type (object or array)
+    if (parsed === null || (typeof parsed !== "object" && !Array.isArray(parsed))) {
+      console.warn("[db] JSON parse returned unexpected type, using fallback");
+      return fallback;
+    }
+    return parsed;
+  } catch (err) {
+    console.warn("[db] JSON parse error:", err.message);
+    return fallback;
+  }
+}
+
 // ─── Schema ────────────────────────────────────────────────────────────────
 // JSON blobs are stored as TEXT (the domain modules JSON.parse them on load),
 // and booleans as INTEGER 0/1 to match the existing in-memory cache mapping.
@@ -142,11 +159,21 @@ function init() {
       guild_id      TEXT PRIMARY KEY,
       link_blacklist TEXT DEFAULT '[]',
       link_whitelist TEXT DEFAULT '[]',
+      link_action    TEXT DEFAULT 'delete',
       repeated_text  INTEGER DEFAULT 0,
       repeated_text_count INTEGER DEFAULT 3,
+      repeated_text_action TEXT DEFAULT 'delete',
       emoji_spam     INTEGER DEFAULT 0,
       emoji_max      INTEGER DEFAULT 5,
-      zalgo_enabled  INTEGER DEFAULT 0
+      emoji_action   TEXT DEFAULT 'delete',
+      blocked_emojis_enabled INTEGER DEFAULT 0,
+      blocked_emojis TEXT DEFAULT '[]',
+      blocked_emojis_action TEXT DEFAULT 'delete',
+      blocked_reaction_emojis_enabled INTEGER DEFAULT 0,
+      blocked_reaction_emojis TEXT DEFAULT '[]',
+      blocked_reaction_action TEXT DEFAULT 'delete',
+      zalgo_enabled  INTEGER DEFAULT 0,
+      zalgo_action   TEXT DEFAULT 'delete'
     );
 
     CREATE TABLE IF NOT EXISTS reaction_logs (
@@ -272,10 +299,97 @@ function init() {
       last_work  BIGINT DEFAULT 0,
       PRIMARY KEY (guild_id, user_id)
     );
+
+    CREATE TABLE IF NOT EXISTS economy_config (
+      guild_id        TEXT PRIMARY KEY,
+      daily_amount    INTEGER DEFAULT 200,
+      work_min        INTEGER DEFAULT 50,
+      work_max        INTEGER DEFAULT 300,
+      daily_cooldown  BIGINT DEFAULT 86400000,
+      work_cooldown   BIGINT DEFAULT 3600000,
+      interest_rate   REAL DEFAULT 0.0,
+      tax_rate        REAL DEFAULT 0.0,
+      gamble_odds     REAL DEFAULT 0.45
+    );
+
+    CREATE TABLE IF NOT EXISTS economy_shop (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id    TEXT NOT NULL,
+      name        TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      price       INTEGER NOT NULL,
+      role_id     TEXT,
+      stock       INTEGER DEFAULT -1
+    );
+    CREATE INDEX IF NOT EXISTS eco_shop_guild ON economy_shop (guild_id);
+
+    CREATE TABLE IF NOT EXISTS embed_templates (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id   TEXT NOT NULL,
+      name       TEXT NOT NULL,
+      embed_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS embed_templates_guild ON embed_templates (guild_id);
+
+    CREATE TABLE IF NOT EXISTS ai_conversations (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      scope      TEXT NOT NULL DEFAULT 'private',  -- 'global' (per-channel) | 'private' (per-user DM)
+      guild_id   TEXT,                              -- NULL for private DMs; real guildId for global channel threads
+      channel_id TEXT,                              -- channel id for global; NULL for private
+      user_id    TEXT,                              -- private thread owner / legacy guild trigger user
+      speaker_user_id TEXT,                         -- actual guild-channel speaker on user turns
+      role       TEXT NOT NULL,
+      content    TEXT NOT NULL,
+      timestamp  BIGINT NOT NULL
+    );
+    -- Note: ai_conversations indexes are created in the migration section below,
+    -- AFTER ALTER TABLE statements have added scope/channel_id to legacy DBs.
+
+    -- Layered system prompts: default → guild → channel. Most-specific wins.
+    -- target_id='*' is the sentinel for the single default row (NULL can't be a PK).
+    -- target_id='*' is the sentinel for the single default row.
+    CREATE TABLE IF NOT EXISTS ai_prompts (
+      scope      TEXT NOT NULL,    -- 'default' | 'guild' | 'channel'
+      target_id  TEXT NOT NULL,    -- '*' for default, guildId for guild, channelId for channel
+      prompt     TEXT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      PRIMARY KEY (scope, target_id)
+    );
   `);
 
   // Migrations for columns added after initial table creation
   try { db.exec("ALTER TABLE moderation_log ADD COLUMN proof TEXT"); } catch { /* column already exists */ }
+  try { db.exec("ALTER TABLE ai_conversations ADD COLUMN guild_id TEXT DEFAULT 'dm'"); } catch { /* column already exists */ }
+  try { db.exec("ALTER TABLE ai_conversations ADD COLUMN scope TEXT DEFAULT 'private'"); } catch { /* column already exists */ }
+  try { db.exec("ALTER TABLE ai_conversations ADD COLUMN channel_id TEXT"); } catch { /* column already exists */ }
+  try { db.exec("ALTER TABLE ai_conversations ADD COLUMN user_id_dm TEXT"); } catch { /* column already exists */ }
+  try { db.exec("ALTER TABLE ai_conversations ADD COLUMN speaker_user_id TEXT"); } catch { /* column already exists */ }
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN link_action TEXT DEFAULT 'delete'"); } catch { /* column already exists */ }
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN repeated_text_action TEXT DEFAULT 'delete'"); } catch { /* column already exists */ }
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN emoji_action TEXT DEFAULT 'delete'"); } catch { /* column already exists */ }
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN blocked_emojis_enabled INTEGER DEFAULT 0"); } catch { /* column already exists */ }
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN blocked_emojis TEXT DEFAULT '[]'"); } catch { /* column already exists */ }
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN blocked_emojis_action TEXT DEFAULT 'delete'"); } catch { /* column already exists */ }
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN blocked_reaction_emojis_enabled INTEGER DEFAULT 0"); } catch { /* column already exists */ }
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN blocked_reaction_emojis TEXT DEFAULT '[]'"); } catch { /* column already exists */ }
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN blocked_reaction_action TEXT DEFAULT 'delete'"); } catch { /* column already exists */ }
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN zalgo_action TEXT DEFAULT 'delete'"); } catch { /* column already exists */ }
+  // (typo column retained for back-compat; safe to ignore)
+  // Normalize legacy rows: guild_id='dm' sentinel rows become proper private DMs (guild_id=NULL).
+  try { db.exec("UPDATE ai_conversations SET scope='private', guild_id=NULL, channel_id=NULL WHERE guild_id='dm'"); } catch {}
+  // Older per-(guild, user) rows: only normalize rows with missing scope.
+  // New rows are written with correct scope='global' or scope='private',
+  // so never touch scope='private' rows — that would silently corrupt any
+  // guild-scoped data that happens to be mislabelled.
+  try { db.exec("UPDATE ai_conversations SET scope='private', guild_id=NULL, channel_id=NULL WHERE scope IS NULL OR scope = ''"); } catch {}
+  // Newer code distinguishes the thread owner/legacy trigger user (`user_id`)
+  // from the actual speaker (`speaker_user_id`) in shared guild channels.
+  try { db.exec("UPDATE ai_conversations SET speaker_user_id=user_id WHERE scope='global' AND role='user' AND speaker_user_id IS NULL"); } catch {}
+  // Add the new scope index if missing (idempotent).
+  try { db.exec("CREATE INDEX IF NOT EXISTS ai_convo_scope ON ai_conversations (scope, guild_id, channel_id, user_id, timestamp)"); } catch {}
+  try { db.exec("CREATE INDEX IF NOT EXISTS ai_convo_user ON ai_conversations (guild_id, user_id, timestamp)"); } catch {}
 
   console.log("[db] SQLite schema ready.");
 }
@@ -517,25 +631,64 @@ async function getExtendedAutomod(guildId) {
 
 async function setExtendedAutomod(guildId, cfg) {
   db.prepare(`
-    INSERT INTO automod_extended (guild_id, link_blacklist, link_whitelist, repeated_text, repeated_text_count, emoji_spam, emoji_max, zalgo_enabled)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO automod_extended (
+      guild_id,
+      link_blacklist,
+      link_whitelist,
+      link_action,
+      repeated_text,
+      repeated_text_count,
+      repeated_text_action,
+      emoji_spam,
+      emoji_max,
+      emoji_action,
+      blocked_emojis_enabled,
+      blocked_emojis,
+      blocked_emojis_action,
+      blocked_reaction_emojis_enabled,
+      blocked_reaction_emojis,
+      blocked_reaction_action,
+      zalgo_enabled,
+      zalgo_action
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(guild_id) DO UPDATE SET
       link_blacklist = excluded.link_blacklist,
       link_whitelist = excluded.link_whitelist,
+      link_action = excluded.link_action,
       repeated_text = excluded.repeated_text,
       repeated_text_count = excluded.repeated_text_count,
+      repeated_text_action = excluded.repeated_text_action,
       emoji_spam = excluded.emoji_spam,
       emoji_max = excluded.emoji_max,
-      zalgo_enabled = excluded.zalgo_enabled
+      emoji_action = excluded.emoji_action,
+      blocked_emojis_enabled = excluded.blocked_emojis_enabled,
+      blocked_emojis = excluded.blocked_emojis,
+      blocked_emojis_action = excluded.blocked_emojis_action,
+      blocked_reaction_emojis_enabled = excluded.blocked_reaction_emojis_enabled,
+      blocked_reaction_emojis = excluded.blocked_reaction_emojis,
+      blocked_reaction_action = excluded.blocked_reaction_action,
+      zalgo_enabled = excluded.zalgo_enabled,
+      zalgo_action = excluded.zalgo_action
   `).run(
     guildId,
     JSON.stringify(cfg.link_blacklist || []),
     JSON.stringify(cfg.link_whitelist || []),
+    cfg.link_action || "delete",
     cfg.repeated_text ? 1 : 0,
     cfg.repeated_text_count || 3,
+    cfg.repeated_text_action || "delete",
     cfg.emoji_spam ? 1 : 0,
     cfg.emoji_max || 5,
-    cfg.zalgo_enabled ? 1 : 0
+    cfg.emoji_action || "delete",
+    cfg.blocked_emojis_enabled ? 1 : 0,
+    JSON.stringify(cfg.blocked_emojis || []),
+    cfg.blocked_emojis_action || "delete",
+    cfg.blocked_reaction_emojis_enabled ? 1 : 0,
+    JSON.stringify(cfg.blocked_reaction_emojis || []),
+    cfg.blocked_reaction_action || "delete",
+    cfg.zalgo_enabled ? 1 : 0,
+    cfg.zalgo_action || "delete"
   );
 }
 
@@ -545,9 +698,11 @@ async function getAutoExecRules(guildId) {
 }
 
 async function setAutoExecRule(guildId, rule) {
+  const hasId = rule && rule.id;
   const stmt = db.prepare(`
-    INSERT INTO autoexec_rules (guild_id, trigger_event, conditions, actions, enabled, priority)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO autoexec_rules ${hasId ? "(id, guild_id, trigger_event, conditions, actions, enabled, priority)"
+      : "(guild_id, trigger_event, conditions, actions, enabled, priority)"}
+    VALUES ${hasId ? "(?, ?, ?, ?, ?, ?, ?)" : "(?, ?, ?, ?, ?, ?)"}
     ON CONFLICT(id) DO UPDATE SET
       trigger_event = excluded.trigger_event,
       conditions = excluded.conditions,
@@ -555,14 +710,10 @@ async function setAutoExecRule(guildId, rule) {
       enabled = excluded.enabled,
       priority = excluded.priority
   `);
-  return stmt.run(
-    guildId,
-    rule.trigger_event,
-    JSON.stringify(rule.conditions || {}),
-    JSON.stringify(rule.actions || []),
-    rule.enabled !== false ? 1 : 0,
-    rule.priority || 0
-  );
+  const params = hasId
+    ? [rule.id, guildId, rule.trigger_event, JSON.stringify(rule.conditions || {}), JSON.stringify(rule.actions || []), rule.enabled !== false ? 1 : 0, rule.priority || 0]
+    : [guildId, rule.trigger_event, JSON.stringify(rule.conditions || {}), JSON.stringify(rule.actions || []), rule.enabled !== false ? 1 : 0, rule.priority || 0];
+  return stmt.run(...params);
 }
 
 async function deleteAutoExecRule(id) {
@@ -646,12 +797,24 @@ async function deleteAiMemory(id) {
   db.prepare("DELETE FROM ai_memories WHERE id = ?").run(id);
 }
 
-async function clearAiMemories(guildId) {
-  if (guildId) {
-    db.prepare("DELETE FROM ai_memories WHERE guild_id = ?").run(guildId);
-  } else {
-    db.prepare("DELETE FROM ai_memories").run();
+async function clearAiMemories({ guildId = null, userId = null } = {}) {
+  // Guild scoping is additive (each guild keeps isolated memory rows).
+  // User scoping matches the ai_memories schema: null = server memories
+  // (user_id IS NULL), value = a specific Discord user, omitted = wipe all.
+  const conds = [];
+  const params = [];
+  if (guildId) { conds.push("guild_id = ?"); params.push(guildId); }
+  if (userId === null) {
+    conds.push("user_id IS NULL");
+  } else if (userId) {
+    conds.push("user_id = ?");
+    params.push(userId);
   }
+  const sql = conds.length
+    ? `DELETE FROM ai_memories WHERE ${conds.join(" AND ")}`
+    : "DELETE FROM ai_memories";
+  const info = run(sql, params);
+  return info.changes || 0;
 }
 
 // ── Stickies ─────────────────────────────────────────────────────────────
@@ -817,6 +980,7 @@ module.exports = {
   get,
   run,
   withTransaction,
+  safeJsonParse,
   init,
   close,
 
@@ -1020,5 +1184,272 @@ module.exports = {
       "SELECT user_id, balance, bank, (balance + bank) as total FROM economy_users WHERE guild_id = ? ORDER BY total DESC LIMIT ?",
       [guildId, limit]
     );
+  },
+
+  // ── Economy config ──────────────────────────────────────────────────
+  async getEconomyConfig(guildId) {
+    const row = get("SELECT * FROM economy_config WHERE guild_id = ?", [guildId]);
+    if (!row) return null;
+    return row;
+  },
+  async setEconomyConfig(guildId, cfg) {
+    db.prepare(`
+      INSERT INTO economy_config (guild_id, daily_amount, work_min, work_max, daily_cooldown, work_cooldown, interest_rate, tax_rate, gamble_odds)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(guild_id) DO UPDATE SET
+        daily_amount = excluded.daily_amount,
+        work_min = excluded.work_min,
+        work_max = excluded.work_max,
+        daily_cooldown = excluded.daily_cooldown,
+        work_cooldown = excluded.work_cooldown,
+        interest_rate = excluded.interest_rate,
+        tax_rate = excluded.tax_rate,
+        gamble_odds = excluded.gamble_odds
+    `).run(guildId, cfg.dailyAmount ?? 200, cfg.workMin ?? 50, cfg.workMax ?? 300,
+            cfg.dailyCooldown ?? 86400000, cfg.workCooldown ?? 3600000,
+            cfg.interestRate ?? 0.0, cfg.taxRate ?? 0.0, cfg.gambleOdds ?? 0.45);
+  },
+  async getEconomyStats(guildId) {
+    const row = get(
+      "SELECT COUNT(*) as users, SUM(balance) as total_wallet, SUM(bank) as total_bank, SUM(balance + bank) as total_coins FROM economy_users WHERE guild_id = ?",
+      [guildId]
+    );
+    const richest = get("SELECT user_id, (balance + bank) as total FROM economy_users WHERE guild_id = ? ORDER BY total DESC LIMIT 1", [guildId]);
+    return { ...row, richestUserId: richest?.user_id || null, richestTotal: richest?.total || 0 };
+  },
+  async resetEconomy(guildId) {
+    return withTransaction(() => {
+      db.prepare("DELETE FROM economy_users WHERE guild_id = ?").run(guildId);
+      db.prepare("DELETE FROM economy_config WHERE guild_id = ?").run(guildId);
+      db.prepare("DELETE FROM economy_shop WHERE guild_id = ?").run(guildId);
+    });
+  },
+
+  // ── Economy shop ────────────────────────────────────────────────────
+  async getShopItems(guildId) {
+    return query("SELECT * FROM economy_shop WHERE guild_id = ? ORDER BY price ASC", [guildId]);
+  },
+  async addShopItem(guildId, name, description, price, roleId, stock) {
+    const info = db.prepare("INSERT INTO economy_shop (guild_id, name, description, price, role_id, stock) VALUES (?, ?, ?, ?, ?, ?)").run(guildId, name, description || "", price, roleId || null, stock ?? -1);
+    return info.lastInsertRowid;
+  },
+  async updateShopItem(id, patch) {
+    const sets = [];
+    const vals = [];
+    for (const [k, v] of Object.entries(patch)) {
+      if (["name", "description", "price", "role_id", "stock"].includes(k)) {
+        sets.push(`${k} = ?`);
+        vals.push(v);
+      }
+    }
+    if (!sets.length) return;
+    vals.push(id);
+    db.prepare(`UPDATE economy_shop SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
+  },
+  async deleteShopItem(id) {
+    db.prepare("DELETE FROM economy_shop WHERE id = ?").run(id);
+  },
+
+  // ── Embed templates ────────────────────────────────────────────────
+  async getEmbedTemplates(guildId) {
+    return query("SELECT id, guild_id, name, embed_json, created_at, updated_at FROM embed_templates WHERE guild_id = ? ORDER BY name ASC", [guildId]);
+  },
+  async saveEmbedTemplate(guildId, name, embedJson, existingId) {
+    const now = new Date().toISOString();
+    if (existingId) {
+      db.prepare("UPDATE embed_templates SET name = ?, embed_json = ?, updated_at = ? WHERE id = ? AND guild_id = ?").run(name, embedJson, now, existingId, guildId);
+      return existingId;
+    }
+    const info = db.prepare("INSERT INTO embed_templates (guild_id, name, embed_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)").run(guildId, name, embedJson, now, now);
+    return info.lastInsertRowid;
+  },
+  async deleteEmbedTemplate(id) {
+    db.prepare("DELETE FROM embed_templates WHERE id = ?").run(id);
+  },
+
+  // ── AI Conversations (persistent conversation history) ───────────
+  // Scope ("global" per-channel or "private" per-user) decides which fields
+  // are populated. Guild-channel threads are shared by everyone in that channel;
+  // speaker_user_id identifies the speaker on guild-channel user turns only.
+  // Private DMs keep user_id on every row because it is the thread owner.
+  addConversationTurn(scope, key, role, content) {
+    const ts = Date.now();
+    const guildId = scope === "global" ? (key && key.guildId) || null : null;
+    const channelId = scope === "global" ? (key && key.channelId) || null : null;
+    // Keep user_id populated for old DBs that created it as NOT NULL and for
+    // private DM thread lookup. speaker_user_id is the reliable guild speaker.
+    const userId = (key && key.userId) || null;
+    const speakerUserId = scope === "global" && role === "user" ? userId : null;
+    db.prepare(`
+      INSERT INTO ai_conversations (scope, guild_id, channel_id, user_id, speaker_user_id, role, content, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(scope, guildId, channelId, userId, speakerUserId, role, String(content || "").slice(0, 1500), ts);
+  },
+  getConversationHistory(scope, key, limit = 20) {
+    if (scope === "global") {
+      return query(
+        `SELECT role, content, user_id, timestamp FROM (
+           SELECT
+             role,
+             content,
+             CASE WHEN role='user' THEN COALESCE(speaker_user_id, user_id) ELSE NULL END as user_id,
+             timestamp
+           FROM ai_conversations
+           WHERE scope='global' AND guild_id=? AND channel_id=?
+           ORDER BY timestamp DESC LIMIT ?
+         ) ORDER BY timestamp ASC`,
+        [key.guildId, key.channelId, limit]
+      );
+    }
+    return query(
+      `SELECT role, content, user_id, timestamp FROM (
+         SELECT role, content, user_id, timestamp
+         FROM ai_conversations
+         WHERE scope='private' AND user_id=? AND guild_id IS NULL AND channel_id IS NULL
+         ORDER BY timestamp DESC LIMIT ?
+       ) ORDER BY timestamp ASC`,
+      [key.userId, limit]
+    );
+  },
+  getConversationLogs(opts = {}) {
+    const { scope = null, guildId = null, channelId = null, userId = null, limit = 100 } = opts;
+    const conds = [];
+    const params = [];
+    if (scope) { conds.push("scope = ?"); params.push(scope); }
+    // Guild filter: when a guild is specified, only match that guild.
+    // Private DM rows (guild_id IS NULL) are global to the bot and only
+    // appear when no guildId is provided (i.e. unfiltered view). The
+    // API endpoint handles scope separation by skipping the guild filter
+    // for scope='private' since DMs have no guild.
+    if (guildId) { conds.push("guild_id = ?"); params.push(guildId); }
+    if (channelId) { conds.push("channel_id = ?"); params.push(channelId); }
+    if (userId) { conds.push("user_id = ?"); params.push(userId); }
+    const where = conds.length ? "WHERE " + conds.join(" AND ") : "";
+    params.push(limit);
+    return query(
+      `SELECT
+         id,
+         scope,
+         guild_id,
+         channel_id,
+         CASE
+           WHEN scope='global' AND role='user' THEN COALESCE(speaker_user_id, user_id)
+           WHEN scope='global' THEN NULL
+           ELSE user_id
+         END as user_id,
+         role,
+         content,
+         timestamp
+       FROM ai_conversations ${where} ORDER BY timestamp DESC LIMIT ?`,
+      params
+    );
+  },
+  getConversationUsers(opts = {}) {
+    const { scope = null, guildId = null, channelId = null } = opts;
+    const conds = [];
+    const params = [];
+    if (scope) { conds.push("scope = ?"); params.push(scope); }
+    // Guild filter: when a guild is specified, only match that guild.
+    // Private DM rows (guild_id IS NULL) only surface when no guildId
+    // is provided. The API endpoint skips the guild filter for
+    // scope='private' since DMs have no guild affiliation.
+    if (guildId) { conds.push("guild_id = ?"); params.push(guildId); }
+    if (channelId) { conds.push("channel_id = ?"); params.push(channelId); }
+    const where = conds.length ? "WHERE " + conds.join(" AND ") : "";
+    return query(
+      `SELECT
+         scope,
+         guild_id,
+         channel_id,
+         CASE WHEN scope = 'private' THEN user_id ELSE NULL END as user_id,
+         MAX(timestamp) as last_active
+       FROM ai_conversations ${where}
+       GROUP BY scope, guild_id, channel_id, CASE WHEN scope = 'private' THEN user_id ELSE NULL END
+       ORDER BY last_active DESC`,
+      params
+    );
+  },
+  trimConversationHistory(scope, key, keep = 40) {
+    let count, rowIds;
+    if (scope === "global") {
+      const row = db.prepare(
+        "SELECT COUNT(*) as c FROM ai_conversations WHERE scope='global' AND guild_id=? AND channel_id=?"
+      ).get(key.guildId, key.channelId);
+      count = row && row.c;
+      if (count && count > keep) {
+        db.prepare(
+          `DELETE FROM ai_conversations WHERE id IN (
+             SELECT id FROM ai_conversations
+             WHERE scope='global' AND guild_id=? AND channel_id=?
+             ORDER BY timestamp ASC LIMIT ?
+           )`
+        ).run(key.guildId, key.channelId, count - keep);
+      }
+    } else {
+      const row = db.prepare(
+        "SELECT COUNT(*) as c FROM ai_conversations WHERE scope='private' AND user_id=? AND guild_id IS NULL AND channel_id IS NULL"
+      ).get(key.userId);
+      count = row && row.c;
+      if (count && count > keep) {
+        db.prepare(
+          `DELETE FROM ai_conversations WHERE id IN (
+             SELECT id FROM ai_conversations
+             WHERE scope='private' AND user_id=? AND guild_id IS NULL AND channel_id IS NULL
+             ORDER BY timestamp ASC LIMIT ?
+           )`
+        ).run(key.userId, count - keep);
+      }
+    }
+  },
+
+  // ── Layered system prompts (default → guild → channel) ─────────────
+  // target_id='*' is the sentinel for the single default row (NULL can't be a PK).
+  async getPrompt(scope, targetId) {
+    const tid = scope === "default" ? "*" : (targetId || "*");
+    return get("SELECT * FROM ai_prompts WHERE scope = ? AND target_id = ?", [scope, tid]);
+  },
+  async listPrompts(guildId = null) {
+    if (!guildId) return query("SELECT * FROM ai_prompts ORDER BY scope ASC, target_id ASC");
+    return query(
+      "SELECT * FROM ai_prompts WHERE scope='default' OR scope='guild' AND target_id=? OR scope='channel' ORDER BY scope ASC, target_id ASC",
+      [guildId]
+    );
+  },
+  async upsertPrompt(scope, targetId, prompt) {
+    const now = Date.now();
+    const tid = scope === "default" ? "*" : (targetId || "*");
+    const trimmed = String(prompt || "").slice(0, 4000);
+    const existing = get("SELECT 1 FROM ai_prompts WHERE scope = ? AND target_id = ?", [scope, tid]);
+    if (existing) {
+      db.prepare("UPDATE ai_prompts SET prompt = ?, updated_at = ? WHERE scope = ? AND target_id = ?")
+        .run(trimmed, now, scope, tid);
+      return true;
+    }
+    db.prepare("INSERT INTO ai_prompts (scope, target_id, prompt, updated_at) VALUES (?, ?, ?, ?)")
+      .run(scope, tid, trimmed, now);
+    return true;
+  },
+  async deletePrompt(scope, targetId) {
+    const tid = scope === "default" ? "*" : (targetId || "*");
+    db.prepare("DELETE FROM ai_prompts WHERE scope = ? AND target_id = ?").run(scope, tid);
+  },
+  async clearGuildPrompts(guildId) {
+    db.prepare("DELETE FROM ai_prompts WHERE scope = 'guild' AND target_id = ?").run(guildId);
+    db.prepare("DELETE FROM ai_prompts WHERE scope = 'channel' AND target_id = ?").run(guildId);
+  },
+  async resolvePrompt({ guildId = null, channelId = null } = {}) {
+    // Returns { prompt, source } where source is 'channel' | 'guild' | 'default' | 'settings'.
+    // Most-specific tier wins; falls back to settings.aiSystemPrompt if no DB override.
+    if (channelId) {
+      const row = get("SELECT prompt FROM ai_prompts WHERE scope='channel' AND target_id=?", channelId);
+      if (row) return { prompt: row.prompt, source: "channel" };
+    }
+    if (guildId) {
+      const row = get("SELECT prompt FROM ai_prompts WHERE scope='guild' AND target_id=?", guildId);
+      if (row) return { prompt: row.prompt, source: "guild" };
+    }
+    const def = get("SELECT prompt FROM ai_prompts WHERE scope='default' AND target_id='*'");
+    if (def) return { prompt: def.prompt, source: "default" };
+    return { prompt: null, source: null };
   },
 };

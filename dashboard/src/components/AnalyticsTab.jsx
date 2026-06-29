@@ -214,7 +214,7 @@ export default function AnalyticsTab() {
                   />
                   <Bar dataKey="calls" name="Calls" radius={[4, 4, 0, 0]}>
                     {providerData.map((entry, i) => (
-                      <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                      <Cell key={entry.name} fill={COLORS[i % COLORS.length]} />
                     ))}
                   </Bar>
                 </BarChart>
@@ -238,7 +238,7 @@ export default function AnalyticsTab() {
                   />
                   <Bar dataKey="tokens" name="Tokens" radius={[4, 4, 0, 0]}>
                     {providerData.map((entry, i) => (
-                      <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                      <Cell key={entry.name} fill={COLORS[i % COLORS.length]} />
                     ))}
                   </Bar>
                 </BarChart>
@@ -267,7 +267,7 @@ export default function AnalyticsTab() {
                       dataKey="value"
                     >
                       {pieData.map((entry, i) => (
-                        <Cell key={i} fill={COLORS[i % COLORS.length]} stroke="var(--bg)" strokeWidth={2} />
+                        <Cell key={entry.name} fill={COLORS[i % COLORS.length]} stroke="var(--bg)" strokeWidth={2} />
                       ))}
                     </Pie>
                     <Tooltip

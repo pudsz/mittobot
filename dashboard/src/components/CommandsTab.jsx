@@ -75,27 +75,27 @@ function LadderEditor({ ladder, setLadder, roles }) {
     return <span className="muted">No steps — warnings won't auto-escalate.</span>;
   }
   const threshold = (s) => s.threshold ?? s.count ?? 1;
-  const upd = (i, patch) => setLadder(ladder.map((s, j) => (j === i ? { ...s, ...patch } : s)));
-  const del = (i) => setLadder(ladder.filter((_, j) => j !== i));
+  const upd = (i, patch) => setLadder(ladder.map((s) => (s._key === i ? { ...s, ...patch } : s)));
+  const del = (i) => setLadder(ladder.filter((s) => s._key !== i));
   return (
     <>
-      {ladder.map((step, i) => (
-        <div key={i} style={{ marginBottom: 8 }}>
+      {ladder.map((step) => (
+        <div key={step._key} style={{ marginBottom: 8 }}>
           <div className="row" style={{ marginBottom: 4 }}>
             <span className="muted" style={{ width: 48, fontSize: 12 }}>type:</span>
-            <select value={step.type || "count"} style={{ width: 100 }} onChange={(e) => upd(i, { type: e.target.value })}>
+            <select value={step.type || "count"} style={{ width: 100 }} onChange={(e) => upd(step._key, { type: e.target.value })}>
               <option value="count">warns</option>
               <option value="points">points</option>
             </select>
             <span className="muted" style={{ width: 52, fontSize: 12 }}>at:</span>
-            <input type="number" min="1" value={threshold(step)} style={{ width: 70 }} onChange={(e) => upd(i, { threshold: parseInt(e.target.value, 10) || 1 })} />
-            <select value={step.action} style={{ width: 110 }} onChange={(e) => upd(i, { action: e.target.value })}>
+            <input type="number" min="1" value={threshold(step)} style={{ width: 70 }} onChange={(e) => upd(step._key, { threshold: parseInt(e.target.value, 10) || 1 })} />
+            <select value={step.action} style={{ width: 110 }} onChange={(e) => upd(step._key, { action: e.target.value })}>
               {["none", "mute", "kick", "ban", "probation"].map((a) => <option key={a} value={a}>{a}</option>)}
             </select>
             {(step.action !== "probation") && (
-              <input value={step.duration || ""} placeholder="10m" style={{ width: 80 }} onChange={(e) => upd(i, { duration: e.target.value.trim() })} />
+              <input value={step.duration || ""} placeholder="10m" style={{ width: 80 }} onChange={(e) => upd(step._key, { duration: e.target.value.trim() })} />
             )}
-            <button className="btn danger" onClick={() => del(i)} style={{ padding: "6px 10px" }}>✕</button>
+            <button className="btn danger" onClick={() => del(step._key)} style={{ padding: "6px 10px" }}>✕</button>
           </div>
           {step.action === "probation" && (
             <div className="row" style={{ marginLeft: 0, alignItems: "flex-start" }}>
@@ -105,7 +105,7 @@ function LadderEditor({ ladder, setLadder, roles }) {
                   items={roles || []}
                   selected={step.probationRoleId ? new Set([step.probationRoleId]) : new Set()}
                   onToggle={(roleId) => {
-                    upd(i, { probationRoleId: step.probationRoleId === roleId ? "" : roleId });
+                    upd(step._key, { probationRoleId: step.probationRoleId === roleId ? "" : roleId });
                   }}
                   prefix="@"
                   placeholder="Select probation role..."
@@ -137,7 +137,7 @@ function CommandBody({ cmd, data, onSaved }) {
   const [blocked, toggleBlocked] = useToggleSet(c.blockedChannels);
   const [roles, toggleRoles] = useToggleSet(c.allowedRoles);
   const hasLadder = Array.isArray(c.settings && c.settings.ladder);
-  const [ladder, setLadder] = useState(hasLadder ? c.settings.ladder.map((s) => ({ ...s })) : null);
+  const [ladder, setLadder] = useState(hasLadder ? c.settings.ladder.map((s) => ({ ...s, _key: s._key || crypto.randomUUID() })) : null);
 
   async function save() {
     setSaving(true);
@@ -201,7 +201,7 @@ function CommandBody({ cmd, data, onSaved }) {
           <label>Warn escalation ladder — auto-punish at each warning count</label>
           <div className="muted" style={{ marginBottom: 8 }}>action: none / mute / kick / ban. Duration (e.g. 10m, 1h, 1d) applies to mute only.</div>
           <LadderEditor ladder={ladder} setLadder={setLadder} roles={data.roles} />
-          <button className="btn secondary" style={{ marginTop: 8 }} onClick={() => setLadder([...ladder, { type: "count", threshold: ladder.length + 1, action: "mute", duration: "10m" }])}>+ Add step</button>
+          <button className="btn secondary" style={{ marginTop: 8 }} onClick={() => setLadder([...ladder, { _key: crypto.randomUUID(), type: "count", threshold: ladder.length + 1, action: "mute", duration: "10m" }])}>+ Add step</button>
         </div>
       )}
       <div className="row" style={{ marginTop: 15 }}>

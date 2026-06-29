@@ -1,11 +1,7 @@
+const { safeJsonParse } = require("../parse");
+
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models";
-
-function safeJsonParse(str, toolName) {
-  try { return JSON.parse(str); } catch (e) {
-    throw new Error(`Tool "${toolName}" arguments truncated or malformed (${str?.length || 0} chars) — try increasing aiMaxTokens. ${e.message}`);
-  }
-}
 
 const DEFAULT_MODELS = [
   "llama-3.3-70b-versatile",

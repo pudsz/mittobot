@@ -3,8 +3,9 @@ const openai = require("./openai");
 const claude = require("./claude");
 const gemini = require("./gemini");
 const custom = require("./custom");
+const nvidia = require("./nvidia");
 
-const PROVIDERS = [groq, openai, claude, gemini, custom];
+const PROVIDERS = [groq, openai, claude, gemini, custom, nvidia];
 const BY_ID = Object.fromEntries(PROVIDERS.map(p => [p.id, p]));
 
 function getProvider(id) {

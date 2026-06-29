@@ -1,11 +1,7 @@
+const { safeJsonParse } = require("../parse");
+
 const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 const OPENAI_MODELS_URL = "https://api.openai.com/v1/models";
-
-function safeJsonParse(str, toolName) {
-  try { return JSON.parse(str); } catch (e) {
-    throw new Error(`Tool "${toolName}" arguments truncated or malformed (${str?.length || 0} chars) — try increasing aiMaxTokens. ${e.message}`);
-  }
-}
 
 const DEFAULT_MODELS = [
   "gpt-4o-mini",

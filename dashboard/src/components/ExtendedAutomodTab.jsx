@@ -5,6 +5,7 @@ import { useToast } from "./Toast.jsx";
 import Toggle from "./Toggle.jsx";
 
 const EX_ACTIONS = ["delete", "warn", "mute"];
+const REACTION_ACTIONS = ["delete", "warn", "mute", "kick", "ban"];
 
 function ExtendedAutomodSkeleton() {
   return (
@@ -206,6 +207,78 @@ export default function ExtendedAutomodTab({ guildId }) {
                 onChange={(e) => upd({ emoji_action: e.target.value })}
               >
                 {EX_ACTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ── Blocked Message Emoji ── */}
+      <div className="panel">
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+          <h2 style={{ margin: 0, flex: 1 }}>Blocked Message Emoji</h2>
+          <Toggle checked={!!config.blocked_emojis_enabled} onChange={(v) => upd({ blocked_emojis_enabled: v })} />
+        </div>
+        <p className="muted" style={{ marginBottom: 14 }}>
+          Act on messages containing specific unicode or custom emoji.
+        </p>
+
+        {config.blocked_emojis_enabled && (
+          <>
+            <div className="field">
+              <label>Blocked emoji (one per line)</label>
+              <textarea
+                style={{ minHeight: 110 }}
+                placeholder={"😀\n<:bademoji:123456789012345678>\n123456789012345678"}
+                value={listToString(config.blocked_emojis)}
+                onChange={(e) => updList("blocked_emojis", e.target.value)}
+              />
+              <div className="hint">Paste unicode emoji, custom emoji, custom emoji name:id, or just the custom emoji ID.</div>
+            </div>
+            <div className="field">
+              <label>Action</label>
+              <select
+                value={config.blocked_emojis_action || "delete"}
+                style={{ width: 140 }}
+                onChange={(e) => upd({ blocked_emojis_action: e.target.value })}
+              >
+                {EX_ACTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ── Blocked Reaction Emoji ── */}
+      <div className="panel">
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+          <h2 style={{ margin: 0, flex: 1 }}>Blocked Reaction Emoji</h2>
+          <Toggle checked={!!config.blocked_reaction_emojis_enabled} onChange={(v) => upd({ blocked_reaction_emojis_enabled: v })} />
+        </div>
+        <p className="muted" style={{ marginBottom: 14 }}>
+          Remove specific reactions and optionally punish the user who reacted.
+        </p>
+
+        {config.blocked_reaction_emojis_enabled && (
+          <>
+            <div className="field">
+              <label>Blocked reaction emoji (one per line)</label>
+              <textarea
+                style={{ minHeight: 110 }}
+                placeholder={"💀\n<:blocked:123456789012345678>\nblocked:123456789012345678"}
+                value={listToString(config.blocked_reaction_emojis)}
+                onChange={(e) => updList("blocked_reaction_emojis", e.target.value)}
+              />
+              <div className="hint">The delete action removes the reaction only. Stronger actions also remove the reaction first.</div>
+            </div>
+            <div className="field">
+              <label>Action</label>
+              <select
+                value={config.blocked_reaction_action || "delete"}
+                style={{ width: 140 }}
+                onChange={(e) => upd({ blocked_reaction_action: e.target.value })}
+              >
+                {REACTION_ACTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
               </select>
             </div>
           </>

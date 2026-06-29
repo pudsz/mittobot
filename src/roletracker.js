@@ -32,8 +32,8 @@ async function load() {
       g.push({
         guildId:    row.guild_id,
         channelId:  row.channel_id,
-        messageIds: JSON.parse(row.message_ids || "[]"),
-        roleIds:    JSON.parse(row.role_ids || "[]"),
+        messageIds: db.safeJsonParse(row.message_ids, []),
+        roleIds:    db.safeJsonParse(row.role_ids, []),
         createdAt:  Number(row.created_at),
       });
     }

@@ -2,49 +2,74 @@ const settings = require("./settings");
 const { getProvider, listProviders } = require("./ai/providers");
 const groqProvider = require("./ai/providers/groq");
 const { processMessageImages, buildContentParts } = require("./ai/images");
+const db = require("./db");
 
 const safe = require("./safe");
 
 const MAX_REPLY_LEN = 2000;
 
+// Token-constrained providers benefit from a shorter system prompt.
+// NVIDIA's smaller models (8B/14B) have 8K-32K windows vs Groq's 128K.
+function usesConcisePrompt(providerId) {
+  return providerId === "nvidia" || providerId === "gemini";
+}
+
 // Tracks which providers are currently handling a request.
 // When multiple people talk to the bot at once, the load-balancer
 // prefers non-busy providers so conversations are distributed across
 // the fallback chain instead of queuing on the primary.
-const busyProviders = new Set(); // providerId → true while request is in-flight
+// Uses a Map<providerId, timestamp> so we can evict only stale entries
+// instead of flushing the entire set (which would kill legitimately busy providers).
+const busyProviders = new Map(); // providerId → timestamp of request start
+const BUSY_PROVIDERS_MAX_SIZE = 50; // Maximum number of providers to track
 function getBusyProviders() {
-  return [...busyProviders];
+  return [...busyProviders.keys()];
 }
 
-// Periodic cleanup: evict any providers that got stuck busy (defense against
-// a missed finally block from a process crash or an unhandled rejection).
+// Periodic cleanup: evict only providers that have been busy for >5 minutes.
+// Defense against a missed finally block from a process crash or an unhandled rejection.
 // In-flight requests have a 30s timeout; anything stuck >5min is dead.
+const PROVIDER_BUSY_TIMEOUT = 300_000; // 5 minutes
 setInterval(() => {
-  if (busyProviders.size > 0) {
-    console.warn(`[ai] Evicting ${busyProviders.size} stuck provider(s): ${[...busyProviders].join(", ")}`);
-    busyProviders.clear();
+  if (busyProviders.size === 0) return;
+  const now = Date.now();
+  const stale = [];
+  for (const [id, startedAt] of busyProviders) {
+    if (now - startedAt > PROVIDER_BUSY_TIMEOUT) stale.push(id);
   }
-}, 300_000).unref();
+  for (const id of stale) busyProviders.delete(id);
+  if (stale.length > 0) {
+    console.warn(`[ai] Evicted ${stale.length} stuck provider(s): ${stale.join(", ")}`);
+  }
+  // Size-based eviction: if we exceed max size, remove oldest entries
+  if (busyProviders.size > BUSY_PROVIDERS_MAX_SIZE) {
+    const entries = Array.from(busyProviders.entries()).sort((a, b) => a[1] - b[1]);
+    const toRemove = entries.slice(0, busyProviders.size - BUSY_PROVIDERS_MAX_SIZE);
+    for (const [id] of toRemove) busyProviders.delete(id);
+    console.warn(`[ai] Evicted ${toRemove.length} old provider(s) due to size limit`);
+  }
+}, 60_000).unref();
 
 // Per-channel cooldown for chatty mode — prevents the bot from responding
-// too frequently in the same channel. Stale entries are cleaned up hourly.
+// too frequently in the same channel. Stale entries are cleaned up every minute.
 const chattyCooldowns = new Map(); // channelId -> timestamp of last response
+const CHATTY_COOLDOWN_MAX_SIZE = 1000; // Maximum number of channels to track
 setInterval(() => {
-  const cutoff = Date.now() - 3_600_000;
+  const cutoff = Date.now() - 60_000;
   for (const [ch, ts] of chattyCooldowns) {
     if (ts < cutoff) chattyCooldowns.delete(ch);
   }
-}, 600_000).unref();
-
-// Conversation threading: short-term buffer of recent turns per channel.
-// Each entry holds up to 3 user+assistant pairs; expires after 10min idle.
-const threadBuffer = new Map(); // channelId -> { lastUpdate, turns: [{role,content}] }
-setInterval(() => {
-  const cutoff = Date.now() - 600_000;
-  for (const [ch, entry] of threadBuffer) {
-    if (entry.lastUpdate < cutoff) threadBuffer.delete(ch);
+  // Size-based eviction: if we exceed max size, remove oldest entries
+  if (chattyCooldowns.size > CHATTY_COOLDOWN_MAX_SIZE) {
+    const entries = Array.from(chattyCooldowns.entries()).sort((a, b) => a[1] - b[1]);
+    const toRemove = entries.slice(0, chattyCooldowns.size - CHATTY_COOLDOWN_MAX_SIZE);
+    for (const [ch] of toRemove) chattyCooldowns.delete(ch);
   }
-}, 120_000).unref();
+}, 60_000).unref();
+
+// Conversation history is fully persistent in SQLite (ai_conversations table).
+// Guild channels use one shared per-channel thread with explicit speaker labels.
+// DMs use isolated per-user private threads and never mix with guild history.
 
 // Analytics buffer: flushed to SQLite every 10s to avoid blocking the AI loop
 const analyticsBuffer = [];
@@ -61,6 +86,7 @@ setInterval(() => {
 // frequently). Cache results — including failures — so we don't hammer a flaky
 // custom endpoint or flood the logs with the same warning on every poll.
 const MODEL_LIST_TTL = 60_000;
+const MODEL_LIST_CACHE_MAX_SIZE = 100; // Maximum number of model lists to cache
 const modelListCache = new Map(); // key -> { at, models? , error? }
 
 function modelListCacheKey(providerId, opts, hasKey) {
@@ -148,11 +174,11 @@ async function getChannelContext(message, client, limit = 8) {
       if (isSelf) {
         return { role: "assistant", content: m.content };
       } else {
-        const authorTag = m.member?.displayName || m.author.username;
+        const authorTag = speakerLabelFromMessage(m);
         return {
           role: "user",
-          name: m.author.username.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64),
-          content: `[${authorTag} <@${m.author.id}>]: ${m.content}`
+          name: safeOpenAiName(m.author.username),
+          content: `[${authorTag}]: ${m.content}`
         };
       }
     });
@@ -160,6 +186,47 @@ async function getChannelContext(message, client, limit = 8) {
     console.error("Failed to fetch channel context:", err);
     return [];
   }
+}
+
+function safeOpenAiName(raw, fallback = "speaker") {
+  const cleaned = String(raw || fallback)
+    .replace(/[^a-zA-Z0-9_-]/g, "_")
+    .slice(0, 64);
+  return cleaned || fallback;
+}
+
+function speakerLabelFromMessage(message) {
+  const displayName = message.member?.displayName || message.author?.globalName || message.author?.username || "Unknown";
+  const username = message.author?.username || "unknown";
+  return `${displayName} (@${username}, id:${message.author.id})`;
+}
+
+function speakerLabelFromRow(row, guild) {
+  if (!row.user_id) return null;
+  const member = guild?.members?.cache?.get(row.user_id);
+  if (member) {
+    const displayName = member.displayName || member.user?.globalName || member.user?.username || "Unknown";
+    const username = member.user?.username || "unknown";
+    return `${displayName} (@${username}, id:${row.user_id})`;
+  }
+  return `User id:${row.user_id}`;
+}
+
+function formatPersistedTurn(row, guild) {
+  if (row.role === "user") {
+    const label = speakerLabelFromRow(row, guild) || "Unknown user";
+    return {
+      role: "user",
+      name: safeOpenAiName(row.user_id || "unknown"),
+      content: `[${label}]: ${row.content}`,
+    };
+  }
+  if (row.role === "system") {
+    // Stored system rows are compact tool-result summaries. Feed them back as
+    // user-visible context instead of adding extra system prompts mid-history.
+    return { role: "user", name: "context", content: `[tool context]: ${row.content}` };
+  }
+  return { role: row.role, content: row.content };
 }
 
 async function buildSpeakerProfile(message, ctx) {
@@ -176,7 +243,7 @@ async function buildSpeakerProfile(message, ctx) {
     
     const parts = [];
     const displayName = member.displayName || message.author.username;
-    parts.push(`- Name: ${displayName}`);
+    parts.push(`- Current speaker: ${displayName} (@${message.author.username}, id:${message.author.id})`);
     if (topRoles.length) parts.push(`- Top roles: ${topRoles.join(", ")}`);
     if (member.joinedAt) {
       const daysAgo = Math.floor((Date.now() - member.joinedAt.getTime()) / 86400000);
@@ -190,62 +257,121 @@ async function buildSpeakerProfile(message, ctx) {
   }
 }
 
+// Resolve the scope and key tuple that uniquely identifies an active conversation thread.
+//   - Guild channels  → scope "global"  (one shared thread per channel; everyone contributes)
+//   - Direct messages → scope "private" (one thread per user)
+function conversationKey(message) {
+  if (message.guild) {
+    return { scope: "global", key: { guildId: message.guild.id, channelId: message.channel.id, userId: message.author.id } };
+  }
+  return { scope: "private", key: { userId: message.author.id } };
+}
+
 async function buildMessageHistory(message, ctx, limit = 8, userContent, images = []) {
   const { client } = ctx;
-  let history = await getChannelContext(message, client, limit);
-  
-  // Prepend threaded conversation context (last ~3 turns in this channel)
-  const thread = threadBuffer.get(message.channel.id);
-  if (thread && thread.turns.length > 0) {
-    const contextBlock = [{
-      role: "system",
-      content: `### RECENT CONVERSATION IN THIS CHANNEL (you were part of this):\n${thread.turns.map(t => {
-        const prefix = t.role === "assistant" ? "Bot" : t.name || "User";
-        return `[${prefix}]: ${t.content}`;
-      }).join("\n")}`
-    }];
-    history = [...contextBlock, ...history];
+  const { scope, key } = conversationKey(message);
+  const guild = message.guild || null;
+  const isDM = !message.guild;
+
+  // Guild channels get ambient channel context; DMs skip it (history covers it).
+  // When persisted history exists, reduce ambient context to avoid overlap bloat.
+  const db = require("./db");
+  const persisted = db.getConversationHistory(scope, key, 20);
+  const hasPersisted = persisted.length > 0;
+
+  // When we have both persisted and ambient context, reduce the ambient limit
+  // to avoid loading the same messages twice in the prompt.
+  const ambientLimit = hasPersisted ? Math.max(2, Math.floor(limit / 2)) : limit;
+  let history = message.guild ? await getChannelContext(message, client, ambientLimit) : [];
+
+  if (hasPersisted) {
+    const formatted = persisted.map(row => formatPersistedTurn(row, guild));
+    // Persisted history first (recency-ordered), then reduced ambient context.
+    history = [...formatted, ...history];
   }
-  
-  // Pre-fetch speaker profile — roles, join date, warning count
-  const speakerProfile = await buildSpeakerProfile(message, ctx);
-  
+
+  // Pre-fetch speaker profile for guild channels (skipped in DMs.
+  const speakerProfile = message.guild ? await buildSpeakerProfile(message, ctx) : "";
+
   // Tag the trigger message so the AI knows exactly what to respond to.
-  const authorTag = message.member?.displayName || message.author.username;
-  const taggedContent = `[THIS MESSAGE NEEDS YOUR RESPONSE — ${authorTag} <@${message.author.id}>]: ${userContent}`;
+  const currentSpeaker = isDM ? `DM user ${message.author.username} (id:${message.author.id})` : speakerLabelFromMessage(message);
+  const taggedContent = `[THIS MESSAGE NEEDS YOUR RESPONSE — ${currentSpeaker}]: ${userContent}`;
   const contentWithImages = images.length > 0
     ? buildContentParts(taggedContent, images)
     : taggedContent;
 
   history.push({
     role: "user",
-    name: message.author.username.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64),
-    content: contentWithImages
+    name: safeOpenAiName(message.author.username),
+    content: contentWithImages,
   });
 
-  let system = settings.get("aiSystemPrompt") || "You are a helpful Discord assistant. Keep replies concise and friendly.";
+  // ── Layered system prompt lookup ──
+  // Resolve channel → guild → default tier, then fall back to settings.aiSystemPrompt.
+  // Token-constrained providers (NVIDIA, Gemini) use a shorter concise variant.
+  const resolved = await db.resolvePrompt({
+    guildId: message.guild?.id || null,
+    channelId: message.channel.id,
+  });
+  const providerHint = settings.get("aiProvider") || "groq";
+  const scopeLabel = scope === "global"
+    ? `GLOBAL (shared channel thread — channel #${message.channel?.name}${message.guild ? ` in ${message.guild.name}` : ""})`
+    : `PRIVATE (per-user DM thread)`;
+  let system;
+  if (resolved.prompt) {
+    system = resolved.prompt;
+  } else if (usesConcisePrompt(providerHint)) {
+    system = settings.AI_SYSTEM_PROMPT_CONCISE;
+  } else {
+    system = settings.get("aiSystemPrompt")
+      || "You are a helpful Discord assistant. Keep replies concise and friendly.";
+  }
+  system += `\n\n### CONVERSATION SCOPE:\n- Scope: ${scopeLabel}`;
+  system += `\n- Identity rule: bracketed speaker labels are authoritative. Never treat memories or previous messages from one user ID as belonging to another user.`;
+  if (resolved.source) {
+    system += `\n- Prompt source: ${resolved.source} tier`;
+  }
 
-  // Inject server context (skip for DMs)
+  // Inject server context — compact format for token-constrained providers
+  const concise = usesConcisePrompt(providerHint);
   if (message.guild) {
-    system += `\n\n### SERVER CONTEXT:\n- Server: ${message.guild.name} (ID: ${message.guild.id})\n- Current channel: #${message.channel.name} (ID: ${message.channel.id})\n- Bot's own user ID: ${client.user.id}`;
-    
-    // Inject speaker profile as metadata (not part of the user's message)
-    if (speakerProfile) {
-      system += speakerProfile;
+    if (concise) {
+      system += `\nServer: ${message.guild.name} | Channel: #${message.channel.name} | Bot ID: ${client.user.id}`;
+      if (speakerProfile) system += speakerProfile;
+    } else {
+      system += `\n\n### SERVER CONTEXT:\n- Server: ${message.guild.name} (ID: ${message.guild.id})\n- Current channel: #${message.channel.name} (ID: ${message.channel.id})\n- Bot's own user ID: ${client.user.id}\n- This is a shared channel thread. Multiple people may be present; answer only the current speaker unless they explicitly ask about someone else.`;
+      if (speakerProfile) system += speakerProfile;
     }
   } else {
-    system += `\n\n### DM CONTEXT:\n- This is a private direct message conversation with <@${message.author.id}>\n- Bot's own user ID: ${client.user.id}`;
+    if (concise) {
+      system += `\nPrivate DM with ${message.author.username} id:${message.author.id} | Bot ID: ${client.user.id} | No server/channel memory is shared here`;
+    } else {
+      system += `\n\n### DM CONTEXT (private thread):\n- This is a private direct message conversation with ${message.author.username} (ID: ${message.author.id}).\n- This DM history is separate from server/channel conversation history.\n- DM memories are private to this user and must not be treated as server/global facts.\n- Bot's own user ID: ${client.user.id}`;
+    }
   }
-  
+
+  // Memory injection — token-efficient format for constrained providers
   if (message.guild && settings.get("aiMemoryEnabled") !== false) {
     const aiMemory = require("./ai/memory");
-    const memories = aiMemory.recall(message.guild.id, message.author.id, 15);
+    const memories = aiMemory.recall(message.guild.id, message.author.id, concise ? 8 : 15);
     if (memories.length > 0) {
       const formattedMemories = memories.map(m => {
-        const scope = m.userId ? `User <@${m.userId}>` : "Server/General";
-        return `- [Fact #${m.id}] (${scope}): ${m.content}`;
+        const scopeTag = m.userId ? `@${m.userId}` : "server";
+        // Token-efficient: [MEM#N scope]: content  vs old verbose format
+        return `[MEM#${m.id} ${scopeTag}]: ${m.content}`;
       }).join("\n");
-      system += `\n\n### KNOWN MEMORIES / FACTS:\n${formattedMemories}`;
+      system += concise
+        ? `\n### MEMORIES:\n${formattedMemories}`
+        : `\n\n### KNOWN MEMORIES:\n${formattedMemories}`;
+    }
+  } else if (!message.guild) {
+    const aiMemory = require("./ai/memory");
+    const memories = aiMemory.recallDm(message.author.id, concise ? 8 : 15);
+    if (memories.length > 0) {
+      const formattedMemories = memories.map(m => `[DM-MEM#${m.id} user:${message.author.id}]: ${m.content}`).join("\n");
+      system += concise
+        ? `\n### MEMORIES:\n${formattedMemories}`
+        : `\n\n### KNOWN MEMORIES ABOUT YOU:\n${formattedMemories}`;
     }
   }
 
@@ -294,10 +420,10 @@ function cleanResponse(text, thinkingEnabled) {
 }
 
 // Auto-memory: after each AI interaction, fire a cheap follow-up call to
-// extract any learnable facts about the user and save them via add_memory.
+// extract any learnable memories about the user and save them via add_memory.
 // Runs in background (fire-and-forget) so the user gets their response instantly.
 // Tries the active provider first, then falls back through the configured chain.
-async function extractFactsAsync(message, userContent, botReply, providerId) {
+async function extractMemoriesAsync(message, userContent, botReply, providerId) {
   try {
     const aiMemory = require("./ai/memory");
 
@@ -306,14 +432,19 @@ async function extractFactsAsync(message, userContent, botReply, providerId) {
     const fallbackIds = parseFallbackList(settings.get("aiFallbackProviders"));
     const candidates = [providerId, primaryId, ...fallbackIds].filter((id, i, arr) => arr.indexOf(id) === i);
 
-    const systemPrompt = `Extract any facts worth remembering about this Discord user from the conversation. Return ONLY a JSON array of facts, each with "scope" ("user" or "server") and "content" (max 300 chars). If nothing new was learned, return an empty array []. Example: [{"scope":"user","content":"Prefers TypeScript over Python"},{"scope":"server","content":"New rules posted in #announcements"}]`;
+    // aiMemory.add still uses the legacy "dm" sentinel for DMs — keep that.
+    const guildId = message.guild?.id || "dm";
+
+    const systemPrompt = message.guild
+      ? `Extract any memories worth retaining from this Discord server conversation. Return ONLY a JSON array of memories, each with "scope" ("user" for facts about the current speaker, or "server" for facts about the server) and "content" (max 300 chars). If nothing new was learned, return an empty array []. Example: [{"scope":"user","content":"Prefers TypeScript over Python"},{"scope":"server","content":"New rules posted in #announcements"}]`
+      : `Extract any private DM memories worth retaining about this Discord user. Return ONLY a JSON array of memories, each with "scope":"user" and "content" (max 300 chars). Never return server/global memories for DMs. If nothing new was learned, return an empty array []. Example: [{"scope":"user","content":"Prefers TypeScript over Python"}]`;
 
     const messages = [
       { role: "system", content: systemPrompt },
-      { role: "user", content: `User said: ${userContent.slice(0, 500)}\nBot replied: ${botReply.slice(0, 500)}\n\nExtract facts:` }
+      { role: "user", content: `User said: ${userContent.slice(0, 500)}\nBot replied: ${botReply.slice(0, 500)}\n\nExtract memories:` }
     ];
 
-    let facts = [];
+    let memories = [];
     let usedProvider = null;
 
     for (const pid of candidates) {
@@ -327,15 +458,23 @@ async function extractFactsAsync(message, userContent, botReply, providerId) {
       if (!model) continue;
 
       try {
-        const result = await provider.chat(messages, {
-          apiKey: key,
-          model,
-          temperature: 0.3,
-          maxTokens: 512,
-        });
+        const timedOut = Symbol("timeout");
+        const result = await Promise.race([
+          provider.chat(messages, {
+            apiKey: key,
+            model,
+            temperature: 0.3,
+            maxTokens: 512,
+          }),
+          new Promise(r => setTimeout(() => r(timedOut), 15_000)),
+        ]);
+        if (result === timedOut) {
+          console.warn(`[auto-memory] Provider "${pid}" timed out during memory extraction`);
+          continue;
+        }
         const text = (typeof result === "string" ? result : result.text || "").trim();
         const match = text.match(/\[[\s\S]*\]/);
-        if (match) facts = JSON.parse(match[0]);
+        if (match) memories = db.safeJsonParse(match[0], []);
         usedProvider = pid;
         break;
       } catch (e) {
@@ -344,16 +483,18 @@ async function extractFactsAsync(message, userContent, botReply, providerId) {
       }
     }
 
-    if (!usedProvider || facts.length === 0) return;
+    if (!usedProvider || memories.length === 0) return;
 
-    for (const fact of facts) {
-      if (fact.content && fact.content.trim().length > 3) {
-        const userId = fact.scope === "user" ? message.author.id : null;
-        await aiMemory.add(message.guild.id, userId, fact.content);
+    for (const mem of memories) {
+      if (mem.content && mem.content.trim().length > 3) {
+        const userId = message.guild
+          ? (mem.scope === "user" ? message.author.id : null)
+          : message.author.id;
+        await aiMemory.add(guildId, userId, mem.content);
       }
     }
-    if (facts.length > 0) {
-      console.log(`[auto-memory] Saved ${facts.length} fact(s) via ${usedProvider} from conversation with ${message.author.tag}`);
+    if (memories.length > 0) {
+      console.log(`[auto-memory] Saved ${memories.length} memor${memories.length === 1 ? "y" : "ies"} via ${usedProvider} from conversation with ${message.author.tag}${!message.guild ? " (DM)" : ""}`);
     }
   } catch (err) {
     // Silently fail — auto-memory is best-effort only
@@ -361,13 +502,23 @@ async function extractFactsAsync(message, userContent, botReply, providerId) {
   }
 }
 
-async function chatWithProvider(providerIds, messages) {
+async function chatWithProvider(providerIds, messages, options = {}) {
   if (!Array.isArray(providerIds)) providerIds = [providerIds];
+  const modelByProvider = options && typeof options.modelByProvider === "object" && options.modelByProvider
+    ? options.modelByProvider
+    : {};
 
   // Prefer non-busy providers so concurrent conversations spread across
   // the fallback chain. If all are busy, fall through to try anyway.
   const available = providerIds.filter(id => !busyProviders.has(id));
   const ordered = [...available, ...providerIds.filter(id => busyProviders.has(id))];
+  // Also skip entries that are stale (>5min) — treat them as available
+  for (const id of ordered) {
+    const startedAt = busyProviders.get(id);
+    if (startedAt && Date.now() - startedAt > PROVIDER_BUSY_TIMEOUT) {
+      busyProviders.delete(id);
+    }
+  }
   const attempted = new Set();
 
   let lastError = null;
@@ -389,12 +540,16 @@ async function chatWithProvider(providerIds, messages) {
       continue;
     }
 
-    let model = settings.getAiModel(providerId);
+    const requestModel = modelByProvider[providerId] || (options.providerId === providerId ? options.model : null);
+    const hasRequestModel = typeof requestModel === "string" && requestModel.trim();
+    let model = hasRequestModel
+      ? requestModel.trim()
+      : settings.getAiModel(providerId);
 
     if (providerId === "groq" && groqProvider.resolveModel) {
       const resolved = groqProvider.resolveModel(model);
       if (resolved !== model) {
-        settings.setAiModel("groq", resolved);
+        if (!hasRequestModel) settings.setAiModel("groq", resolved);
         model = resolved;
       }
     }
@@ -410,12 +565,12 @@ async function chatWithProvider(providerIds, messages) {
     if (provider.baseUrlField) opts.baseUrl = settings.get(provider.baseUrlField);
     if (provider.apiTypeField) opts.apiType = settings.get(provider.apiTypeField);
 
-    if (settings.get("aiToolsEnabled") !== false) {
+    if (options.disableTools !== true && settings.get("aiToolsEnabled") !== false) {
       const tools = require("./ai/tools");
       opts.tools = tools.getOpenAiTools();
     }
 
-    busyProviders.add(providerId);
+    busyProviders.set(providerId, Date.now());
     try {
       // Race the provider call against a 30s timeout so a hung provider
       // doesn't stay marked busy forever and block the pool.
@@ -427,7 +582,7 @@ async function chatWithProvider(providerIds, messages) {
       if (result === timedOut) {
         throw new Error(`Provider "${providerId}" timed out after 30s`);
       }
-      return { result, providerId };
+      return { result, providerId, model };
     } catch (err) {
       lastError = err;
       console.warn(`[ai] Provider "${providerId}" failed: ${err.message}`);
@@ -454,7 +609,8 @@ async function handleAiMessage(message, ctx) {
 
   const allowed = parseChannelList(settings.get("aiAllowedChannels"));
   const ignored = parseChannelList(settings.get("aiIgnoredChannels"));
-  if (!isChannelAllowed(message.channel.id, allowed, ignored)) return false;
+  // Channel allow/block lists only apply to guild channels — DMs always pass
+  if (!isDM && !isChannelAllowed(message.channel.id, allowed, ignored)) return false;
 
   const { client } = ctx;
   let userContent = null;
@@ -674,22 +830,29 @@ async function handleAiMessage(message, ctx) {
       chattyCooldowns.set(message.channel.id, Date.now());
     }
 
-    // Update conversation thread buffer for continuity.
-    // Include tool interactions so the AI remembers search results, user lookups,
-    // and other context it gathered via tools on previous turns.
-    const threadEntry = threadBuffer.get(message.channel.id) || { lastUpdate: 0, turns: [] };
-    threadEntry.lastUpdate = Date.now();
-    threadEntry.turns.push({ role: "user", name: message.author.username, content: userContent });
-    // Append tool results as a single context-rich turn so the AI can reference them
-    if (toolInteractions.length > 0) {
-      const toolSummary = toolInteractions
-        .map(ti => `[Tool: ${ti.name}] Result: ${ti.result.slice(0, 400)}`)
-        .join("\n");
-      threadEntry.turns.push({ role: "assistant", content: `Tool results from previous turn:\n${toolSummary}` });
+    // Save conversation turn to persistent SQLite history using the active scope/key.
+    // Global scope (guild channels) shares one thread per channel; private scope (DMs)
+    // keeps one thread per user.
+    //
+    // When tools were called, persist a compact summary so the AI remembers what it
+    // looked up (web search results, user info, etc.) on the next turn. Without this,
+    // tool results vanish and the AI loses context between messages.
+    {
+      const db = require("./db");
+      const { scope, key } = conversationKey(message);
+      try { db.addConversationTurn(scope, key, "user", userContent); } catch (e) { console.error("[ai] persist conversation turn:", e.message); }
+      // Persist tool interaction summaries before the final reply so the AI
+      // can reference what it learned. Keep it compact to avoid DB bloat.
+      if (toolInteractions.length > 0) {
+        const toolSummary = toolInteractions.map(t => {
+          const resultPreview = String(t.result || "").slice(0, 200);
+          return `[used ${t.name}]: ${resultPreview}`;
+        }).join("\n");
+        try { db.addConversationTurn(scope, key, "system", `Tool results: ${toolSummary}`.slice(0, 1500)); } catch (e) { console.error("[ai] persist tool interactions:", e.message); }
+      }
+      try { db.addConversationTurn(scope, key, "assistant", finalReply.slice(0, 1500)); } catch (e) { console.error("[ai] persist conversation turn:", e.message); }
+      db.trimConversationHistory(scope, key, 40);
     }
-    threadEntry.turns.push({ role: "assistant", content: finalReply.slice(0, 500) });
-    if (threadEntry.turns.length > 8) threadEntry.turns = threadEntry.turns.slice(-8); // keep ~3 pairs + tools
-    threadBuffer.set(message.channel.id, threadEntry);
 
     // Analytics: log this AI call
     analyticsBuffer.push({
@@ -701,9 +864,11 @@ async function handleAiMessage(message, ctx) {
 
     clearInterval(typingInterval);
 
-    // Auto-memory: fire-and-forget fact extraction after successful response (guild only)
-    if (message.guild && settings.get("aiMemoryEnabled") !== false && settings.get("aiToolsEnabled") !== false) {
-      extractFactsAsync(message, userContent, finalReply, activeProviderId).catch(() => {});
+    // Auto-memory: fire-and-forget memory extraction after successful response
+    if (settings.get("aiMemoryEnabled") !== false && settings.get("aiToolsEnabled") !== false) {
+      try {
+        extractMemoriesAsync(message, userContent, finalReply, activeProviderId).catch(() => {});
+      } catch { /* memory extraction is best-effort */ }
     }
 
     return true;
@@ -796,11 +961,23 @@ async function getPublicSettingsAsync() {
         const models = await provider.listModels(key, listOpts);
         modelListCache.set(cacheKey, { at: Date.now(), models });
         base.models = models;
+        // Size-based eviction: if we exceed max size, remove oldest entries
+        if (modelListCache.size > MODEL_LIST_CACHE_MAX_SIZE) {
+          const entries = Array.from(modelListCache.entries()).sort((a, b) => a[1].at - b[1].at);
+          const toRemove = entries.slice(0, modelListCache.size - MODEL_LIST_CACHE_MAX_SIZE);
+          for (const [key] of toRemove) modelListCache.delete(key);
+        }
       } catch (err) {
         if (!cached || cached.error !== err.message) {
           console.warn(`[ai] Could not fetch ${provider.label} model list:`, err.message);
         }
         modelListCache.set(cacheKey, { at: Date.now(), error: err.message });
+        // Size-based eviction: if we exceed max size, remove oldest entries
+        if (modelListCache.size > MODEL_LIST_CACHE_MAX_SIZE) {
+          const entries = Array.from(modelListCache.entries()).sort((a, b) => a[1].at - b[1].at);
+          const toRemove = entries.slice(0, modelListCache.size - MODEL_LIST_CACHE_MAX_SIZE);
+          for (const [key] of toRemove) modelListCache.delete(key);
+        }
       }
     }
     if (base.model && Array.isArray(base.models) && !base.models.includes(base.model)) {
@@ -898,7 +1075,20 @@ function updateSettings(body) {
 }
 
 function getActiveConvoCount() {
-  return threadBuffer.size;
+  // Count active private DM users plus active guild channel threads in the last 10 min.
+  try {
+    const db = require("./db");
+    return db.db.prepare(`
+      SELECT COUNT(*) as c FROM (
+        SELECT scope, guild_id, channel_id, user_id
+        FROM ai_conversations
+        WHERE timestamp > ?
+        GROUP BY scope, guild_id, channel_id, user_id
+      )
+    `).get(Date.now() - 600_000)?.c || 0;
+  } catch {
+    return 0;
+  }
 }
 
 module.exports = {

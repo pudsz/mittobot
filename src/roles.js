@@ -18,8 +18,8 @@ async function load() {
     const rows = await db.getAllRolesConfigs();
     for (const row of rows) {
       store[row.guild_id] = {
-        autoroles: JSON.parse(row.autoroles || "[]"),
-        reactionRoles: JSON.parse(row.reaction_roles || "{}"),
+        autoroles: db.safeJsonParse(row.autoroles, []),
+        reactionRoles: db.safeJsonParse(row.reaction_roles, {}),
       };
     }
   } catch (e) {

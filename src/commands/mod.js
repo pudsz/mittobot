@@ -97,7 +97,9 @@ async function applyEscalation(guild, member, step, reason) {
         }
       }
     }
-  } catch { /* best-effort */ }
+  } catch (err) {
+    console.error(`[mod] applyEscalation ${step?.action} failed:`, err.message);
+  }
   return result;
 }
 
@@ -212,7 +214,21 @@ async function slashFakeMod(interaction, type) {
 async function logModAction(guildId, userId, modId, action, reason, details, proof) {
   try {
     await db.addModLogEntry(guildId, userId, modId, action, reason, details, proof);
-  } catch { /* best-effort */ }
+  } catch (err) {
+    console.error(`[mod] Failed to log ${action} for ${userId}:`, err.message);
+  }
+}
+
+// Fire an autoexec trigger for a mod action, sharing common payload fields.
+function fireAutoexec(event, guildId, extra) {
+  const base = {
+    guild: extra.guild, member: extra.member, user: extra.member?.user,
+    username: extra.member?.user?.username, userId: extra.member?.id,
+    reason: extra.reason, moderator: extra.authorTag,
+    moderatorUserId: extra.moderatorId || null,
+  };
+  autoexec.executeTrigger(guildId, event, { ...base, ...extra.payload })
+    .catch(err => console.error(`autoexec ${event}:`, err.message));
 }
 
 // Collect proof (attachments + replied-to message) from a prefix command message.
@@ -282,30 +298,18 @@ async function execRealMod(respond, guild, type, member, durationMs, reason, dat
       const escalation = await applyEscalation(guild, member, step, reason);
       if (escalation) line += `\n${escalation} (warning #${count})`;
 
-      // Auto-exec: fire rules triggered by "warn" event
-      autoexec.executeTrigger(guildId, "warn", {
-        guild, member, user: member.user, username, userId,
-        reason, moderator: authorTag, moderatorUserId: moderatorId || null,
-        severity, warningCount: count,
-      }).catch(err => console.error("autoexec warn:", err.message));
-
+      fireAutoexec("warn", guildId, { guild, member, reason, authorTag, moderatorId, payload: { severity, warningCount: count } });
       return respond({ embeds: [successEmbed(line)] });
     }
     if (type === "mute") {
-      const mutedRole = guild.roles.cache.find(r => r.name.toLowerCase() === "muted");
+      const mutedRole = getMutedRole(guild);
       if (mutedRole && member.roles.highest.position < guild.members.me.roles.highest.position) await member.roles.add(mutedRole, reason);
       await safe.timeout(member, durationMs, reason, "real mute");
 
       await logModAction(guildId, userId, authorTag, "mute", reason, `duration=${formatDuration(durationMs)}`, proof);
       await sendPunishmentDM(guild, member, "mute", { reason, duration: formatDuration(durationMs), mod: authorTag });
 
-      // Auto-exec: fire rules triggered by "mute" event
-      autoexec.executeTrigger(guildId, "mute", {
-        guild, member, user: member.user, username, userId,
-        reason, moderator: authorTag, moderatorUserId: moderatorId || null,
-        duration: formatDuration(durationMs),
-      }).catch(err => console.error("autoexec mute:", err.message));
-
+      fireAutoexec("mute", guildId, { guild, member, reason, authorTag, moderatorId, payload: { duration: formatDuration(durationMs) } });
       return respond({ embeds: [successEmbed(`${username} muted for **${formatDuration(durationMs)}** | ${reason}`)] });
     }
     if (type === "kick") {
@@ -314,12 +318,7 @@ async function execRealMod(respond, guild, type, member, durationMs, reason, dat
       await logModAction(guildId, userId, authorTag, "kick", reason, "", proof);
       await sendPunishmentDM(guild, member, "kick", { reason, mod: authorTag });
 
-      // Auto-exec: fire rules triggered by "kick" event
-      autoexec.executeTrigger(guildId, "kick", {
-        guild, member, user: member.user, username, userId,
-        reason, moderator: authorTag, moderatorUserId: moderatorId || null,
-      }).catch(err => console.error("autoexec kick:", err.message));
-
+      fireAutoexec("kick", guildId, { guild, member, reason, authorTag, moderatorId });
       return respond({ embeds: [successEmbed(`${username} kicked | ${reason}`)] });
     }
     if (type === "ban") {
@@ -328,12 +327,7 @@ async function execRealMod(respond, guild, type, member, durationMs, reason, dat
       await logModAction(guildId, userId, authorTag, "ban", reason, "7d msg delete", proof);
       await sendPunishmentDM(guild, member, "ban", { reason, mod: authorTag });
 
-      // Auto-exec: fire rules triggered by "ban" event
-      autoexec.executeTrigger(guildId, "ban", {
-        guild, member, user: member.user, username, userId,
-        reason, moderator: authorTag, moderatorUserId: moderatorId || null,
-      }).catch(err => console.error("autoexec ban:", err.message));
-
+      fireAutoexec("ban", guildId, { guild, member, reason, authorTag, moderatorId });
       return respond({ embeds: [successEmbed(`${username} banned | ${reason}`)] });
     }
     if (type === "softban") {
@@ -346,12 +340,7 @@ async function execRealMod(respond, guild, type, member, durationMs, reason, dat
       // Immediately unban to complete the softban (ban + instant unban = message wipe)
       await guild.bans.remove(userId, `Softban by ${authorTag}: ${reason}`);
 
-      // Auto-exec: fire rules triggered by "softban" event
-      autoexec.executeTrigger(guildId, "softban", {
-        guild, member, user: member.user, username, userId,
-        reason, moderator: authorTag, moderatorUserId: moderatorId || null,
-      }).catch(err => console.error("autoexec softban:", err.message));
-
+      fireAutoexec("softban", guildId, { guild, member, reason, authorTag, moderatorId });
       return respond({ embeds: [successEmbed(`${username} softbanned | ${reason}`)] });
     }
     if (type === "tempban") {
@@ -366,13 +355,7 @@ async function execRealMod(respond, guild, type, member, durationMs, reason, dat
       await db.setTempban(guildId, userId, expiresAt, authorTag, reason);
       await logModAction(guildId, userId, authorTag, "tempban", reason, `duration=${formatDuration(durationMs)}`, proof);
 
-      // Auto-exec: fire rules triggered by "tempban" event
-      autoexec.executeTrigger(guildId, "tempban", {
-        guild, member, user: member.user, username, userId,
-        reason, moderator: authorTag, moderatorUserId: moderatorId || null,
-        duration: formatDuration(durationMs),
-      }).catch(err => console.error("autoexec tempban:", err.message));
-
+      fireAutoexec("tempban", guildId, { guild, member, reason, authorTag, moderatorId, payload: { duration: formatDuration(durationMs) } });
       return respond({ embeds: [successEmbed(`${username} banned for **${formatDuration(durationMs)}** | ${reason}`)] });
     }
   } catch (err) {
@@ -463,10 +446,17 @@ async function slashRealMod(interaction, ctx, type) {
 }
 
 // ─── Standalone real-mod handlers (unmute, unban, warnlist, warnclear, lock, unlock, slowmode)
+
+// Find the "Muted" role by name — used in mute/unmute operations. Not all servers
+// have one; the function returns null so callers check before assigning.
+function getMutedRole(guild) {
+  return guild.roles.cache.find(r => r.name.toLowerCase() === "muted") || null;
+}
+
 async function handleRealUnmute(message, args, ctx) {
   const userId = resolveUserId(args[0]); if (!userId) return message.reply({ embeds: [errorEmbed("Usage: $realunmute @user")] });
   const member = await safe.orNull(message.guild.members.fetch(userId), `real unmute fetch ${userId}`); if (!member) return message.reply({ embeds: [errorEmbed("User not found")] });
-  const mutedRole = message.guild.roles.cache.find(r => r.name.toLowerCase() === "muted");
+  const mutedRole = getMutedRole(message.guild);
   try {
     if (mutedRole && member.roles.cache.has(mutedRole.id)) await member.roles.remove(mutedRole);
     if (message.guild.members.me.permissions.has(PermissionFlagsBits.ModerateMembers)) await safe.timeout(member, null, "real unmute");
@@ -479,7 +469,7 @@ async function slashRealUnmute(interaction, ctx) {
   const user   = interaction.options.getUser("user");
   const member = await safe.orNull(interaction.guild.members.fetch(user.id), `slash real unmute fetch ${user.id}`);
   if (!member) return interaction.editReply({ embeds: [errorEmbed("User not found.")] });
-  const mutedRole = interaction.guild.roles.cache.find(r => r.name.toLowerCase() === "muted");
+  const mutedRole = getMutedRole(interaction.guild);
   try {
     if (mutedRole && member.roles.cache.has(mutedRole.id)) await member.roles.remove(mutedRole);
     if (interaction.guild.members.me.permissions.has(PermissionFlagsBits.ModerateMembers)) await safe.timeout(member, null, "slash real unmute");
@@ -981,9 +971,9 @@ async function removeExpiredTempban(tb) {
 function startProbationCleanup() {
   if (cleanupTimer) return;
   cleanupTimer = setInterval(async () => {
+    const now = Date.now();
     try {
       const all = await db.getAllProbations();
-      const now = Date.now();
       for (const p of all) {
         if (p.expires_at && Number(p.expires_at) <= now) {
           try {
@@ -998,7 +988,6 @@ function startProbationCleanup() {
     // Also expire tempbans
     try {
       const tempbans = await db.getAllTempbans();
-      const now = Date.now();
       for (const tb of tempbans) {
         if (tb.expires_at && Number(tb.expires_at) <= now) {
           try { await removeExpiredTempban(tb); } catch { /* best-effort */ }

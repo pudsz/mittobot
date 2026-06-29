@@ -1,10 +1,5 @@
+const { safeJsonParse } = require("../parse");
 const { contentToAnthropicBlocks } = require("../images");
-
-function safeJsonParse(str, toolName) {
-  try { return JSON.parse(str); } catch (e) {
-    throw new Error(`Tool "${toolName}" arguments truncated or malformed (${str?.length || 0} chars) — try increasing aiMaxTokens. ${e.message}`);
-  }
-}
 
 const CLAUDE_URL = "https://api.anthropic.com/v1/messages";
 

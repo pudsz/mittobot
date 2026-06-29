@@ -23,7 +23,7 @@ async function load() {
     const rows = await db.getAllDangerzoneConfigs();
     for (const row of rows) {
       store[row.guild_id] = {
-        channels: JSON.parse(row.channels || "{}"),
+        channels: db.safeJsonParse(row.channels, {}),
       };
     }
   } catch (e) {
