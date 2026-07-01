@@ -22,7 +22,11 @@ RUN npm ci
 COPY dashboard/ ./
 RUN npm run build
 
-# ─── Stage 3: Runtime image ────────────────────────────────────────────
+# ─── Stage 3: Caddy download ───────────────────────────────────────────
+FROM caddy:2-builder AS caddy-stage
+# Just extract the caddy binary from the official image
+
+# ─── Stage 4: Runtime image ────────────────────────────────────────────
 FROM node:22-alpine
 WORKDIR /app
 RUN apk add --no-cache sqlite-libs
@@ -36,6 +40,14 @@ COPY modules/ ./modules/
 # Copy built dashboard from dashboard-build stage
 COPY --from=dashboard-build /app/dist ./dashboard/dist
 
+# Copy Caddy binary from the official image
+COPY --from=caddy:2 /usr/bin/caddy /usr/bin/caddy
+
+# Copy Caddy config and entrypoint
+COPY Caddyfile /app/Caddyfile
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
 # SQLite database is written to /data by default (use bind mount or named volume)
 # Override via SQLITE_DB_PATH env var if needed
 VOLUME /data
@@ -44,4 +56,4 @@ ENV NODE_ENV=production
 # Port is configurable via $PORT env var (Pterodactyl standard)
 EXPOSE 3432
 
-CMD ["node", "index.js"]
+ENTRYPOINT ["/app/entrypoint.sh"]

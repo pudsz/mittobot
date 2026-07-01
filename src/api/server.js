@@ -64,7 +64,7 @@ function passwordMatches(input, expected) {
 
 function startApi(ctx) {
   const PASSWORD = process.env.DASHBOARD_PASSWORD;
-  const PORT     = parseInt(process.env.API_PORT, 10) || parseInt(process.env.PORT, 10) || 3001;
+  const PORT = parseInt(process.env.API_PORT, 10) || parseInt(process.env.PORT, 10) || 3432;
 
   // Command rate tracking (rolling window for dashboard display)
   const cmdTimes = [];
@@ -2182,11 +2182,45 @@ function startApi(ctx) {
     res.status(500).json({ error: "Internal server error" });
   });
 
-  app.listen(PORT, "0.0.0.0", () => {
+  // ── SSL / HTTPS ──────────────────────────────────────────────────────
+  // Self-signed cert generation (uses openssl, falls back to Node crypto).
+  // Required when the upstream proxy forwards SSL-wrapped traffic instead of
+  // terminating it (common in Pterodactyl environments without a reverse proxy).
+  function getSSLCredentials() {
+    const certPath = process.env.SSL_CERT_PATH;
+    const keyPath  = process.env.SSL_KEY_PATH;
+
+    if (certPath && keyPath && fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+      console.log("[api] Using SSL certificate from:", certPath);
+      return { cert: fs.readFileSync(certPath, "utf8"), key: fs.readFileSync(keyPath, "utf8") };
+    }
+
+    // Generate a self-signed cert via openssl
+    const tmpKey  = path.join(os.tmpdir(), "server.key");
+    const tmpCert = path.join(os.tmpdir(), "server.crt");
+
+    try {
+      const { execSync } = require("child_process");
+      execSync(
+        `openssl req -x509 -newkey rsa:2048 -keyout "${tmpKey}" -out "${tmpCert}" -days 3650 -nodes -subj "/CN=${os.hostname()}" 2>/dev/null`,
+        { stdio: "pipe", timeout: 10_000 }
+      );
+      console.log("[api] Generated self-signed SSL certificate (10yr expiry)");
+      return { cert: fs.readFileSync(tmpCert, "utf8"), key: fs.readFileSync(tmpKey, "utf8") };
+    } catch (err) {
+      console.error("[api] openssl is required for SSL cert generation but was not found:", err.message);
+      console.error("[api] Install openssl or set SSL_CERT_PATH and SSL_KEY_PATH env vars.");
+      throw new Error("openssl required for SSL certificate generation");
+    }
+  }
+  // --- Create HTTPS server ---
+  const sslCreds = getSSLCredentials();
+
+  https.createServer(sslCreds, app).listen(PORT, "0.0.0.0", () => {
     const schedCount = (() => { try { return require("../scheduler").count(); } catch { return 0; } })();
-    console.log(`[api] Bot dashboard API on http://0.0.0.0:${PORT} (${schedCount} schedules loaded)`);
+    console.log(`[api] Bot dashboard API on https://0.0.0.0:${PORT} (${schedCount} schedules loaded)`);
     if (servingDashboard) {
-      console.log(`[api] Dashboard available at http://0.0.0.0:${PORT}/`);
+      console.log(`[api] Dashboard available at https://0.0.0.0:${PORT}/`);
     }
   });
 }

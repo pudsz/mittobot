@@ -6,7 +6,7 @@
 ┌─────────────────┐     HTTPS / JWT      ┌──────────────────────┐
 │  Vercel (SPA)   │ ◄──────────────────► │  Your VPS (Bot API)  │
 │  ggboi-dash.vercel.app │               │  bot.yourdomain.com  │
-│  Static React   │     CORS-locked      │  Express on :3001    │
+│  Static React   │     CORS-locked      │  Express on :3432    │
 │  No database    │     Bearer token     │  SQLite/Discord API  │
 └─────────────────┘                      └──────────────────────┘
 ```
@@ -71,7 +71,7 @@ docker compose -f docker-compose.prod.yml up -d
 docker compose -f docker-compose.prod.yml logs -f bot
 ```
 
-The bot API listens on `0.0.0.0:3001` (all interfaces). You need a **reverse proxy** to serve it publicly with HTTPS.
+The bot API listens on `0.0.0.0:3432` (all interfaces). You need a **reverse proxy** to serve it publicly with HTTPS.
 
 ### Discord Intents
 
@@ -144,7 +144,7 @@ sudo journalctl -u ggboi-bot -f
 
 ## 3. Set Up HTTPS (Reverse Proxy)
 
-The bot API listens on `0.0.0.0:3001`. You must put it behind a reverse proxy for HTTPS.
+The bot API listens on `0.0.0.0:3432`. You must put it behind a reverse proxy for HTTPS.
 
 ### Option A: Caddy (Simplest — auto HTTPS)
 
@@ -158,7 +158,7 @@ sudo apt update && sudo apt install caddy
 # Create Caddyfile
 sudo tee /etc/caddy/Caddyfile << 'EOF'
 bot.yourdomain.com {
-    reverse_proxy 0.0.0.0:3001
+    reverse_proxy 0.0.0.0:3432
     log {
         output file /var/log/caddy/ggboi-bot.log
     }
@@ -183,7 +183,7 @@ server {
     server_name bot.yourdomain.com;
 
     location / {
-        proxy_pass http://0.0.0.0:3001;
+        proxy_pass http://0.0.0.0:3432;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -211,7 +211,7 @@ sudo certbot --nginx -d bot.yourdomain.com
 - [ ] **`DASHBOARD_JWT_SECRET`** — Set a long (~64 char), random, stable secret
 - [ ] **`DASHBOARD_ORIGIN`** — Set to your exact Vercel URL (e.g., `https://ggboi-dash.vercel.app`)
 - [ ] **`DASHBOARD_PASSWORD`** — Use a strong password (or set up Discord OAuth instead)
-- [ ] **Firewall** — Only ports 80/443 open to the internet; port 3001 on private network
+- [ ] **Firewall** — Only ports 80/443 open to the internet; port 3432 on private network
 - [ ] **API rate limit** — 300 requests/minute per IP on all `/api/*` endpoints (built-in)
 - [ ] **Login rate limit** — 10 attempts/minute per IP on `/login` (built-in)
 - [ ] **Regular updates** — Run `npm audit` and update dependencies periodically
@@ -241,7 +241,7 @@ DASHBOARD_JWT_SECRET=random_64_char_hex_secret
 DASHBOARD_ORIGIN=https://ggboi-dash.vercel.app
 
 # Optional
-API_PORT=3001
+API_PORT=3432
 DASHBOARD_TOKEN_TTL=7d
 ```
 

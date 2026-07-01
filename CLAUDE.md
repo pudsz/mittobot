@@ -12,7 +12,7 @@ npm start               # full local stack: SQLite + bot + API + dashboard
 `npm start` runs `scripts/dev.js`, a dependency-free launcher that:
 1. Initializes the SQLite database (creates `ggboi.sqlite` if not exists)
 2. Starts the **bot + API** (`node index.js`).
-3. Starts the **dashboard** Vite dev server on `:5173`, pointed at the local API (`VITE_BOT_API_URL=http://0.0.0.0:3001`).
+3. Starts the **dashboard** Vite dev server on `:5173`, pointed at the local API (`VITE_BOT_API_URL=http://0.0.0.0:3432`).
 
 Ctrl+C stops the bot and dashboard. Flags: `--no-dashboard`. Other scripts: `npm run bot` (bot only), `npm run dashboard` (dashboard only).
 
@@ -30,7 +30,7 @@ Optional env vars (dashboard API + AI) — full list in `.env.example`:
 - `DASHBOARD_PASSWORD` — enables the dashboard API (disabled if unset)
 - `DASHBOARD_JWT_SECRET` — signs dashboard login JWTs (use a stable value across instances)
 - `DASHBOARD_ORIGIN` — comma-separated CORS allowlist (your dashboard's URL)
-- `API_PORT` — public API port (default 3001)
+- `API_PORT` — public API port (default 3432)
 - `GROQ_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` — AI provider keys (can also be set via the dashboard)
 
 ## Architecture

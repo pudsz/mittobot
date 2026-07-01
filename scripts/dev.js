@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // ─── Full local dev stack launcher ───────────────────────────────────────────
 // One command to run everything you need locally:
-//   1. Bot + API  (node index.js — also serves the dashboard API on :3001)
+//   1. Bot + API  (node index.js — serves API + dashboard on :3432)
 //   2. Dashboard  (Vite dev server in dashboard/ on :5173)
 //
 // Usage:
@@ -22,7 +22,7 @@ const RUN_DASHBOARD = !args.includes("--no-dashboard");
 
 // Defaults for local development
 const DASHBOARD_PORT = 5173;
-const API_PORT = process.env.API_PORT || process.env.PORT || "3001";
+const API_PORT = process.env.API_PORT || process.env.PORT || "3432";
 
 // Child processes
 const children = [];
