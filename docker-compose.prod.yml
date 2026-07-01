@@ -1,14 +1,16 @@
 # ─── ggboi production stack ──────────────────────────────────────────────
-# Deploys the bot (SQLite-backed) ready for the dashboard on Vercel.
+# Deploys the bot + dashboard as a single process on one port.
+# Ideal for Pterodactyl or any single-port environment.
 #
 # Usage:
 #   docker compose -f docker-compose.prod.yml up -d
 #
 # Requires a .env file in the same directory with:
-#   BOT_TOKEN, DASHBOARD_PASSWORD, DASHBOARD_JWT_SECRET, DASHBOARD_ORIGIN
+#   BOT_TOKEN, DASHBOARD_PASSWORD, DASHBOARD_JWT_SECRET
 #
-# For HTTPS, put this behind a reverse proxy (nginx, Caddy, or Traefik)
-# on the host. See docs/deploy.md for a full guide.
+# The dashboard is built into the image and served by Express, so
+# DASHBOARD_ORIGIN can be left unset (same-origin requests).
+# For external HTTPS, put this behind a reverse proxy.
 
 services:
   bot:
@@ -16,16 +18,16 @@ services:
     container_name: ggboi-bot
     restart: unless-stopped
     ports:
-      - "0.0.0.0:3001:3001"   # bind to all interfaces — proxy handles public traffic
+      - "0.0.0.0:3432:3432"   # single port for bot API + dashboard UI
     env_file:
       - .env
     environment:
+      # Single port for both API and dashboard
+      - PORT=3432
       # Use a persistent path for the SQLite database inside the volume
       - SQLITE_DB_PATH=/data/ggboi.sqlite
     volumes:
       - ggboi-data:/data
-      # Hot-reload modules from host during dev; comment out in stable prod
-      # - ./modules:/app/modules
 
 volumes:
   ggboi-data:

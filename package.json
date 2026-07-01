@@ -3,10 +3,12 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "start": "node scripts/dev.js",
+    "start": "node index.js",
     "dev": "node scripts/dev.js",
     "bot": "node index.js",
-    "dashboard": "npm --prefix dashboard run dev"
+    "dashboard": "npm --prefix dashboard run dev",
+    "build:dashboard": "cd dashboard && npm ci && npm run build",
+    "build": "npm run build:dashboard"
   },
   "dependencies": {
     "@openai/codex": "^0.142.3",

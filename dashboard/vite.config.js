@@ -5,6 +5,19 @@ const API_TARGET = process.env.VITE_BOT_API_URL || "http://0.0.0.0:3001";
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    outDir: "dist",
+    sourcemap: false,
+    minify: "esbuild",
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ["react", "react-dom", "react-router-dom"],
+          ui: ["lucide-react", "recharts"],
+        },
+      },
+    },
+  },
   server: {
     host: "0.0.0.0",
     proxy: {

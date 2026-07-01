@@ -122,17 +122,28 @@ function startApi(ctx) {
   const app = express();
   app.set('trust proxy', 1);
 
+  // Check if the dashboard is built and can be served locally (same-origin).
+  // This is checked early so we can relax the DASHBOARD_ORIGIN requirement:
+  // same-origin requests don't need CORS at all.
+  const dashboardPath = path.resolve(__dirname, "../../dashboard/dist");
+  const servingDashboard = fs.existsSync(dashboardPath);
+
   // CORS: restrict to the dashboard origin(s). DASHBOARD_ORIGIN may be a
-  // comma-separated list; required in production for security.
+  // comma-separated list; required in production when the dashboard is NOT
+  // served from the same origin (e.g. hosted on Vercel).
   const originList = (process.env.DASHBOARD_ORIGIN || "")
     .split(",").map(s => s.trim()).filter(Boolean);
   if (!originList.length) {
-    if (process.env.NODE_ENV === "production") {
+    if (process.env.NODE_ENV === "production" && !servingDashboard) {
       console.error("[api] DASHBOARD_ORIGIN is required in production for CORS security. Set it to your dashboard URL(s).");
       console.error("[api] Example: DASHBOARD_ORIGIN=https://your-dashboard.vercel.app,https://localhost:5173");
       return; // Disable API if no origin whitelist in production
     }
-    console.warn("[api] DASHBOARD_ORIGIN not set — allowing all origins (DEV ONLY). Set it for production.");
+    if (servingDashboard) {
+      console.log("[api] Dashboard served locally — CORS not needed for same-origin requests.");
+    } else {
+      console.warn("[api] DASHBOARD_ORIGIN not set — allowing all origins (DEV ONLY). Set it for production.");
+    }
   }
   app.use(cors({
     origin: originList.length ? originList : true,
@@ -2135,6 +2146,36 @@ function startApi(ctx) {
     }
   });
 
+  // ─── Serve built dashboard (SPA) ──────────────────────────────────────
+  // In production (Docker / Pterodactyl), the Vite build output sits at
+  // dashboard/dist/ relative to the project root.  The Express server serves
+  // the static files AND handles SPA fallback so the entire application
+  // (bot API + dashboard UI) runs on a single port.
+  // Note: dashboardPath & servingDashboard are already resolved above.
+  if (servingDashboard) {
+    console.log(`[api] Serving dashboard from ${dashboardPath}`);
+    app.use(express.static(dashboardPath, {
+      maxAge: "1y",
+      immutable: true,
+      setHeaders: (res, filePath) => {
+        // HTML must never be cached so SPA routing always works
+        if (filePath.endsWith(".html")) {
+          res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        }
+      },
+    }));
+    // SPA fallback: any non-API, non-login GET route returns index.html so
+    // React Router can handle the client-side route.
+    app.get("*", (req, res) => {
+      if (req.path.startsWith("/api/") || req.path === "/login") {
+        return res.status(404).json({ error: "Not found" });
+      }
+      res.sendFile(path.join(dashboardPath, "index.html"));
+    });
+  } else {
+    console.warn(`[api] Dashboard build not found at ${dashboardPath} — dashboard UI will not be served. Run: cd dashboard && npm run build`);
+  }
+
   // Global error handler (catch-all for thrown errors in routes)
   app.use((err, req, res, _next) => {
     console.error("[api] Unhandled error:", err.message);
@@ -2144,6 +2185,9 @@ function startApi(ctx) {
   app.listen(PORT, "0.0.0.0", () => {
     const schedCount = (() => { try { return require("../scheduler").count(); } catch { return 0; } })();
     console.log(`[api] Bot dashboard API on http://0.0.0.0:${PORT} (${schedCount} schedules loaded)`);
+    if (servingDashboard) {
+      console.log(`[api] Dashboard available at http://0.0.0.0:${PORT}/`);
+    }
   });
 }
 
