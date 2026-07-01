@@ -15,3 +15,12 @@ dashboard/.env
 dashboard/.env.local
 Freebuff2API/
 .aider*
+.agents/
+.claude/
+node_modules/
+ggboi.sqlite
+knowledge.md
+DEEPSEEK.md
+dashboard-overhaul-spec.md
+CLAUDE.md
+dashboard-dist.tar.gz

@@ -1,11 +1,13 @@
-const groq   = require("./groq");
-const openai = require("./openai");
-const claude = require("./claude");
-const gemini = require("./gemini");
-const custom = require("./custom");
-const nvidia = require("./nvidia");
+const groq     = require("./groq");
+const openai   = require("./openai");
+const claude   = require("./claude");
+const gemini   = require("./gemini");
+const custom   = require("./custom");
+const nvidia   = require("./nvidia");
+const deepseek = require("./deepseek");
+const together = require("./together");
 
-const PROVIDERS = [groq, openai, claude, gemini, custom, nvidia];
+const PROVIDERS = [groq, openai, claude, gemini, custom, nvidia, deepseek, together];
 const BY_ID = Object.fromEntries(PROVIDERS.map(p => [p.id, p]));
 
 function getProvider(id) {

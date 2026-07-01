@@ -37,7 +37,7 @@ function UserProfileCard({ user, onLogout }) {
   );
 }
 
-function ServerCard({ guild, onSelect }) {
+function ServerCard({ guild, onSelect, style }) {
   const iconUrl = guild.icon
     ? `https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.png?size=128`
     : null;
@@ -49,11 +49,15 @@ function ServerCard({ guild, onSelect }) {
     .slice(0, 3)
     .toUpperCase();
 
+  // Determine visual tier based on member count
+  const tier = guild.memberCount >= 10000 ? "large" : guild.memberCount >= 1000 ? "medium" : "small";
+
   return (
     <button
-      className="server-card"
+      className={`server-card server-card--${tier}`}
       onClick={() => onSelect(guild.id)}
       title={`Open ${guild.name}`}
+      style={style}
     >
       <div className="server-card-icon-wrap">
         {iconUrl ? (
@@ -63,14 +67,25 @@ function ServerCard({ guild, onSelect }) {
         )}
       </div>
       <div className="server-card-body">
-        <div className="server-card-name">{guild.name}</div>
+        <div className="server-card-name-row">
+          <div className="server-card-name">{guild.name}</div>
+          {tier === "large" && <span className="badge ok" style={{ fontSize: 10, padding: "1px 6px" }}>✦ Large</span>}
+        </div>
         <div className="server-card-meta">
-          <span><Users style={{ width: 12, height: 12 }} /> {guild.memberCount?.toLocaleString() ?? "?"}</span>
-          <span><Hash style={{ width: 12, height: 12 }} /> {guild.channelCount ?? "?"}</span>
-          <span><MessageSquare style={{ width: 12, height: 12 }} /> {guild.roleCount ?? "?"}</span>
+          <span className="server-card-meta-item">
+            <Users style={{ width: 12, height: 12 }} /> {guild.memberCount?.toLocaleString() ?? "?"}
+          </span>
+          <span className="server-card-meta-item">
+            <Hash style={{ width: 12, height: 12 }} /> {guild.channelCount ?? "?"} ch
+          </span>
+          <span className="server-card-meta-item">
+            <MessageSquare style={{ width: 12, height: 12 }} /> {guild.roleCount ?? "?"} roles
+          </span>
         </div>
       </div>
-      <ArrowRight className="server-card-arrow" style={{ width: 16, height: 16 }} />
+      <div className="server-card-actions">
+        <ArrowRight className="server-card-arrow" style={{ width: 16, height: 16 }} />
+      </div>
     </button>
   );
 }
@@ -99,13 +114,20 @@ function ServerNavigator({ guilds, onSelect }) {
 
       {filtered.length === 0 ? (
         <div className="server-navigator-empty">
-          <Server style={{ width: 32, height: 32, opacity: 0.4 }} />
-          <p>No servers match "{query}"</p>
+          <div className="server-navigator-empty-icon">
+            <Server style={{ width: 40, height: 40 }} />
+          </div>
+          <p>{query.trim() ? `No servers match "${query}"` : "No servers available"}</p>
+          {query.trim() && (
+            <button className="btn secondary" onClick={() => setQuery("")} style={{ marginTop: 4 }}>
+              Clear search
+            </button>
+          )}
         </div>
       ) : (
         <div className="server-grid">
-          {filtered.map((g) => (
-            <ServerCard key={g.id} guild={g} onSelect={onSelect} />
+          {filtered.map((g, i) => (
+            <ServerCard key={g.id} guild={g} onSelect={onSelect} style={{ animationDelay: `${0.04 * i}s` }} />
           ))}
         </div>
       )}

@@ -1,13 +1,14 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Routes, Route, useNavigate } from "react-router-dom";
-import { Disc, RefreshCw, KeyRound } from "lucide-react";
+import { Disc, RefreshCw, KeyRound, X } from "lucide-react";
 import { api, setToken, clearToken, onUnauthorized, BASE } from "./api.js";
 import { ToastProvider } from "./components/Toast.jsx";
 import HomePage from "./pages/HomePage.jsx";
 import DashboardPage from "./pages/DashboardPage.jsx";
+import LandingPage from "./pages/LandingPage.jsx";
 
 // ─── Login ───────────────────────────────────────────────────────────────────
-function Login({ onLoggedIn }) {
+function Login({ onLoggedIn, onBack }) {
   const [err, setErr] = useState("");
   const [pwMode, setPwMode] = useState(false);
   const [pw, setPw] = useState("");
@@ -35,6 +36,9 @@ function Login({ onLoggedIn }) {
   return (
     <div id="login">
       <div className="card">
+        <button className="login-back-btn" onClick={onBack} aria-label="Back to landing">
+          <X style={{ width: 16, height: 16 }} />
+        </button>
         <div className="login-header">
           <h1>ggboi</h1>
         </div>
@@ -100,13 +104,16 @@ function Login({ onLoggedIn }) {
   );
 }
 
-function ConnectingScreen({ retryCount, onRetry, maxRetries }) {
+function ConnectingScreen({ retryCount, onRetry, maxRetries, onBack }) {
   const pct = Math.min(retryCount / maxRetries, 1);
   const isFailed = retryCount >= maxRetries;
 
   return (
     <div id="login">
       <div className="card" style={{ alignItems: "center", textAlign: "center" }}>
+        <button className="login-back-btn" onClick={onBack} aria-label="Back">
+          <X style={{ width: 16, height: 16 }} />
+        </button>
         <div className="login-header" style={{ justifyContent: "center" }}>
           <h1>ggboi</h1>
         </div>
@@ -137,7 +144,7 @@ function ConnectingScreen({ retryCount, onRetry, maxRetries }) {
               ⚠️ Could not connect to bot API
             </div>
             <div className="muted" style={{ fontSize: 12, marginBottom: 12 }}>
-              Make sure the bot is running and the API server is accessible on port 3001.
+              Make sure the bot is running and the API server is accessible.
             </div>
             <button className="btn primary" onClick={onRetry} style={{ width: "100%", justifyContent: "center" }}>
               <RefreshCw /> <span>Retry connection</span>
@@ -254,6 +261,8 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const [showLoginForm, setShowLoginForm] = useState(false);
+
   return (
     <ToastProvider>
       {authed === null ? (
@@ -261,6 +270,7 @@ export default function App() {
           retryCount={retryCount}
           maxRetries={MAX_RETRIES}
           onRetry={retry}
+          onBack={() => setAuthed(false)}
         />
       ) : authed ? (
         <AppRoutes
@@ -269,8 +279,10 @@ export default function App() {
           isAdminMode={isAdminMode}
           onToggleMode={toggleMode}
         />
+      ) : showLoginForm ? (
+        <Login onLoggedIn={() => attemptConnect()} onBack={() => setShowLoginForm(false)} />
       ) : (
-        <Login onLoggedIn={() => attemptConnect()} />
+        <LandingPage onGetStarted={() => setShowLoginForm(true)} />
       )}
     </ToastProvider>
   );

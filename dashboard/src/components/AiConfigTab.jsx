@@ -10,6 +10,8 @@ const AI_KEY_PLACEHOLDERS = {
   claude: "sk-ant-...",
   gemini: "AIza...",
   nvidia: "nvapi-...",
+  deepseek: "sk-...",
+  together: "api key (togetherai or together.xyz)",
   custom: "api key (leave blank if not required, e.g. local Ollama)",
 };
 

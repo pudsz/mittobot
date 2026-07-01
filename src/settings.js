@@ -62,6 +62,10 @@ const DEFAULTS = {
   customApiType:      "openai",   // "openai" | "anthropic"
   nvidiaApiKey:       "",
   nvidiaModel:        "mistralai/ministral-14b-instruct-2512",
+  deepseekApiKey:     "",
+  deepseekModel:      "deepseek-chat",
+  togetherApiKey:     "",
+  togetherModel:      "meta-llama/Llama-3.3-70B-Instruct-Turbo",
   aiSystemPrompt:     AI_SYSTEM_PROMPT_DEFAULT,
   aiAllowedChannels:  "",
   aiIgnoredChannels:  "",
