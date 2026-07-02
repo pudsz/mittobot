@@ -171,6 +171,8 @@ export default function EmbedBuilderTab({ guildId }) {
     return <div className="muted" style={{ padding: 24, textAlign: "center" }}>Select a guild to build embeds.</div>;
   }
 
+  const colorHex = `#${(embed.color || 0x5865F2).toString(16).padStart(6, "0").toUpperCase()}`;
+
   const cleaned = cleanEmbed(embed);
 
   return (
@@ -178,13 +180,12 @@ export default function EmbedBuilderTab({ guildId }) {
       <h2>🎨 Embed Builder</h2>
       <p className="muted">Design Discord embeds visually with a live preview. Save templates for reuse.</p>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
-        {/* Left: Live Preview */}
-        <div style={{ position: "sticky", top: 60 }}>
+      <div className="embed-grid">
+        <div className="embed-sticky">
           <Panel title="Preview" icon={Palette}>
             <EmbedPreview embed={cleaned} />
             {(cleaned.description || cleaned.fields?.length > 0) && (
-              <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+              <div className="embed-actions">
                 <button className="btn secondary text-sm" onClick={openJsonExport}><Download style={{ width: 14 }} /> JSON</button>
                 {sendChannel && (
                   <button className="btn primary text-sm" onClick={sendTest} disabled={sending}>
@@ -196,11 +197,9 @@ export default function EmbedBuilderTab({ guildId }) {
           </Panel>
         </div>
 
-        {/* Right: Form */}
         <div>
-          {/* Color presets */}
           <Panel title="Color" icon={Palette}>
-            <div className="row" style={{ marginBottom: 8 }}>
+            <div className="row mb-2">
               {COLOR_PRESETS.map((p) => (
                 <button
                   key={p.color}
@@ -208,7 +207,7 @@ export default function EmbedBuilderTab({ guildId }) {
                   style={{ padding: "4px 10px", fontSize: 11 }}
                   onClick={() => setEmbed({ ...embed, color: p.color })}
                 >
-                  <span style={{ display: "inline-block", width: 12, height: 12, borderRadius: 3, background: `#${p.color.toString(16).padStart(6, "0")}`, marginRight: 4 }} />
+                  <span className="embed-color-swatch" style={{ background: `#${p.color.toString(16).padStart(6, "0")}` }} />
                   {p.label}
                 </button>
               ))}
@@ -218,33 +217,33 @@ export default function EmbedBuilderTab({ guildId }) {
               <div className="row">
                 <input
                   type="color"
-                  value={`#${(embed.color || 0x5865F2).toString(16).padStart(6, "0")}`}
+                  value={colorHex.toLowerCase()}
                   onChange={(e) => setEmbed({ ...embed, color: parseInt(e.target.value.slice(1), 16) })}
-                  style={{ width: 40, height: 32, padding: 2, cursor: "pointer" }}
+                  className="embed-color-input"
                 />
-                <code>{`#${(embed.color || 0x5865F2).toString(16).padStart(6, "0").toUpperCase()}`}</code>
+                <code>{colorHex}</code>
               </div>
             </div>
           </Panel>
 
-          {/* Core fields */}
           <Panel title="Content">
-            <div className="field">
-              <label>Author Name</label>
-              <input value={embed.author.name} onChange={(e) => setEmbed({ ...embed, author: { ...embed.author, name: e.target.value } })} placeholder="e.g. Server Welcome" />
-            </div>
-            <div className="field">
-              <label>Author Icon URL</label>
-              <input value={embed.author.icon_url} onChange={(e) => setEmbed({ ...embed, author: { ...embed.author, icon_url: e.target.value } })} placeholder="https://..." />
-            </div>
-            <div className="field">
-              <label>Title</label>
-              <input value={embed.title} onChange={(e) => setEmbed({ ...embed, title: e.target.value })} placeholder="Embed title" />
-            </div>
-            <div className="field">
-              <label>Title URL</label>
-              <input value={embed.url} onChange={(e) => setEmbed({ ...embed, url: e.target.value })} placeholder="https://..." />
-            </div>
+            {["author.name", "author.icon_url", "title", "url"].map(f => {
+              const [group, field] = f.includes(".") ? f.split(".") : [null, f];
+              const labels = { author: { name: "Author Name", icon_url: "Author Icon URL" }, title: "Title", url: "Title URL" };
+              const label = group ? labels[group]?.[field] : labels[f];
+              const phs = { author: { name: "e.g. Server Welcome", icon_url: "https://..." }, title: "Embed title", url: "https://..." };
+              const ph = group ? phs[group]?.[field] : phs[f];
+              const val = group ? embed[group]?.[field] || "" : embed[f];
+              const onChange = group
+                ? (v) => setEmbed({ ...embed, [group]: { ...embed[group], [field]: v } })
+                : (v) => setEmbed({ ...embed, [f]: v });
+              return (
+                <div className="field" key={f}>
+                  <label>{label}</label>
+                  <input value={val} onChange={(e) => onChange(e.target.value)} placeholder={ph} />
+                </div>
+              );
+            })}
             <div className="field">
               <label>Description</label>
               <textarea
@@ -256,13 +255,12 @@ export default function EmbedBuilderTab({ guildId }) {
             </div>
           </Panel>
 
-          {/* Fields editor */}
           <Panel title="Fields" icon={Plus}>
             {(embed.fields || []).map((f) => (
-              <div key={f._key} style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: 10, marginBottom: 8 }}>
-                <div className="row" style={{ justifyContent: "space-between", marginBottom: 6 }}>
+              <div key={f._key} className="embed-field-card">
+                <div className="row embed-field-header">
                   <span className="muted text-sm">Field {(embed.fields || []).indexOf(f) + 1}</span>
-                  <button className="btn danger text-sm" style={{ padding: "2px 8px" }} onClick={() => removeField(f._key)}><X style={{ width: 12 }} /></button>
+                  <button className="btn danger sm" onClick={() => removeField(f._key)}><X style={{ width: 12 }} /></button>
                 </div>
                 <div className="grid-2">
                   <div className="field">
@@ -275,7 +273,7 @@ export default function EmbedBuilderTab({ guildId }) {
                   </div>
                 </div>
                 <label className="row" style={{ fontSize: 12, color: "var(--text-muted)", cursor: "pointer", userSelect: "none" }}>
-                  <input type="checkbox" checked={f.inline || false} onChange={(e) => updateField(f._key, { inline: e.target.checked })} style={{ width: 15, height: 15 }} />
+                  <input type="checkbox" checked={f.inline || false} onChange={(e) => updateField(f._key, { inline: e.target.checked })} className="embed-checkbox" />
                   Inline
                 </label>
               </div>
@@ -283,7 +281,6 @@ export default function EmbedBuilderTab({ guildId }) {
             <button className="btn secondary" onClick={addField}>+ Add Field</button>
           </Panel>
 
-          {/* Media */}
           <Panel title="Images">
             <div className="field">
               <label>Thumbnail URL</label>
@@ -295,7 +292,6 @@ export default function EmbedBuilderTab({ guildId }) {
             </div>
           </Panel>
 
-          {/* Footer */}
           <Panel title="Footer">
             <div className="field">
               <label>Footer Text</label>
@@ -305,13 +301,12 @@ export default function EmbedBuilderTab({ guildId }) {
               <label>Footer Icon URL</label>
               <input value={embed.footer.icon_url} onChange={(e) => setEmbed({ ...embed, footer: { ...embed.footer, icon_url: e.target.value } })} placeholder="https://..." />
             </div>
-            <label className="row" style={{ fontSize: 13, color: "var(--text-muted)", cursor: "pointer", userSelect: "none" }}>
-              <input type="checkbox" checked={embed.timestamp !== false} onChange={(e) => setEmbed({ ...embed, timestamp: e.target.checked })} style={{ width: 15, height: 15 }} />
+            <label className="row embed-switch-label">
+              <input type="checkbox" checked={embed.timestamp !== false} onChange={(e) => setEmbed({ ...embed, timestamp: e.target.checked })} className="embed-checkbox" />
               <Clock style={{ width: 14 }} /> Show timestamp
             </label>
           </Panel>
 
-          {/* Message content + send */}
           <Panel title="Send Test" icon={Send}>
             <div className="field">
               <label>Message Content (optional)</label>
@@ -326,7 +321,6 @@ export default function EmbedBuilderTab({ guildId }) {
             </button>
           </Panel>
 
-          {/* Templates */}
           <Panel title="Saved Templates" icon={Save}>
             {templateLoading ? (
               <div className="skeleton skeleton-card" style={{ height: 60 }} />
@@ -335,23 +329,23 @@ export default function EmbedBuilderTab({ guildId }) {
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 12 }}>
                 {templates.map((t) => (
-                  <div key={t.id} className="row" style={{ justifyContent: "space-between", background: "var(--surface)", padding: "6px 12px", borderRadius: "var(--radius-sm)" }}>
-                    <span style={{ fontWeight: 600, fontSize: 13 }}>{t.name}</span>
+                  <div key={t.id} className="row embed-template-row">
+                    <span className="embed-template-name">{t.name}</span>
                     <div className="row gap-4">
-                      <button className="btn secondary text-sm" style={{ padding: "3px 8px" }} onClick={() => loadTemplate(t)}>Load</button>
-                      <button className="btn danger text-sm" style={{ padding: "3px 8px" }} onClick={() => deleteTemplate(t)}><Trash2 style={{ width: 12 }} /></button>
+                      <button className="btn secondary sm" onClick={() => loadTemplate(t)}>Load</button>
+                      <button className="btn danger sm" onClick={() => deleteTemplate(t)}><Trash2 style={{ width: 12 }} /></button>
                     </div>
                   </div>
                 ))}
               </div>
             )}
             {showSave ? (
-              <div className="row" style={{ marginTop: 8 }}>
+              <div className="row mt-2">
                 <input
                   value={saveName}
                   onChange={(e) => setSaveName(e.target.value)}
                   placeholder="Template name..."
-                  style={{ flex: 1 }}
+                  className="flex-1"
                   onKeyDown={(e) => { if (e.key === "Enter") saveTemplate(); }}
                   autoFocus
                 />
@@ -363,17 +357,16 @@ export default function EmbedBuilderTab({ guildId }) {
             )}
           </Panel>
 
-          {/* JSON Import/Export */}
           <Panel title="JSON" icon={Download}>
             {showJson ? (
               <div>
                 <textarea
                   value={jsonText}
                   onChange={(e) => { setJsonText(e.target.value); setJsonError(""); }}
-                  style={{ minHeight: 200, fontFamily: "var(--font-mono)", fontSize: 11 }}
+                  className="embed-json-textarea"
                 />
-                {jsonError && <div style={{ color: "var(--red)", fontSize: 12, marginTop: 4 }}>{jsonError}</div>}
-                <div className="row" style={{ marginTop: 8 }}>
+                {jsonError && <div className="embed-json-error">{jsonError}</div>}
+                <div className="row mt-2">
                   <button className="btn primary" onClick={importJson}><Upload style={{ width: 14 }} /> Import</button>
                   <button className="btn" onClick={copyJson}>Copy</button>
                   <button className="btn" onClick={() => setShowJson(false)}>Close</button>

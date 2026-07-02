@@ -58,11 +58,11 @@ export default function UserNotesTab({ guildId }) {
   return (
     <div className="tab active">
       <Panel icon={StickyNote} title="User Notes">
-        <p className="muted" style={{ marginBottom: 14 }}>
+        <p className="muted unotes-desc">
           Add and view free-form moderation notes attached to Discord users. Notes are visible to anyone
           with dashboard access and persist across restarts.
         </p>
-        <div className="field" style={{ marginBottom: 12 }}>
+        <div className="field mb-3">
           <label>Discord User ID</label>
           <div className="row">
             <input
@@ -70,7 +70,7 @@ export default function UserNotesTab({ guildId }) {
               value={userId}
               onChange={(e) => setUserId(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") loadNotes(userId); }}
-              style={{ flex: 1, minWidth: 200 }}
+              className="unotes-input"
             />
             <button className="btn primary" onClick={() => loadNotes(userId)} disabled={!userId.trim() || loading}>
               <Search /> {loading ? "Loading..." : "Look up"}
@@ -81,33 +81,33 @@ export default function UserNotesTab({ guildId }) {
 
       {searched && !loading && (
         <Panel compact>
-          <h3 style={{ marginBottom: 12 }}>
+          <h3 className="unotes-notes-heading">
             Notes for <code>{userId}</code>
-            <span className="badge" style={{ marginLeft: 8 }}>{notes.length} note{notes.length !== 1 ? "s" : ""}</span>
+            <span className="badge unotes-badge-ml">{notes.length} note{notes.length !== 1 ? "s" : ""}</span>
           </h3>
-          <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: 12, marginBottom: 14 }}>
-            <div className="field" style={{ marginBottom: 8 }}>
+          <div className="unotes-add-note-box">
+            <div className="field unotes-field-mb">
               <label>New Note</label>
-              <textarea style={{ minHeight: 60 }} placeholder="Enter note content..." value={newContent} onChange={(e) => setNewContent(e.target.value)} />
+              <textarea className="unotes-textarea-sm" placeholder="Enter note content..." value={newContent} onChange={(e) => setNewContent(e.target.value)} />
             </div>
             <button className="btn green" onClick={addNote} disabled={!newContent.trim() || saving}>
               <Plus /> {saving ? "Adding..." : "Add Note"}
             </button>
           </div>
           {notes.length === 0 ? (
-            <div className="muted" style={{ textAlign: "center", padding: 20 }}>No notes for this user.</div>
+            <div className="muted unotes-empty">No notes for this user.</div>
           ) : (
             notes.map((note) => (
-              <div key={note.id} style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "10px 12px", marginBottom: 6 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ color: "var(--text)", fontSize: 13, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{note.content}</div>
-                    <div style={{ marginTop: 6, display: "flex", gap: 12, fontSize: 11, color: "var(--text-muted)" }}>
+              <div key={note.id} className="unotes-note-item">
+                <div className="unotes-note-head">
+                  <div className="unotes-note-body">
+                    <div className="unotes-note-content">{note.content}</div>
+                    <div className="unotes-note-meta">
                       <span>By: <code>{note.by || "unknown"}</code></span>
                       <span>{formatTimestamp(note.timestamp)}</span>
                     </div>
                   </div>
-                  <button className="btn danger" style={{ padding: "4px 8px", flexShrink: 0 }} onClick={() => deleteNote(note.id)}><Trash2 /></button>
+                  <button className="btn danger unotes-delete-btn" onClick={() => deleteNote(note.id)}><Trash2 /></button>
                 </div>
               </div>
             ))

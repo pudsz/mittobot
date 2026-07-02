@@ -27,6 +27,14 @@ function loadModule(name, commandMap) {
   return mod;
 }
 
+function prefix(ctx) {
+  return ctx?.utils?.PREFIX || "$";
+}
+
+function usage(ctx, name, rest = "") {
+  return `\`${prefix(ctx)}${name}${rest ? ` ${rest}` : ""}\``;
+}
+
 async function handleModules(message, args, ctx) {
   if (!isOwner(message.author.id)) return message.reply({ embeds: [noPermEmbed()] });
   ensureModulesDir();
@@ -41,14 +49,14 @@ async function handleModules(message, args, ctx) {
     const lines = files.map(f => {
       const n = f.replace(".js", "");
       const loaded = commandMap.has(n);
-      return `${loaded ? "🟢" : "🔴"} \`$${n}\``;
+      return `${loaded ? "🟢" : "🔴"} ${usage(ctx, n)}`;
     });
     return message.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle("📦 Dynamic Modules").setDescription(lines.join("\n"))] });
   }
 
   // ── delete
   if (sub === "delete" || sub === "remove") {
-    if (!name) return message.reply({ embeds: [errorEmbed("Usage: `$modules delete <name>`")] });
+    if (!name) return message.reply({ embeds: [errorEmbed(`Usage: ${usage(ctx, "modules", "delete <name>")}`)] });
     const filePath = path.join(MODULES_DIR, `${name}.js`);
     if (!fs.existsSync(filePath)) return message.reply({ embeds: [errorEmbed(`No module named \`${name}\` found.`)] });
     fs.unlinkSync(filePath);
@@ -59,7 +67,7 @@ async function handleModules(message, args, ctx) {
 
   // ── reload
   if (sub === "reload") {
-    if (!name) return message.reply({ embeds: [errorEmbed("Usage: `$modules reload <name>`")] });
+    if (!name) return message.reply({ embeds: [errorEmbed(`Usage: ${usage(ctx, "modules", "reload <name>")}`)] });
     const mod = loadModule(name, commandMap);
     if (!mod) return message.reply({ embeds: [errorEmbed(`No module file found for \`${name}\`.`)] });
     return message.reply({ embeds: [successEmbed(`Module \`${name}\` reloaded.`)] });
@@ -67,11 +75,11 @@ async function handleModules(message, args, ctx) {
 
   // ── create
   if (sub === "create") {
-    if (!name) return message.reply({ embeds: [errorEmbed("Usage: `$modules create <name>` with a JS code block")] });
+    if (!name) return message.reply({ embeds: [errorEmbed(`Usage: ${usage(ctx, "modules", "create <name>")} with a JS code block`)] });
     const code = extractCode(message.content);
     if (!code) {
       return message.reply({ embeds: [errorEmbed(
-        "Attach a JS code block after the command.\nExample:\n```\n$modules create hello\n\\`\\`\\`js\nmodule.exports = {\n  name: 'hello',\n  prefix: async (message) => { await message.reply('Hello!'); }\n}\n\\`\\`\\`\n```"
+        `Attach a JS code block after the command.\nExample:\n\`\`\`\n${prefix(ctx)}modules create hello\n\\\`\\\`\\\`js\nmodule.exports = {\n  name: 'hello',\n  prefix: async (message) => { await message.reply('Hello!'); }\n}\n\\\`\\\`\\\`\n\`\`\``
       )] });
     }
     const filePath = path.join(MODULES_DIR, `${name}.js`);
@@ -79,7 +87,7 @@ async function handleModules(message, args, ctx) {
       fs.writeFileSync(filePath, code, "utf8");
       const mod = loadModule(name, commandMap);
       if (!mod) throw new Error("Module loaded as null — check your code.");
-      return message.reply({ embeds: [successEmbed(`Module \`${name}\` created and loaded as \`$${mod.name ?? name}\`.`)] });
+      return message.reply({ embeds: [successEmbed(`Module \`${name}\` created and loaded as ${usage(ctx, mod.name ?? name)}.`)] });
     } catch (err) {
       // Clean up bad file
       if (fs.existsSync(filePath)) { try { fs.unlinkSync(filePath); } catch {} }
@@ -89,11 +97,11 @@ async function handleModules(message, args, ctx) {
 
   // ── usage
   return message.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle("🧩 Modules Help").addFields(
-    { name: "Create",  value: "`$modules create <name>` + JS code block in same message" },
-    { name: "Delete",  value: "`$modules delete <name>`" },
-    { name: "Reload",  value: "`$modules reload <name>`" },
-    { name: "List",    value: "`$modules list`" },
-    { name: "Example", value: "```\n$modules create hello\n\\`\\`\\`js\nmodule.exports = {\n  name: 'hello',\n  prefix: async (message) => {\n    await message.reply('Hello!');\n  }\n}\n\\`\\`\\`\n```" },
+    { name: "Create",  value: `${usage(ctx, "modules", "create <name>")} + JS code block in same message` },
+    { name: "Delete",  value: usage(ctx, "modules", "delete <name>") },
+    { name: "Reload",  value: usage(ctx, "modules", "reload <name>") },
+    { name: "List",    value: usage(ctx, "modules", "list") },
+    { name: "Example", value: `\`\`\`\n${prefix(ctx)}modules create hello\n\\\`\\\`\\\`js\nmodule.exports = {\n  name: 'hello',\n  prefix: async (message) => {\n    await message.reply('Hello!');\n  }\n}\n\\\`\\\`\\\`\n\`\`\`` },
   )] });
 }
 
@@ -111,7 +119,7 @@ module.exports = [
       if (!files.length) return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setDescription("No dynamic modules loaded.")] });
       const lines = files.map(f => {
         const n = f.replace(".js", "");
-        return `${commandMap.has(n) ? "🟢" : "🔴"} \`$${n}\``;
+        return `${commandMap.has(n) ? "🟢" : "🔴"} ${usage(ctx, n)}`;
       });
       return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle("📦 Dynamic Modules").setDescription(lines.join("\n"))] });
     },

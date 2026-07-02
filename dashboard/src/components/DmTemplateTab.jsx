@@ -85,8 +85,8 @@ export default function DmTemplateTab({ guildId }) {
   if (loading) {
     return (
       <div className="tab active">
-        <Panel><div className="skeleton skeleton-heading" /><div className="skeleton skeleton-text" style={{ width: "70%" }} /></Panel>
-        {[1, 2, 3].map((i) => <Panel key={i}><div className="skeleton skeleton-heading" style={{ width: "25%" }} /><div className="skeleton skeleton-text" /><div className="skeleton" style={{ height: 100, borderRadius: "var(--radius-sm)" }} /></Panel>)}
+        <Panel><div className="skeleton skeleton-heading" /><div className="skeleton skeleton-text dmt-skel-wide" /></Panel>
+        {[1, 2, 3].map((i) => <Panel key={i}><div className="skeleton skeleton-heading dmt-skel-narrow" /><div className="skeleton skeleton-text" /><div className="skeleton dmt-skel-block" /></Panel>)}
       </div>
     );
   }
@@ -94,14 +94,14 @@ export default function DmTemplateTab({ guildId }) {
   return (
     <div className="tab active">
       <Panel icon={FileText} title="DM Notification Templates">
-        <p className="muted" style={{ marginBottom: 14 }}>
+        <p className="muted dmt-desc">
           Customize the direct messages users receive when they are warned, muted, kicked, or banned.
           Leave messages empty to send no DM. DM failures (e.g. user has DMs closed) are silently ignored.
         </p>
-        <div className="field" style={{ marginBottom: 12 }}>
+        <div className="field dmt-field-mb">
           <label>Available placeholders</label>
           <div className="row gap-4">
-            {PLACEHOLDER_TIPS.map(([ph, desc]) => <code key={ph} title={desc} style={{ cursor: "help" }}>{ph}</code>)}
+            {PLACEHOLDER_TIPS.map(([ph, desc]) => <code key={ph} title={desc} className="dmt-placeholder">{ph}</code>)}
           </div>
         </div>
         <button className="btn secondary" onClick={load}><RefreshCw /> Refresh</button>
@@ -111,15 +111,15 @@ export default function DmTemplateTab({ guildId }) {
         const tpl = getTemplate(id);
         return (
           <Panel key={id}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
-              <h2 style={{ margin: 0, flex: 1 }}>{label}</h2>
+            <div className="dmt-card-head">
+              <h2 className="dmt-card-title">{label}</h2>
               <Toggle checked={tpl.enabled} onChange={(v) => updTemplate(id, { enabled: v })} />
-              <span className="muted" style={{ fontSize: 12 }}>enabled</span>
+              <span className="muted dmt-enable-label">enabled</span>
             </div>
-            <p className="muted" style={{ marginBottom: 10 }}>{desc}</p>
+            <p className="muted dmt-card-sub">{desc}</p>
             <div className="field">
               <label>DM Message</label>
-              <textarea style={{ minHeight: 80 }} placeholder={DEFAULT_TEMPLATES[id] || ""} value={tpl.message || ""} onChange={(e) => updTemplate(id, { message: e.target.value })} />
+              <textarea className="dmt-textarea-md" placeholder={DEFAULT_TEMPLATES[id] || ""} value={tpl.message || ""} onChange={(e) => updTemplate(id, { message: e.target.value })} />
               <div className="hint">Leave empty to disable DM for this action. Supports Discord markdown.</div>
             </div>
             <div className="row">

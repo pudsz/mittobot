@@ -77,9 +77,9 @@ export default function GreetTab({ guildId }) {
   if (loading) {
     return (
       <div className="tab active">
-        <Panel><div className="skeleton skeleton-heading" /><div className="skeleton skeleton-text" /><div className="skeleton skeleton-text" style={{ width: "60%" }} /></Panel>
-        <Panel><div className="skeleton skeleton-heading" /><div className="skeleton skeleton-text" /><div className="skeleton skeleton-text" style={{ width: "50%" }} /></Panel>
-        <Panel><div className="skeleton skeleton-heading" /><div className="skeleton skeleton-text" /><div className="skeleton skeleton-text" style={{ width: "70%" }} /></Panel>
+        <Panel><div className="skeleton skeleton-heading" /><div className="skeleton skeleton-text" /><div className="skeleton skeleton-text greet-skeleton-w60" /></Panel>
+        <Panel><div className="skeleton skeleton-heading" /><div className="skeleton skeleton-text" /><div className="skeleton skeleton-text greet-skeleton-w50" /></Panel>
+        <Panel><div className="skeleton skeleton-heading" /><div className="skeleton skeleton-text" /><div className="skeleton skeleton-text greet-skeleton-w70" /></Panel>
       </div>
     );
   }
@@ -99,10 +99,10 @@ export default function GreetTab({ guildId }) {
   return (
     <div className="tab active">
       <Panel icon={PartyPopper} title="Welcome Message">
-        <p className="muted" style={{ marginBottom: 12 }}>
+        <p className="muted mb-3">
           {data?.hasGuild ? `Editing for: ${data.guildName}` : "Bot isn't in a server yet."}
         </p>
-        <div className="muted" style={{ marginBottom: 12 }}>
+        <div className="muted mb-3">
           Placeholders: <code>{"{user}"}</code> <code>{"{tag}"}</code> <code>{"{username}"}</code> <code>{"{server}"}</code> <code>{"{count}"}</code>
         </div>
 
@@ -122,7 +122,7 @@ export default function GreetTab({ guildId }) {
           <div>
             <div className="field">
               <label>
-                <Palette style={{ width: 13, height: 13, marginRight: 4, verticalAlign: "middle" }} />
+                <Palette className="greet-icon-inline" />
                 Embed Color
               </label>
               <div className="row">
@@ -130,14 +130,14 @@ export default function GreetTab({ guildId }) {
                   type="color"
                   value={welcome.embedColor}
                   onChange={(e) => setWelcome({ ...welcome, embedColor: e.target.value })}
-                  style={{ width: 40, height: 32, padding: 2, cursor: "pointer", minWidth: 40 }}
+                  className="greet-color-input"
                 />
-                <code style={{ fontSize: 12 }}>{welcome.embedColor}</code>
+                <code className="greet-color-code">{welcome.embedColor}</code>
               </div>
             </div>
             <div className="field">
               <label>
-                <Image style={{ width: 13, height: 13, marginRight: 4, verticalAlign: "middle" }} />
+                <Image className="greet-icon-inline" />
                 Thumbnail Image URL (optional)
               </label>
               <input
@@ -149,52 +149,43 @@ export default function GreetTab({ guildId }) {
           </div>
         </div>
 
-        <div className="field"><label>Message</label><textarea style={{ minHeight: 70 }} value={welcome.message} onChange={(e) => setWelcome({ ...welcome, message: e.target.value })} /></div>
+        <div className="field"><label>Message</label><textarea className="greet-textarea" value={welcome.message} onChange={(e) => setWelcome({ ...welcome, message: e.target.value })} /></div>
 
         {/* Live Preview */}
-        <div style={{ marginTop: 10 }}>
-          <button className="btn secondary" onClick={() => setShowPreview(!showPreview)} style={{ fontSize: 12 }}>
-            <Eye style={{ width: 14, height: 14 }} />
+        <div className="greet-preview-btn-wrap">
+          <button className="btn secondary text-sm" onClick={() => setShowPreview(!showPreview)}>
+            <Eye className="greet-icon-sm" />
             {showPreview ? "Hide Preview" : "Show Preview"}
           </button>
         </div>
         {showPreview && (
-          <div style={{
-            marginTop: 10,
-            background: "var(--bg)",
-            border: "1px solid var(--border)",
-            borderLeft: `3px solid ${welcome.embedColor}`,
-            borderRadius: "var(--radius-sm)",
-            padding: "12px 14px",
-            fontSize: 12,
-            lineHeight: 1.6,
-          }}>
-            <div style={{ fontWeight: 600, fontSize: 11, color: "var(--text-muted)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+          <div className="greet-preview-panel" style={{ borderLeft: `3px solid ${welcome.embedColor}` }}>
+            <div className="greet-preview-label">
               💬 Live Preview
             </div>
             {welcome.title && (
-              <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4, color: "var(--text)" }}>
+              <div className="greet-preview-title">
                 {previewText(welcome.title)}
               </div>
             )}
             {welcome.authorName && (
-              <div style={{ fontSize: 12, marginBottom: 6, color: "var(--text-secondary)" }}>
+              <div className="greet-preview-author-row">
                 <img
                   src="https://cdn.discordapp.com/embed/avatars/0.png"
                   alt=""
-                  style={{ width: 16, height: 16, borderRadius: "50%", marginRight: 6, verticalAlign: "middle", objectFit: "cover" }}
+                  className="greet-preview-avatar"
                 />
                 {previewText(welcome.authorName)}
               </div>
             )}
-            <div style={{ color: "var(--text-secondary)", whiteSpace: "pre-wrap" }}>
+            <div className="greet-preview-message">
               {previewText(welcome.message)}
             </div>
             {welcome.imageUrl && (
               <img
                 src={welcome.imageUrl}
                 alt="preview"
-                style={{ width: 60, height: 60, borderRadius: 4, marginTop: 8, objectFit: "cover", border: "1px solid var(--border)" }}
+                className="greet-preview-thumb"
               />
             )}
           </div>
@@ -204,7 +195,7 @@ export default function GreetTab({ guildId }) {
       <Panel icon={DoorOpen} title="Leave Message">
         <div className="field"><label>Enabled</label><Toggle checked={leave.enabled} onChange={(v) => setLeave({ ...leave, enabled: v })} /></div>
         <ChannelSelect label="Channel" value={leave.channelId} onChange={(v) => setLeave({ ...leave, channelId: v })} channels={channels} />
-        <div className="field"><label>Message</label><textarea style={{ minHeight: 70 }} value={leave.message} onChange={(e) => setLeave({ ...leave, message: e.target.value })} /></div>
+        <div className="field"><label>Message</label><textarea className="greet-textarea" value={leave.message} onChange={(e) => setLeave({ ...leave, message: e.target.value })} /></div>
       </Panel>
 
       <Panel icon={FileText} title="Audit Logs">

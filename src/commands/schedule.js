@@ -5,6 +5,10 @@ const config = require("../config");
 
 const BLURPLE = 0x5865f2;
 
+function usage(ctx, text) {
+  return `\`${ctx?.utils?.PREFIX || "$"}${text}\``;
+}
+
 function canManage(member, userId) {
   return config.memberLevel(member, userId) >= config.PERM_LEVELS.admin;
 }
@@ -49,14 +53,14 @@ async function prefixSchedule(message, args, ctx) {
         value: `**When:** ${t}\n**Last sent:** ${timestampToRelative(item.lastSentAt)}\n**Preview:** ${preview}`,
       });
     }
-    embed.setFooter({ text: "$schedule create|recurring|delete — $schedule delete <id> to remove" });
+    embed.setFooter({ text: `${ctx?.utils?.PREFIX || "$"}schedule create|recurring|delete — ${ctx?.utils?.PREFIX || "$"}schedule delete <id> to remove` });
     return message.reply({ embeds: [embed] });
   }
 
   // $schedule delete <id>
   if (sub === "delete" || sub === "remove") {
     const id = parseInt(args[1], 10);
-    if (isNaN(id)) return message.reply({ embeds: [errorEmbed("Usage: $schedule delete <id>")] });
+    if (isNaN(id)) return message.reply({ embeds: [errorEmbed(`Usage: ${usage(ctx, "schedule delete <id>")}`)] });
     await scheduler.remove(id);
     return message.reply({ embeds: [successEmbed(`Schedule #${id} deleted.`)] });
   }
@@ -65,7 +69,7 @@ async function prefixSchedule(message, args, ctx) {
   if (sub === "create") {
     const channelMention = message.mentions.channels.first();
     const channelArg = channelMention || (args[1] ? message.guild.channels.cache.get(args[1]) : null);
-    if (!channelArg) return message.reply({ embeds: [errorEmbed("Usage: $schedule create #channel <ISO datetime> <message>")] });
+    if (!channelArg) return message.reply({ embeds: [errorEmbed(`Usage: ${usage(ctx, "schedule create #channel <ISO datetime> <message>")}`)] });
 
     // Skip past the channel arg (either the mention position or index 1)
     const chanIdx = channelMention ? args.findIndex(a => a && a.includes(channelArg.id)) : 1;
@@ -91,7 +95,7 @@ async function prefixSchedule(message, args, ctx) {
   if (sub === "recurring") {
     const channelMention = message.mentions.channels.first();
     const channelArg = channelMention || message.guild.channels.cache.get(args[1]);
-    if (!channelArg) return message.reply({ embeds: [errorEmbed("Usage: $schedule recurring #channel daily 14:30 <message>")] });
+    if (!channelArg) return message.reply({ embeds: [errorEmbed(`Usage: ${usage(ctx, "schedule recurring #channel daily 14:30 <message>")}`)] });
 
     // Find recurrence type
     const recIdx = args.findIndex(a => a && ["daily", "weekly", "monthly"].includes(a.toLowerCase()));
@@ -109,9 +113,9 @@ async function prefixSchedule(message, args, ctx) {
 
     const built = scheduler.buildScheduledAt(recurrence, rawParts);
     if (!built || !built.scheduledAt) return message.reply({ embeds: [errorEmbed(
-      recurrence === "daily" ? "Usage: $schedule recurring #channel daily HH:MM <message>" :
-      recurrence === "weekly" ? "Usage: $schedule recurring #channel weekly mon HH:MM <message>" :
-      "Usage: $schedule recurring #channel monthly DD HH:MM <message>"
+      recurrence === "daily" ? `Usage: ${usage(ctx, "schedule recurring #channel daily HH:MM <message>")}` :
+      recurrence === "weekly" ? `Usage: ${usage(ctx, "schedule recurring #channel weekly mon HH:MM <message>")}` :
+      `Usage: ${usage(ctx, "schedule recurring #channel monthly DD HH:MM <message>")}`
     )] });
 
     // Content starts after time spec
@@ -131,12 +135,12 @@ async function prefixSchedule(message, args, ctx) {
   return message.reply({ embeds: [
     new EmbedBuilder().setColor(BLURPLE).setTitle("📅 Schedule Commands")
       .setDescription([
-        "`$schedule list` — View all scheduled messages",
-        "`$schedule create #channel <ISO datetime> <message>` — Schedule a one-shot message",
-        "`$schedule recurring #channel daily HH:MM <message>` — Daily recurring message",
-        "`$schedule recurring #channel weekly mon HH:MM <message>` — Weekly (sun-sat)",
-        "`$schedule recurring #channel monthly DD HH:MM <message>` — Monthly (day 1-31)",
-        "`$schedule delete <id>` — Remove a schedule",
+        `${usage(ctx, "schedule list")} — View all scheduled messages`,
+        `${usage(ctx, "schedule create #channel <ISO datetime> <message>")} — Schedule a one-shot message`,
+        `${usage(ctx, "schedule recurring #channel daily HH:MM <message>")} — Daily recurring message`,
+        `${usage(ctx, "schedule recurring #channel weekly mon HH:MM <message>")} — Weekly (sun-sat)`,
+        `${usage(ctx, "schedule recurring #channel monthly DD HH:MM <message>")} — Monthly (day 1-31)`,
+        `${usage(ctx, "schedule delete <id>")} — Remove a schedule`,
       ].join("\n"))
   ] });
 }

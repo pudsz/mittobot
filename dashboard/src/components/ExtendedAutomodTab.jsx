@@ -12,9 +12,9 @@ function ExtendedAutomodSkeleton() {
     <div className="tab active">
       {[1, 2, 3, 4].map((i) => (
         <div className="panel" key={i}>
-          <div className="skeleton skeleton-heading" style={{ width: "30%" }} />
+          <div className="skeleton skeleton-heading automod-skeleton-title" />
           <div className="skeleton skeleton-text" />
-          <div className="skeleton skeleton-text" style={{ width: "50%" }} />
+          <div className="skeleton skeleton-text automod-skeleton-copy" />
         </div>
       ))}
     </div>
@@ -79,11 +79,11 @@ export default function ExtendedAutomodTab({ guildId }) {
     <div className="tab active">
       <div className="panel">
         <h2><ShieldPlus /> Extended Automod Rules</h2>
-        <p className="muted" style={{ marginBottom: 14 }}>
+        <p className="muted automod-panel-copy">
           Additional content-filtering rules beyond the standard automod. These rules run after the
           standard checks (invites, banned words, spam, etc.) and use the same action system.
         </p>
-        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <div className="panel-actions-row end">
           <button className="btn green" onClick={save}>
             <Save /> <span>Save All Settings</span>
           </button>
@@ -92,11 +92,11 @@ export default function ExtendedAutomodTab({ guildId }) {
 
       {/* ── Link Filtering ── */}
       <div className="panel">
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-          <h2 style={{ margin: 0, flex: 1 }}>Link / Domain Filtering</h2>
+        <div className="panel-toggle-row">
+          <h2 className="panel-inline-title">Link / Domain Filtering</h2>
           <Toggle checked={!!config.link_blacklist?.length} onChange={() => {}} />
         </div>
-        <p className="muted" style={{ marginBottom: 14 }}>
+        <p className="muted automod-panel-copy">
           Block messages containing links to blacklisted domains. Whitelisted domains are always allowed.
         </p>
 
@@ -104,7 +104,7 @@ export default function ExtendedAutomodTab({ guildId }) {
           <div className="field">
             <label>Blacklisted domains (one per line)</label>
             <textarea
-              style={{ minHeight: 120 }}
+              className="automod-textarea-lg"
               placeholder={"spam-domain.com\nmalware-site.net\nphishing-link.org"}
               value={listToString(config.link_blacklist)}
               onChange={(e) => updList("link_blacklist", e.target.value)}
@@ -114,7 +114,7 @@ export default function ExtendedAutomodTab({ guildId }) {
           <div className="field">
             <label>Whitelisted domains (one per line)</label>
             <textarea
-              style={{ minHeight: 120 }}
+              className="automod-textarea-lg"
               placeholder={"youtube.com\ntwitter.com\ndiscord.com"}
               value={listToString(config.link_whitelist)}
               onChange={(e) => updList("link_whitelist", e.target.value)}
@@ -123,11 +123,11 @@ export default function ExtendedAutomodTab({ guildId }) {
           </div>
         </div>
 
-        <div className="field" style={{ marginTop: 8 }}>
+        <div className="field automod-field-gap">
           <label>Action for blacklisted links</label>
           <select
             value={config.link_action || "delete"}
-            style={{ width: 140 }}
+            className="automod-select-sm"
             onChange={(e) => upd({ link_action: e.target.value })}
           >
             {EX_ACTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
@@ -137,11 +137,11 @@ export default function ExtendedAutomodTab({ guildId }) {
 
       {/* ── Repeated Text ── */}
       <div className="panel">
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-          <h2 style={{ margin: 0, flex: 1 }}>Repeated Text Detection</h2>
+        <div className="panel-toggle-row">
+          <h2 className="panel-inline-title">Repeated Text Detection</h2>
           <Toggle checked={!!config.repeated_text} onChange={(v) => upd({ repeated_text: v })} />
         </div>
-        <p className="muted" style={{ marginBottom: 14 }}>
+        <p className="muted automod-panel-copy">
           Detect messages where the same line or word is repeated many times (common spam bot pattern).
         </p>
 
@@ -154,7 +154,7 @@ export default function ExtendedAutomodTab({ guildId }) {
                 min="2"
                 max="20"
                 value={config.repeated_text_count || 3}
-                style={{ width: 100 }}
+                className="automod-input-sm"
                 onChange={(e) => upd({ repeated_text_count: parseInt(e.target.value, 10) || 3 })}
               />
               <div className="hint">
@@ -165,7 +165,7 @@ export default function ExtendedAutomodTab({ guildId }) {
               <label>Action</label>
               <select
                 value={config.repeated_text_action || "delete"}
-                style={{ width: 140 }}
+                className="automod-select-sm"
                 onChange={(e) => upd({ repeated_text_action: e.target.value })}
               >
                 {EX_ACTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
@@ -177,11 +177,11 @@ export default function ExtendedAutomodTab({ guildId }) {
 
       {/* ── Emoji Spam ── */}
       <div className="panel">
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-          <h2 style={{ margin: 0, flex: 1 }}>Emoji Spam Detection</h2>
+        <div className="panel-toggle-row">
+          <h2 className="panel-inline-title">Emoji Spam Detection</h2>
           <Toggle checked={!!config.emoji_spam} onChange={(v) => upd({ emoji_spam: v })} />
         </div>
-        <p className="muted" style={{ marginBottom: 14 }}>
+        <p className="muted automod-panel-copy">
           Detect messages with excessive custom or unicode emoji usage.
         </p>
 
@@ -194,7 +194,7 @@ export default function ExtendedAutomodTab({ guildId }) {
                 min="1"
                 max="50"
                 value={config.emoji_max || 5}
-                style={{ width: 100 }}
+                className="automod-input-sm"
                 onChange={(e) => upd({ emoji_max: parseInt(e.target.value, 10) || 5 })}
               />
               <div className="hint">Messages with more emoji than this threshold will be flagged.</div>
@@ -203,7 +203,7 @@ export default function ExtendedAutomodTab({ guildId }) {
               <label>Action</label>
               <select
                 value={config.emoji_action || "delete"}
-                style={{ width: 140 }}
+                className="automod-select-sm"
                 onChange={(e) => upd({ emoji_action: e.target.value })}
               >
                 {EX_ACTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
@@ -215,11 +215,11 @@ export default function ExtendedAutomodTab({ guildId }) {
 
       {/* ── Blocked Message Emoji ── */}
       <div className="panel">
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-          <h2 style={{ margin: 0, flex: 1 }}>Blocked Message Emoji</h2>
+        <div className="panel-toggle-row">
+          <h2 className="panel-inline-title">Blocked Message Emoji</h2>
           <Toggle checked={!!config.blocked_emojis_enabled} onChange={(v) => upd({ blocked_emojis_enabled: v })} />
         </div>
-        <p className="muted" style={{ marginBottom: 14 }}>
+        <p className="muted automod-panel-copy">
           Act on messages containing specific unicode or custom emoji.
         </p>
 
@@ -228,7 +228,7 @@ export default function ExtendedAutomodTab({ guildId }) {
             <div className="field">
               <label>Blocked emoji (one per line)</label>
               <textarea
-                style={{ minHeight: 110 }}
+                className="automod-textarea-md"
                 placeholder={"😀\n<:bademoji:123456789012345678>\n123456789012345678"}
                 value={listToString(config.blocked_emojis)}
                 onChange={(e) => updList("blocked_emojis", e.target.value)}
@@ -239,7 +239,7 @@ export default function ExtendedAutomodTab({ guildId }) {
               <label>Action</label>
               <select
                 value={config.blocked_emojis_action || "delete"}
-                style={{ width: 140 }}
+                className="automod-select-sm"
                 onChange={(e) => upd({ blocked_emojis_action: e.target.value })}
               >
                 {EX_ACTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
@@ -251,11 +251,11 @@ export default function ExtendedAutomodTab({ guildId }) {
 
       {/* ── Blocked Reaction Emoji ── */}
       <div className="panel">
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-          <h2 style={{ margin: 0, flex: 1 }}>Blocked Reaction Emoji</h2>
+        <div className="panel-toggle-row">
+          <h2 className="panel-inline-title">Blocked Reaction Emoji</h2>
           <Toggle checked={!!config.blocked_reaction_emojis_enabled} onChange={(v) => upd({ blocked_reaction_emojis_enabled: v })} />
         </div>
-        <p className="muted" style={{ marginBottom: 14 }}>
+        <p className="muted automod-panel-copy">
           Remove specific reactions and optionally punish the user who reacted.
         </p>
 
@@ -264,7 +264,7 @@ export default function ExtendedAutomodTab({ guildId }) {
             <div className="field">
               <label>Blocked reaction emoji (one per line)</label>
               <textarea
-                style={{ minHeight: 110 }}
+                className="automod-textarea-md"
                 placeholder={"💀\n<:blocked:123456789012345678>\nblocked:123456789012345678"}
                 value={listToString(config.blocked_reaction_emojis)}
                 onChange={(e) => updList("blocked_reaction_emojis", e.target.value)}
@@ -275,7 +275,7 @@ export default function ExtendedAutomodTab({ guildId }) {
               <label>Action</label>
               <select
                 value={config.blocked_reaction_action || "delete"}
-                style={{ width: 140 }}
+                className="automod-select-sm"
                 onChange={(e) => upd({ blocked_reaction_action: e.target.value })}
               >
                 {REACTION_ACTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
@@ -287,11 +287,11 @@ export default function ExtendedAutomodTab({ guildId }) {
 
       {/* ── Zalgo / Unicode Abuse ── */}
       <div className="panel">
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-          <h2 style={{ margin: 0, flex: 1 }}>Zalgo / Unicode Abuse</h2>
+        <div className="panel-toggle-row">
+          <h2 className="panel-inline-title">Zalgo / Unicode Abuse</h2>
           <Toggle checked={!!config.zalgo_enabled} onChange={(v) => upd({ zalgo_enabled: v })} />
         </div>
-        <p className="muted" style={{ marginBottom: 14 }}>
+        <p className="muted automod-panel-copy">
           Detect messages with excessive combining Unicode characters (zalgo text) that can distort message display.
         </p>
 
@@ -300,7 +300,7 @@ export default function ExtendedAutomodTab({ guildId }) {
             <label>Action</label>
             <select
               value={config.zalgo_action || "delete"}
-              style={{ width: 140 }}
+              className="automod-select-sm"
               onChange={(e) => upd({ zalgo_action: e.target.value })}
             >
               {EX_ACTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
@@ -312,7 +312,7 @@ export default function ExtendedAutomodTab({ guildId }) {
         )}
       </div>
 
-      <div className="panel" style={{ textAlign: "right" }}>
+      <div className="panel automod-save-panel">
         <button className="btn green" onClick={save}>
           <Save /> <span>Save All Settings</span>
         </button>

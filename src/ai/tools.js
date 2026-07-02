@@ -15,7 +15,9 @@ function getToolPermission(toolName) {
   } catch { return null; }
 }
 
-function checkToolAccess(toolName, member) {
+const ALPHA_TOOLS = new Set(["create_role", "edit_role", "delete_role", "delete_channel", "set_channel_permissions", "create_category"]);
+
+async function checkToolAccess(toolName, member) {
   if (!member) return false;
   const perm = getToolPermission(toolName);
   if (!perm) {
@@ -42,6 +44,107 @@ function checkToolAccess(toolName, member) {
       return member.permissions.has(PermissionFlagsBits.Administrator);
     case "owner":
       return OWNER_IDS.has(member.id);
+    case "search_members": {
+      if (!guild) return "Error: this tool requires a server context.";
+      
+      if (!args.query || typeof args.query !== "string") return `Error: Search query is required.`;
+      const sq = validation.sanitizeString(args.query, 100).toLowerCase();
+      const limit = Math.min(Math.max(args.limit || 10, 1), 25);
+      const members = guild.members.cache.filter(m => {
+        const name = (m.displayName || m.user.username || "").toLowerCase();
+        const uname = (m.user.username || "").toLowerCase();
+        return name.includes(sq) || uname.includes(sq);
+      }).first(limit);
+      if (members.length === 0) return "No members found matching that query.";
+      return JSON.stringify(members.map(m => ({
+        id: m.id,
+        username: m.user.username,
+        displayName: m.displayName,
+        isBot: m.user.bot,
+        topRoles: m.roles.cache.filter(r => r.id !== guild.id).sort((a, b) => b.position - a.position).slice(0, 3).map(r => r.name),
+        joinedAt: m.joinedAt?.toISOString(),
+      })), null, 2);
+    }
+
+    case "get_role_members": {
+      if (!guild) return "Error: this tool requires a server context.";
+      
+      if (!validation.isValidRoleId(args.roleId)) return `Error: Invalid role ID format.`;
+      const role = guild.roles.cache.get(args.roleId);
+      if (!role) return "Error: Role not found.";
+      const limit = Math.min(Math.max(args.limit || 20, 1), 100);
+      const members = [...role.members.values()].slice(0, limit);
+      return JSON.stringify({
+        roleName: role.name,
+        roleId: role.id,
+        color: role.hexColor,
+        totalMembers: role.members.size,
+        showing: members.length,
+        members: members.map(m => ({
+          id: m.id,
+          username: m.user.username,
+          displayName: m.displayName,
+          isBot: m.user.bot,
+          joinedAt: m.joinedAt?.toISOString(),
+        })),
+      }, null, 2);
+    }
+
+    case "get_user_avatar": {
+      if (!validation.isValidUserId(args.userId)) return `Error: Invalid user ID format.`;
+      const sizes = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
+      const size = sizes.includes(args.size) ? args.size : 256;
+      let member = null;
+      let user = null;
+      if (guild) member = await safe.orNull(guild.members.fetch(args.userId), "tool: fetch avatar member");
+      if (member) user = member.user;
+      else user = await safe.orNull(message.client.users.fetch(args.userId), "tool: fetch avatar user");
+      if (!user) return "Error: User not found.";
+      const avatarUrl = user.displayAvatarURL({ size, forceStatic: false });
+      return JSON.stringify({
+        username: user.username,
+        id: user.id,
+        avatarUrl: avatarUrl,
+        size: size,
+        isAnimated: user.avatar?.startsWith("a_") || false,
+        defaultAvatarUrl: user.defaultAvatarURL,
+      }, null, 2);
+    }
+
+    case "get_user_presence": {
+      if (!validation.isValidUserId(args.userId)) return `Error: Invalid user ID format.`;
+      if (!guild) return "Error: this tool requires a server context.";
+      const member = await safe.orNull(guild.members.fetch(args.userId), "tool: fetch presence member");
+      if (!member) return "Error: User not found in this guild.";
+      const presence = member.presence;
+      if (!presence) {
+        return JSON.stringify({
+          userId: args.userId,
+          username: member.user.username,
+          displayName: member.displayName,
+          status: "offline",
+          activities: [],
+          customStatus: null,
+          clientStatus: null,
+        }, null, 2);
+      }
+      const customStatus = presence.activities.find(a => a.type === 4)?.state || null;
+      return JSON.stringify({
+        userId: args.userId,
+        username: member.user.username,
+        displayName: member.displayName,
+        status: presence.status,
+        activities: presence.activities.filter(a => a.type !== 4).map(a => ({
+          name: a.name,
+          type: ["playing", "streaming", "listening", "watching", "custom", "competing"][a.type] || "unknown",
+          details: a.details || null,
+          state: a.state || null,
+        })),
+        customStatus: customStatus,
+        clientStatus: presence.clientStatus || null,
+      }, null, 2);
+    }
+
     default: return false;
   }
 }
@@ -338,7 +441,170 @@ const TOOL_SCHEMAS = [
       },
       required: ["url"]
     }
-  }
+  },
+  {
+    name: "search_members",
+    description: "Search server members by username, display name, or nickname. Returns matching member IDs, usernames, display names, and top roles.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "The search query to match against member names (partial matches work)." },
+        limit: { type: "integer", description: "Maximum results to return (default 10, max 25).", minimum: 1, maximum: 25 }
+      },
+      required: ["query"]
+    }
+  },
+  {
+    name: "get_role_members",
+    description: "Get all members who have a specific role, including their IDs, usernames, and display names.",
+    parameters: {
+      type: "object",
+      properties: {
+        roleId: { type: "string", description: "The ID of the role to look up." },
+        limit: { type: "integer", description: "Maximum members to return (default 20, max 100).", minimum: 1, maximum: 100 }
+      },
+      required: ["roleId"]
+    }
+  },
+  {
+    name: "get_user_avatar",
+    description: "Get a user's avatar URL at various sizes. Returns the direct image URL.",
+    parameters: {
+      type: "object",
+      properties: {
+        userId: { type: "string", description: "The Discord user ID." },
+        size: { type: "integer", description: "Image size in pixels (powers of 2: 16, 32, 64, 128, 256, 512, 1024, 2048, 4096). Default 256.", minimum: 16, maximum: 4096 }
+      },
+      required: ["userId"]
+    }
+  },
+  {
+    name: "get_user_presence",
+    description: "Get a user's current presence/status: online/offline/idle/dnd, custom status text, and current activity (game, streaming, listening, watching).",
+    parameters: {
+      type: "object",
+      properties: {
+        userId: { type: "string", description: "The Discord user ID." }
+      },
+      required: ["userId"]
+    }
+  },
+  {
+    name: "send_voice_message",
+    description: "Send a voice message in a voice channel. The text will be spoken via TTS. Requires an active voice session in the specified channel.",
+    parameters: {
+      type: "object",
+      properties: {
+        channelId: { type: "string", description: "The voice channel ID to speak in." },
+        text: { type: "string", description: "The text to speak." },
+      },
+      required: ["channelId", "text"]
+    }
+  },
+  {
+    name: "voice_set_volume",
+    description: "Change the bot's speaking volume in the current voice session.",
+    parameters: {
+      type: "object",
+      properties: {
+        level: { type: "number", description: "Volume level from 0.0 (silent) to 2.0 (double). Default 1.0.", minimum: 0, maximum: 2 }
+      },
+      required: ["level"]
+    }
+  },
+  {
+    name: "voice_set_tts_voice",
+    description: "Change the TTS voice used for speaking. Common options: en-US-EmmaMultilingualNeural (default), en-US-GuyNeural, en-US-JennyNeural, en-GB-SoniaNeural.",
+    parameters: {
+      type: "object",
+      properties: {
+        voice: { type: "string", description: "The TTS voice ID to use." }
+      },
+      required: ["voice"]
+    }
+  },
+  // ── Alpha experiment tools ────────────────────────────────────────────
+  {
+    name: "create_role",
+    description: "Create a new role in the server. You must provide a name. Optionally specify color (hex), hoist, mentionable, and permission bits.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "The name of the new role." },
+        color: { type: "string", description: "Hex color code for the role (e.g. #ff0000). Optional." },
+        hoist: { type: "boolean", description: "Whether to display the role separately in the sidebar. Default false." },
+        mentionable: { type: "boolean", description: "Whether the role can be mentioned by anyone. Default false." },
+        permissions: { type: "string", description: "Optional permission flags (comma-separated, e.g. 'SendMessages,ReadMessageHistory')." }
+      },
+      required: ["name"]
+    }
+  },
+  {
+    name: "edit_role",
+    description: "Edit an existing role's properties. You must provide the role ID and at least one property to change.",
+    parameters: {
+      type: "object",
+      properties: {
+        roleId: { type: "string", description: "The ID of the role to edit." },
+        name: { type: "string", description: "New name for the role." },
+        color: { type: "string", description: "New hex color code (e.g. #00ff00). Pass null to clear." },
+        hoist: { type: "boolean", description: "Whether to display the role separately." },
+        mentionable: { type: "boolean", description: "Whether the role can be mentioned by anyone." },
+        permissions: { type: "string", description: "New permission flags (comma-separated)." }
+      },
+      required: ["roleId"]
+    }
+  },
+  {
+    name: "delete_role",
+    description: "Delete a role from the server. Cannot delete default @everyone role or managed roles (e.g. bot roles, integration roles).",
+    parameters: {
+      type: "object",
+      properties: {
+        roleId: { type: "string", description: "The ID of the role to delete." }
+      },
+      required: ["roleId"]
+    }
+  },
+  {
+    name: "delete_channel",
+    description: "Delete a text or voice channel. Cannot delete default system channels.",
+    parameters: {
+      type: "object",
+      properties: {
+        channelId: { type: "string", description: "The ID of the channel to delete." },
+        reason: { type: "string", description: "Optional audit log reason for the deletion." }
+      },
+      required: ["channelId"]
+    }
+  },
+  {
+    name: "set_channel_permissions",
+    description: "Set permissions for a role or user in a specific channel using Discord permission overwrites. Specify roleId or userId, and the permissions to allow or deny.",
+    parameters: {
+      type: "object",
+      properties: {
+        channelId: { type: "string", description: "The ID of the channel." },
+        roleId: { type: "string", description: "ID of the role to set permissions for (omit if setting user permissions)." },
+        userId: { type: "string", description: "ID of the user to set permissions for (omit if setting role permissions)." },
+        allow: { type: "string", description: "Comma-separated permission flags to allow (e.g. 'SendMessages,ReadMessageHistory')." },
+        deny: { type: "string", description: "Comma-separated permission flags to deny." }
+      },
+      required: ["channelId"]
+    }
+  },
+  {
+    name: "create_category",
+    description: "Create a new channel category. Optionally set its position via a reference channel ID.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "The name of the new category." },
+        position: { type: "integer", description: "Optional position index (lower = higher in the list)." }
+      },
+      required: ["name"]
+    }
+  },
 ];
 
 function getOpenAiTools() {
@@ -520,15 +786,20 @@ async function executeTool(name, args, ctx, message) {
 
   // DM guard: block guild-only tools in direct messages. Memory tools are safe
   // in DMs, but they are scoped to the DM user only, never to a shared server bucket.
-  const DM_SAFE_TOOLS = new Set(["search_web", "scrape_web_page", "browse_page", "add_memory", "forget_memory"]);
+  const DM_SAFE_TOOLS = new Set(["search_web", "scrape_web_page", "browse_page", "add_memory", "forget_memory", "get_user_avatar"]);
   if (!guild && !DM_SAFE_TOOLS.has(name)) {
     return `Error: the "${name}" tool requires a server context and is not available in direct messages.`;
+  }
+
+  // Alpha experiments gating: tools that require activation
+  if (ALPHA_TOOLS.has(name) && !data.isAlphaActivated(message.author.id, guild?.id)) {
+    return `Error: the "${name}" tool is an experimental feature and requires alpha experiments activation. Use \`/experiments enable\` in this server to activate.`;
   }
 
   try {
     switch (name) {
       case "send_message": {
-        if (!checkToolAccess("send_message", message.member)) return "Permission denied: You need moderator permissions to send messages via AI.";
+        if (!await checkToolAccess("send_message", message.member)) return "Permission denied: You need moderator permissions to send messages via AI.";
         if (!validation.isValidChannelId(args.channelId)) return `Error: Invalid channel ID format.`;
         if (!args.content || typeof args.content !== "string") return `Error: Message content is required and must be a string.`;
         const sanitizedContent = validation.sanitizeString(args.content, 2000);
@@ -541,7 +812,7 @@ async function executeTool(name, args, ctx, message) {
       }
 
     case "get_channel_history": {
-      if (!checkToolAccess("get_channel_history", message.member)) return "Permission denied: You need moderator permissions to read channel history via AI.";
+      if (!await checkToolAccess("get_channel_history", message.member)) return "Permission denied: You need moderator permissions to read channel history via AI.";
       if (!validation.isValidChannelId(args.channelId)) return `Error: Invalid channel ID format.`;
       const channel = await safe.orNull(guild.channels.fetch(args.channelId), "tool: fetch channel history");
       if (!channel || channel.type !== 0) return `Error: channel ${args.channelId} is not a valid text channel.`;
@@ -561,26 +832,48 @@ async function executeTool(name, args, ctx, message) {
       return JSON.stringify(list, null, 2);
     }
 
-    case "get_user_info": {
+        case "get_user_info": {
       if (!validation.isValidUserId(args.userId)) return `Error: Invalid user ID format.`;
       const member = await safe.orNull(guild.members.fetch(args.userId), `tool: fetch user ${args.userId}`);
       if (!member) return `Error: User with ID ${args.userId} not found in this guild.`;
       const warnings = data.getWarnings(guild.id, args.userId);
+      const presence = member.presence;
+      const customStatus = presence?.activities?.find(a => a.type === 4)?.state || null;
+      const activity = presence?.activities?.filter(a => a.type !== 4)?.[0] || null;
       return JSON.stringify({
         username: member.user.username,
         displayName: member.displayName,
+        globalName: member.user.globalName,
         id: member.id,
-        joinedAt: member.joinedAt,
-        createdAt: member.user.createdAt,
-        roles: member.roles.cache.map(r => r.name),
+        avatarUrl: member.user.displayAvatarURL({ size: 256, forceStatic: false }),
         isBot: member.user.bot,
+        createdAt: member.user.createdAt,
+        joinedAt: member.joinedAt,
+        joinedDaysAgo: member.joinedAt ? Math.floor((Date.now() - member.joinedAt.getTime()) / 86400000) : null,
+        isBoosting: member.premiumSince ? true : false,
+        boostingSince: member.premiumSince || null,
+        roles: member.roles.cache.filter(r => r.id !== guild.id).map(r => ({
+          id: r.id,
+          name: r.name,
+          color: r.hexColor,
+        })),
+        topRole: member.roles.highest.name === "@everyone" ? null : member.roles.highest.name,
+        permissions: member.permissions.toArray().filter(p => ["Administrator", "ManageGuild", "ModerateMembers", "BanMembers", "KickMembers", "ManageMessages", "ManageRoles", "ManageChannels", "ManageNicknames", "ManageWebhooks"].includes(p)),
+        status: presence?.status || "offline",
+        customStatus: customStatus,
+        activity: activity ? {
+          name: activity.name,
+          type: ["playing", "streaming", "listening", "watching", "custom", "competing"][activity.type] || "unknown",
+          details: activity.details,
+          state: activity.state,
+        } : null,
         warningCount: warnings.length,
-        warnings: warnings.map(w => ({ reason: w.reason, by: w.by, timestamp: new Date(w.timestamp).toISOString() }))
+        warnings: warnings.map(w => ({ reason: w.reason, by: w.by, timestamp: new Date(w.timestamp).toISOString() })),
       }, null, 2);
     }
 
     case "warn_member": {
-      if (!checkToolAccess("warn_member", message.member)) return "Permission denied: You need moderator permissions to warn members via AI.";
+      if (!await checkToolAccess("warn_member", message.member)) return "Permission denied: You need moderator permissions to warn members via AI.";
       if (!validation.isValidUserId(args.userId)) return `Error: Invalid user ID format.`;
       if (!args.reason || typeof args.reason !== "string") return `Error: Reason is required and must be a string.`;
       const sanitizedReason = validation.sanitizeString(args.reason, 500);
@@ -592,7 +885,7 @@ async function executeTool(name, args, ctx, message) {
     }
 
     case "mute_member": {
-      if (!checkToolAccess("mute_member", message.member)) return "Permission denied: You need moderator permissions to mute members via AI.";
+      if (!await checkToolAccess("mute_member", message.member)) return "Permission denied: You need moderator permissions to mute members via AI.";
       if (!validation.isValidUserId(args.userId)) return `Error: Invalid user ID format.`;
       if (!args.reason || typeof args.reason !== "string") return `Error: Reason is required and must be a string.`;
       const sanitizedReason = validation.sanitizeString(args.reason, 500);
@@ -607,7 +900,7 @@ async function executeTool(name, args, ctx, message) {
     }
 
     case "kick_member": {
-      if (!checkToolAccess("kick_member", message.member)) return "Permission denied: You need admin permissions to kick members via AI.";
+      if (!await checkToolAccess("kick_member", message.member)) return "Permission denied: You need admin permissions to kick members via AI.";
       if (!validation.isValidUserId(args.userId)) return `Error: Invalid user ID format.`;
       if (!args.reason || typeof args.reason !== "string") return `Error: Reason is required and must be a string.`;
       const sanitizedReason = validation.sanitizeString(args.reason, 500);
@@ -621,7 +914,7 @@ async function executeTool(name, args, ctx, message) {
     }
 
     case "ban_member": {
-      if (!checkToolAccess("ban_member", message.member)) return "Permission denied: You need admin permissions to ban members via AI.";
+      if (!await checkToolAccess("ban_member", message.member)) return "Permission denied: You need admin permissions to ban members via AI.";
       if (!validation.isValidUserId(args.userId)) return `Error: Invalid user ID format.`;
       if (!args.reason || typeof args.reason !== "string") return `Error: Reason is required and must be a string.`;
       const sanitizedReason = validation.sanitizeString(args.reason, 500);
@@ -676,7 +969,7 @@ async function executeTool(name, args, ctx, message) {
 
     case "list_channels": {
       if (!guild) return "Error: this tool requires a server context.";
-      if (!checkToolAccess("list_channels", message.member)) return "Permission denied: You need moderator permissions to list channels via AI.";
+      if (!await checkToolAccess("list_channels", message.member)) return "Permission denied: You need moderator permissions to list channels via AI.";
       const textChannels = [...guild.channels.cache.values()]
         .filter(c => c.type === 0 || c.type === 5 || c.type === 15)
         .sort((a, b) => (a.rawPosition ?? 0) - (b.rawPosition ?? 0));
@@ -691,7 +984,7 @@ async function executeTool(name, args, ctx, message) {
 
     case "list_roles": {
       if (!guild) return "Error: this tool requires a server context.";
-      if (!checkToolAccess("list_roles", message.member)) return "Permission denied: You need moderator permissions to list roles via AI.";
+      if (!await checkToolAccess("list_roles", message.member)) return "Permission denied: You need moderator permissions to list roles via AI.";
       const rolesList = [...guild.roles.cache.values()]
         .filter(r => r.name !== "@everyone")
         .sort((a, b) => b.position - a.position);
@@ -707,7 +1000,7 @@ async function executeTool(name, args, ctx, message) {
 
     case "get_server_info": {
       if (!guild) return "Error: this tool requires a server context.";
-      if (!checkToolAccess("get_server_info", message.member)) return "Permission denied: You need moderator permissions to get server info via AI.";
+      if (!await checkToolAccess("get_server_info", message.member)) return "Permission denied: You need moderator permissions to get server info via AI.";
       const owner = await safe.orNull(guild.fetchOwner(), "tool: fetch owner");
       return JSON.stringify({
         name: guild.name,
@@ -725,7 +1018,7 @@ async function executeTool(name, args, ctx, message) {
     }
 
     case "create_invite": {
-      if (!checkToolAccess("create_invite", message.member)) return "Permission denied: You need moderator permissions to create invites via AI.";
+      if (!await checkToolAccess("create_invite", message.member)) return "Permission denied: You need moderator permissions to create invites via AI.";
       if (args.channelId && !validation.isValidChannelId(args.channelId)) return `Error: Invalid channel ID format.`;
       if (args.maxAgeSeconds !== undefined && (!Number.isInteger(args.maxAgeSeconds) || !validation.isInRange(args.maxAgeSeconds, 0, 604800))) return `Error: maxAgeSeconds must be an integer between 0 and 604800 (1 week).`;
       if (args.maxUses !== undefined && (!Number.isInteger(args.maxUses) || !validation.isInRange(args.maxUses, 0, 100))) return `Error: maxUses must be an integer between 0 and 100.`;
@@ -740,7 +1033,7 @@ async function executeTool(name, args, ctx, message) {
     }
 
     case "pin_message": {
-      if (!checkToolAccess("pin_message", message.member)) return "Permission denied: You need moderator permissions to pin messages via AI.";
+      if (!await checkToolAccess("pin_message", message.member)) return "Permission denied: You need moderator permissions to pin messages via AI.";
       if (!validation.isValidChannelId(args.channelId)) return `Error: Invalid channel ID format.`;
       if (!validation.isValidMessageId(args.messageId)) return `Error: Invalid message ID format.`;
       const pinCh = await safe.orNull(guild.channels.fetch(args.channelId), "tool: fetch pin channel");
@@ -758,7 +1051,7 @@ async function executeTool(name, args, ctx, message) {
     }
 
     case "unpin_message": {
-      if (!checkToolAccess("unpin_message", message.member)) return "Permission denied: You need moderator permissions to unpin messages via AI.";
+      if (!await checkToolAccess("unpin_message", message.member)) return "Permission denied: You need moderator permissions to unpin messages via AI.";
       if (!validation.isValidChannelId(args.channelId)) return `Error: Invalid channel ID format.`;
       if (!validation.isValidMessageId(args.messageId)) return `Error: Invalid message ID format.`;
       const unpinCh = await safe.orNull(guild.channels.fetch(args.channelId), "tool: fetch unpin channel");
@@ -776,7 +1069,7 @@ async function executeTool(name, args, ctx, message) {
     }
 
     case "add_role": {
-      if (!checkToolAccess("add_role", message.member)) return "Permission denied: You need moderator permissions to manage roles via AI.";
+      if (!await checkToolAccess("add_role", message.member)) return "Permission denied: You need moderator permissions to manage roles via AI.";
       if (!validation.isValidUserId(args.userId)) return `Error: Invalid user ID format.`;
       if (!validation.isValidRoleId(args.roleId)) return `Error: Invalid role ID format.`;
       const addRoleMember = await safe.orNull(guild.members.fetch(args.userId), "tool: fetch member add_role");
@@ -794,7 +1087,7 @@ async function executeTool(name, args, ctx, message) {
     }
 
     case "remove_role": {
-      if (!checkToolAccess("remove_role", message.member)) return "Permission denied: You need moderator permissions to manage roles via AI.";
+      if (!await checkToolAccess("remove_role", message.member)) return "Permission denied: You need moderator permissions to manage roles via AI.";
       if (!validation.isValidUserId(args.userId)) return `Error: Invalid user ID format.`;
       if (!validation.isValidRoleId(args.roleId)) return `Error: Invalid role ID format.`;
       const remRoleMember = await safe.orNull(guild.members.fetch(args.userId), "tool: fetch member remove_role");
@@ -812,7 +1105,7 @@ async function executeTool(name, args, ctx, message) {
     }
 
     case "create_channel": {
-      if (!checkToolAccess("create_channel", message.member)) return "Permission denied: You need admin permissions to create channels via AI.";
+      if (!await checkToolAccess("create_channel", message.member)) return "Permission denied: You need admin permissions to create channels via AI.";
       if (!guild.members.me.permissions.has(PermissionFlagsBits.ManageChannels)) return "Error: bot lacks Manage Channels permission.";
       if (!args.name || typeof args.name !== "string") return `Error: Channel name is required and must be a string.`;
       const sanitizedName = validation.sanitizeString(args.name, 100).toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9_-]/g, "").slice(0, 100);
@@ -832,7 +1125,7 @@ async function executeTool(name, args, ctx, message) {
     }
 
     case "purge_messages": {
-      if (!checkToolAccess("purge_messages", message.member)) return "Permission denied: You need moderator permissions to purge messages via AI.";
+      if (!await checkToolAccess("purge_messages", message.member)) return "Permission denied: You need moderator permissions to purge messages via AI.";
       if (!validation.isValidChannelId(args.channelId)) return `Error: Invalid channel ID format.`;
       const count = Math.min(Math.max(Math.floor(args.count) || 10, 1), 100);
       const purgeCh = await safe.orNull(guild.channels.fetch(args.channelId), "tool: fetch purge channel");
@@ -847,7 +1140,7 @@ async function executeTool(name, args, ctx, message) {
     }
 
     case "slowmode_set": {
-      if (!checkToolAccess("slowmode_set", message.member)) return "Permission denied: You need moderator permissions to set slowmode via AI.";
+      if (!await checkToolAccess("slowmode_set", message.member)) return "Permission denied: You need moderator permissions to set slowmode via AI.";
       if (!validation.isValidChannelId(args.channelId)) return `Error: Invalid channel ID format.`;
       if (!Number.isInteger(args.seconds) || !validation.isInRange(args.seconds, 0, 21600)) return `Error: seconds must be an integer between 0 and 21600 (6 hours).`;
       const slowCh = await safe.orNull(guild.channels.fetch(args.channelId), "tool: fetch slowmode channel");
@@ -861,7 +1154,7 @@ async function executeTool(name, args, ctx, message) {
     }
 
     case "edit_message": {
-      if (!checkToolAccess("edit_message", message.member)) return "Permission denied: You need moderator permissions to edit messages via AI.";
+      if (!await checkToolAccess("edit_message", message.member)) return "Permission denied: You need moderator permissions to edit messages via AI.";
       if (!validation.isValidChannelId(args.channelId)) return `Error: Invalid channel ID format.`;
       if (!validation.isValidMessageId(args.messageId)) return `Error: Invalid message ID format.`;
       if (!args.content || typeof args.content !== "string") return `Error: Message content is required and must be a string.`;
@@ -880,7 +1173,7 @@ async function executeTool(name, args, ctx, message) {
     }
 
     case "react_to_message": {
-      if (!checkToolAccess("react_to_message", message.member)) return "Permission denied: You need moderator permissions to react to messages via AI.";
+      if (!await checkToolAccess("react_to_message", message.member)) return "Permission denied: You need moderator permissions to react to messages via AI.";
       if (!validation.isValidChannelId(args.channelId)) return `Error: Invalid channel ID format.`;
       if (!validation.isValidMessageId(args.messageId)) return `Error: Invalid message ID format.`;
       if (!args.emoji || typeof args.emoji !== "string") return `Error: Emoji is required and must be a string.`;
@@ -901,6 +1194,140 @@ async function executeTool(name, args, ctx, message) {
       if (!args.url || typeof args.url !== "string") return `Error: URL is required and must be a string.`;
       if (!validation.isValidUrl(args.url)) return `Error: Invalid URL format.`;
       return browsePage(args.url);
+    }
+
+    case "send_voice_message": {
+      if (!await checkToolAccess("send_voice_message", message.member)) return "Permission denied: You need moderator permissions to speak in voice channels.";
+      if (!args.channelId || !validation.isValidChannelId(args.channelId)) return `Error: Invalid channel ID format.`;
+      if (!args.text || typeof args.text !== "string") return `Error: Text is required.`;
+      const vm = ctx?.voiceManager;
+      if (!vm) return `Error: Voice system not available.`;
+      const spoken = await vm.speak(guild.id, args.channelId, args.text);
+      if (!spoken) return `Error: No active voice session in that channel.`;
+      return `Speaking in voice channel: ${args.text.slice(0, 80)}`;
+    }
+
+    case "voice_set_volume": {
+      if (typeof args.level !== "number" || args.level < 0 || args.level > 2) return `Error: Volume must be a number between 0.0 and 2.0.`;
+      const vmVol = ctx?.voiceManager;
+      if (!vmVol) return `Error: Voice system not available.`;
+      // Volume is managed per-session — store in settings for now
+      try { settings.set(`voiceVolume`, args.level); } catch {}
+      return `Volume set to ${args.level}. This will apply to the next voice session.`;
+    }
+
+    case "voice_set_tts_voice": {
+      if (!args.voice || typeof args.voice !== "string") return `Error: Voice ID is required.`;
+      try { settings.set(`voiceTTSVoice`, args.voice); } catch {}
+      return `TTS voice changed to ${args.voice}. This will apply to the next voice session.`;
+    }
+
+    // ── Alpha experiment tools ───────────────────────────────────────────
+
+    case "create_role": {
+      if (!args.name || typeof args.name !== "string") return `Error: Role name is required.`;
+      if (!guild.members.me.permissions.has(PermissionFlagsBits.ManageRoles)) return "Error: bot lacks Manage Roles permission.";
+      const sanitizedName = validation.sanitizeString(args.name, 100).slice(0, 100);
+      if (!sanitizedName) return "Error: Invalid role name.";
+      const opts = { name: sanitizedName, reason: "Created via AI tool (alpha)" };
+      if (args.color && typeof args.color === "string" && /^#[0-9a-f]{6}$/i.test(args.color)) opts.color = parseInt(args.color.slice(1), 16);
+      if (args.hoist === true) opts.hoist = true;
+      if (args.mentionable === true) opts.mentionable = true;
+      try {
+        const role = await guild.roles.create(opts);
+        return `Created role "${role.name}" (ID: ${role.id}).`;
+      } catch (err) {
+        return `Error: failed to create role — ${err.message}`;
+      }
+    }
+
+    case "edit_role": {
+      if (!args.roleId) return "Error: roleId is required.";
+      if (!guild.members.me.permissions.has(PermissionFlagsBits.ManageRoles)) return "Error: bot lacks Manage Roles permission.";
+      const role = guild.roles.cache.get(args.roleId);
+      if (!role) return "Error: role not found.";
+      if (role.position >= guild.members.me.roles.highest.position) return "Error: role is above bot's highest role.";
+      if (role.managed) return "Error: cannot edit managed roles.";
+      const edits = {};
+      if (args.name && typeof args.name === "string") edits.name = validation.sanitizeString(args.name, 100).slice(0, 100);
+      if (args.color !== undefined) {
+        edits.color = (args.color === null || args.color === "") ? 0 : (/^#[0-9a-f]{6}$/i.test(args.color) ? parseInt(args.color.slice(1), 16) : undefined);
+      }
+      if (args.hoist !== undefined) edits.hoist = args.hoist === true;
+      if (args.mentionable !== undefined) edits.mentionable = args.mentionable === true;
+      try {
+        await role.edit(edits);
+        return `Edited role "${role.name}".`;
+      } catch (err) {
+        return `Error: failed to edit role — ${err.message}`;
+      }
+    }
+
+    case "delete_role": {
+      if (!args.roleId) return "Error: roleId is required.";
+      if (!guild.members.me.permissions.has(PermissionFlagsBits.ManageRoles)) return "Error: bot lacks Manage Roles permission.";
+      const role = guild.roles.cache.get(args.roleId);
+      if (!role) return "Error: role not found.";
+      if (role.managed) return "Error: cannot delete managed roles.";
+      if (role.id === guild.id) return "Error: cannot delete the @everyone role.";
+      if (role.position >= guild.members.me.roles.highest.position) return "Error: role is above bot's highest role.";
+      try {
+        await role.delete("Deleted via AI tool (alpha)");
+        return `Deleted role "${role.name}".`;
+      } catch (err) {
+        return `Error: failed to delete role — ${err.message}`;
+      }
+    }
+
+    case "delete_channel": {
+      if (!args.channelId) return "Error: channelId is required.";
+      if (!guild.members.me.permissions.has(PermissionFlagsBits.ManageChannels)) return "Error: bot lacks Manage Channels permission.";
+      if (!validation.isValidChannelId(args.channelId)) return "Error: Invalid channel ID.";
+      const ch = await safe.orNull(guild.channels.fetch(args.channelId), "tool: delete channel");
+      if (!ch) return "Error: channel not found.";
+      try {
+        const chName = ch.name;
+        await ch.delete(args.reason || "Deleted via AI tool (alpha)");
+        return `Deleted channel #${chName}.`;
+      } catch (err) {
+        return `Error: failed to delete channel — ${err.message}`;
+      }
+    }
+
+    case "set_channel_permissions": {
+      if (!args.channelId) return "Error: channelId is required.";
+      if (!guild.members.me.permissions.has(PermissionFlagsBits.ManageChannels) && !guild.members.me.permissions.has(PermissionFlagsBits.ManageRoles)) return "Error: bot lacks Manage Channels or Manage Roles permission.";
+      if (!validation.isValidChannelId(args.channelId)) return "Error: Invalid channel ID.";
+      const permCh = await safe.orNull(guild.channels.fetch(args.channelId), "tool: fetch perm channel");
+      if (!permCh) return "Error: channel not found.";
+      if (typeof permCh.permissionOverwrites?.create !== "function") return "Error: channel does not support permission overwrites.";
+      if (!args.roleId && !args.userId) return "Error: specify roleId or userId.";
+      const targetId = args.roleId || args.userId;
+      const targetType = args.roleId ? 0 : 1;
+      const allow = args.allow ? PermissionFlagsBits[args.allow] || 0n : 0n;
+      const deny = args.deny ? PermissionFlagsBits[args.deny] || 0n : 0n;
+      try {
+        await permCh.permissionOverwrites.create(targetId, { allow, deny }, { reason: "Set via AI tool (alpha)" });
+        const label = args.roleId ? `role ${guild.roles.cache.get(args.roleId)?.name || args.roleId}` : `user <@${args.userId}>`;
+        return `Updated permissions for ${label} in #${permCh.name}.`;
+      } catch (err) {
+        return `Error: failed to set permissions — ${err.message}`;
+      }
+    }
+
+    case "create_category": {
+      if (!args.name || typeof args.name !== "string") return "Error: Category name is required.";
+      if (!guild.members.me.permissions.has(PermissionFlagsBits.ManageChannels)) return "Error: bot lacks Manage Channels permission.";
+      const sanitizedCatName = validation.sanitizeString(args.name, 100).toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9_-]/g, "").slice(0, 100);
+      if (!sanitizedCatName) return "Error: Invalid category name.";
+      const catOpts = { name: sanitizedCatName, type: 4, reason: "Created via AI tool (alpha)" };
+      if (Number.isInteger(args.position)) catOpts.position = args.position;
+      try {
+        const cat = await guild.channels.create(catOpts);
+        return `Created category "${cat.name}" (ID: ${cat.id}).`;
+      } catch (err) {
+        return `Error: failed to create category — ${err.message}`;
+      }
     }
 
     default:

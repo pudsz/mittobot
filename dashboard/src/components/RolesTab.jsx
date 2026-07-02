@@ -58,6 +58,7 @@ export default function RolesTab({ guildId }) {
   if (!data) return <div className="tab active" />;
   const map = data.reactionRoles || {};
   const msgIds = Object.keys(map);
+  const prefix = data.prefix || "$";
 
   function roleName(id) {
     return (data.roles.find((r) => r.id === id) || {}).name || id;
@@ -79,7 +80,7 @@ export default function RolesTab({ guildId }) {
       </Panel>
       <Panel icon={Fingerprint} title="Reaction Roles">
         <p className="muted" style={{ marginBottom: 10 }}>
-          Set these up in Discord with <code>$reactionrole add &lt;messageId&gt; &lt;emoji&gt; &lt;@role&gt;</code>. Existing bindings are listed below.
+          Set these up in Discord with <code>{prefix}reactionrole add &lt;messageId&gt; &lt;emoji&gt; &lt;@role&gt;</code>. Existing bindings are listed below.
         </p>
         <div>
           {!msgIds.length ? (

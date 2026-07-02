@@ -69,7 +69,7 @@ function ServerCard({ guild, onSelect, style }) {
       <div className="server-card-body">
         <div className="server-card-name-row">
           <div className="server-card-name">{guild.name}</div>
-          {tier === "large" && <span className="badge ok" style={{ fontSize: 10, padding: "1px 6px" }}>✦ Large</span>}
+          {tier === "large" && <span className="badge ok server-tier-badge">✦ Large</span>}
         </div>
         <div className="server-card-meta">
           <span className="server-card-meta-item">
@@ -119,7 +119,7 @@ function ServerNavigator({ guilds, onSelect }) {
           </div>
           <p>{query.trim() ? `No servers match "${query}"` : "No servers available"}</p>
           {query.trim() && (
-            <button className="btn secondary" onClick={() => setQuery("")} style={{ marginTop: 4 }}>
+            <button className="btn secondary server-clear-btn" onClick={() => setQuery("")}>
               Clear search
             </button>
           )}
@@ -127,7 +127,7 @@ function ServerNavigator({ guilds, onSelect }) {
       ) : (
         <div className="server-grid">
           {filtered.map((g, i) => (
-            <ServerCard key={g.id} guild={g} onSelect={onSelect} style={{ animationDelay: `${0.04 * i}s` }} />
+            <ServerCard key={g.id} guild={g} onSelect={onSelect} style={{ "--server-delay": `${0.04 * i}s` }} />
           ))}
         </div>
       )}

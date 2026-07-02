@@ -4,6 +4,10 @@ const roles = require("../roles");
 
 const BLURPLE = 0x5865f2;
 
+function usage(ctx, text) {
+  return `\`${ctx?.utils?.PREFIX || "$"}${text}\``;
+}
+
 function listEmbed(guild) {
   const ids = roles.getAutoroles(guild.id);
   const desc = ids.length ? ids.map(id => `<@&${id}>`).join("\n") : "No autoroles set. New members receive none.";
@@ -32,9 +36,9 @@ async function handleAutorole(message, args, ctx) {
   }
 
   return message.reply({ embeds: [new EmbedBuilder().setColor(BLURPLE).setTitle("🪄 Autorole").setDescription([
-    "`$autorole add <@role>` — give this role to new members",
-    "`$autorole remove <@role>` — stop giving this role",
-    "`$autorole list` — show current autoroles",
+    `${usage(ctx, "autorole add <@role>")} — give this role to new members`,
+    `${usage(ctx, "autorole remove <@role>")} — stop giving this role`,
+    `${usage(ctx, "autorole list")} — show current autoroles`,
   ].join("\n"))] });
 }
 

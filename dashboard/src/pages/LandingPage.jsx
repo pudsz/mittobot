@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import {
   ShieldCheck, MessageSquareCode, Sparkles, Blocks, Database,
   Shield, Activity, Users, Disc, ChevronRight, BookOpen,
@@ -78,11 +78,11 @@ export default function LandingPage({ onGetStarted }) {
           <div className="landing-nav-links">
             <a href="#features" className="landing-nav-link">Features</a>
             <a href="#providers" className="landing-nav-link">Providers</a>
-            <a href="https://codebuff.com/docs" target="_blank" rel="noopener noreferrer" className="landing-nav-link">
+            <Link to="/docs" className="landing-nav-link">
               <BookOpen style={{ width: 14, height: 14 }} /> Docs
-            </a>
+            </Link>
           </div>
-          <button className="btn primary" onClick={onGetStarted} style={{ gap: 6 }}>
+          <button className="btn primary landing-nav-cta" onClick={onGetStarted}>
             <Disc style={{ width: 16, height: 16 }} />
             <span>Get Started</span>
             <ChevronRight style={{ width: 14, height: 14 }} />
@@ -108,11 +108,11 @@ export default function LandingPage({ onGetStarted }) {
             all from a single, self-hosted bot with a beautiful dashboard.
           </p>
           <div className="landing-hero-actions">
-            <button className="btn primary" onClick={onGetStarted} style={{ padding: "12px 28px", fontSize: 15 }}>
+            <button className="btn primary landing-hero-primary" onClick={onGetStarted}>
               <Disc style={{ width: 18, height: 18 }} />
               <span>Launch Dashboard</span>
             </button>
-            <a href="#features" className="btn secondary" style={{ padding: "12px 24px", fontSize: 15, textDecoration: "none" }}>
+            <a href="#features" className="btn secondary landing-hero-secondary auth-link-btn">
               <span>Explore Features</span>
               <ChevronRight style={{ width: 16, height: 16 }} />
             </a>
@@ -165,7 +165,7 @@ export default function LandingPage({ onGetStarted }) {
         </div>
         <div className="landing-features-grid">
           {FEATURES.map(({ Icon, title, desc }, i) => (
-            <div key={i} className="landing-feature-card" style={{ animationDelay: `${0.05 * i}s` }}>
+            <div key={i} className="landing-feature-card" style={{ "--feature-delay": `${0.05 * i}s` }}>
               <div className="landing-feature-icon-wrap">
                 <Icon style={{ width: 22, height: 22 }} />
               </div>
@@ -185,7 +185,7 @@ export default function LandingPage({ onGetStarted }) {
             Get your Discord server the command center it deserves.
           </p>
           <div className="landing-cta-actions">
-            <button className="btn primary" onClick={onGetStarted} style={{ padding: "12px 32px", fontSize: 15 }}>
+            <button className="btn primary landing-cta-primary" onClick={onGetStarted}>
               <Disc style={{ width: 18, height: 18 }} />
               <span>Launch Dashboard</span>
             </button>
@@ -200,7 +200,7 @@ export default function LandingPage({ onGetStarted }) {
             <span className="landing-logo-mark">g</span>
             <span className="landing-logo-text">gboi</span>
           </div>
-          <div className="muted" style={{ fontSize: 12 }}>
+          <div className="muted landing-footer-copy">
             Open source Discord bot · Built with Node.js & React
           </div>
         </div>

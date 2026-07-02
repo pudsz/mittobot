@@ -6,6 +6,7 @@ const data = {
   reactionlogs: {},
   afkUsers:     {},
   customRoles:  {},
+  alphaUsers:   {},
   _loading: false,
 
   // The in-memory caches above are authoritative at runtime; each save* method
@@ -64,6 +65,15 @@ const data = {
       for (const row of await db.getCustomRoles()) {
         (this.customRoles[row.guild_id] ??= {})[row.user_id] = row.role_id;
       }
+
+      this.alphaUsers = {};
+      for (const row of await db.getAllAlphaUsers()) {
+        this.alphaUsers[`${row.guild_id}:${row.user_id}`] = {
+          activatedAt: row.activated_at,
+          codeUsed: row.code_used,
+          telemetryOptOut: row.telemetry_opt_out === 1,
+        };
+      }
     } finally {
       this._loading = false;
     }
@@ -97,6 +107,38 @@ const data = {
       delete this.warnings[guildId][userId];
     }
     db.clearWarnings(guildId, userId).catch(e => console.error("clear warnings:", e.message));
+  },
+
+  // ── Alpha experiments ──────────────────────────────────────────────────
+  isAlphaActivated(userId, guildId) {
+    return !!this.alphaUsers[`${guildId}:${userId}`];
+  },
+
+  isTelemetryOptedOut(userId, guildId) {
+    return this.alphaUsers[`${guildId}:${userId}`]?.telemetryOptOut === true;
+  },
+
+  addAlphaUser(userId, guildId, { codeUsed, telemetryOptOut }) {
+    this.alphaUsers[`${guildId}:${userId}`] = {
+      activatedAt: Date.now(),
+      codeUsed: codeUsed || null,
+      telemetryOptOut: telemetryOptOut === true,
+    };
+    db.setAlphaUser(userId, guildId, { activatedAt: Date.now(), codeUsed, telemetryOptOut }).catch(e => console.error("persist alpha user:", e.message));
+  },
+
+  setAlphaTelemetryOptOut(userId, guildId, optOut) {
+    const key = `${guildId}:${userId}`;
+    const existing = this.alphaUsers[key];
+    if (!existing) return;
+    existing.telemetryOptOut = optOut === true;
+    db.setAlphaUser(userId, guildId, { activatedAt: existing.activatedAt, codeUsed: existing.codeUsed, telemetryOptOut }).catch(e => console.error("persist alpha telemetry opt:", e.message));
+  },
+
+  logAlphaTelemetry({ userId, guildId, toolName, success, errorMsg, durationMs }) {
+    if (!guildId) return;
+    if (this.isTelemetryOptedOut(userId, guildId)) return;
+    db.addAlphaTelemetry({ userId, guildId, toolName, success, errorMsg, durationMs }).catch(e => console.error("persist telemetry:", e.message));
   }
 };
 

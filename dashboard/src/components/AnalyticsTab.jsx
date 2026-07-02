@@ -16,13 +16,13 @@ const PERIODS = [
 // ─── Summary stat card ─────────────────────────────────────────────────────
 function StatCard({ icon: Icon, label, value, sub, color }) {
   return (
-    <div className="stat-pill" style={{ "--accent-color": color, flexDirection: "column", alignItems: "flex-start", gap: 6, padding: "14px 16px", background: "var(--bg)", borderRadius: "var(--radius)", border: "1px solid var(--border)" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%" }}>
-        <Icon style={{ width: 18, height: 18, color, flexShrink: 0 }} />
-        <span style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.5px" }}>{label}</span>
+    <div className="stat-pill analytics-stat-card">
+      <div className="analytics-stat-head">
+        <Icon className="analytics-stat-icon" style={{ color }} />
+        <span className="analytics-stat-label">{label}</span>
       </div>
-      <div style={{ fontWeight: 700, fontSize: 22, color: "var(--text)" }}>{value}</div>
-      {sub !== undefined && <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{sub}</div>}
+      <div className="analytics-stat-value">{value}</div>
+      {sub !== undefined && <div className="analytics-stat-sub">{sub}</div>}
     </div>
   );
 }
@@ -31,30 +31,30 @@ function StatCard({ icon: Icon, label, value, sub, color }) {
 function ProviderTable({ stats }) {
   if (!stats || stats.length === 0) return null;
   return (
-    <div style={{ marginTop: 8, overflow: "auto" }}>
-      <table className="mod-log-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+    <div className="analytics-table-wrap">
+      <table className="mod-log-table analytics-provider-table">
         <thead>
-          <tr style={{ textAlign: "left" }}>
-            <th style={{ padding: "6px 8px" }}>Provider</th>
-            <th style={{ padding: "6px 8px", textAlign: "right" }}>Calls</th>
-            <th style={{ padding: "6px 8px", textAlign: "right" }}>Tokens</th>
-            <th style={{ padding: "6px 8px", textAlign: "right" }}>Success</th>
-            <th style={{ padding: "6px 8px", textAlign: "right" }}>Failed</th>
-            <th style={{ padding: "6px 8px", textAlign: "right" }}>Avg Latency</th>
+          <tr className="analytics-provider-head">
+            <th>Provider</th>
+            <th className="align-right">Calls</th>
+            <th className="align-right">Tokens</th>
+            <th className="align-right">Success</th>
+            <th className="align-right">Failed</th>
+            <th className="align-right">Avg Latency</th>
           </tr>
         </thead>
         <tbody>
           {stats.map((s, i) => (
             <tr key={s.provider} className="mod-log-row" style={{ animationDelay: `${i * 0.03}s` }}>
-              <td style={{ padding: "6px 8px", display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ width: 8, height: 8, borderRadius: "50%", background: COLORS[i % COLORS.length], flexShrink: 0 }} />
-                <span style={{ fontWeight: 500 }}>{s.provider}</span>
+              <td className="analytics-provider-cell analytics-provider-name-cell">
+                <span className="analytics-provider-dot" style={{ background: COLORS[i % COLORS.length] }} />
+                <span className="analytics-provider-name">{s.provider}</span>
               </td>
-              <td style={{ padding: "6px 8px", textAlign: "right", fontWeight: 600 }}>{s.calls?.toLocaleString()}</td>
-              <td style={{ padding: "6px 8px", textAlign: "right" }}>{s.tokens?.toLocaleString()}</td>
-              <td style={{ padding: "6px 8px", textAlign: "right", color: "var(--green)" }}>{s.successful}</td>
-              <td style={{ padding: "6px 8px", textAlign: "right", color: s.failed > 0 ? "var(--red)" : "var(--text-muted)" }}>{s.failed}</td>
-              <td style={{ padding: "6px 8px", textAlign: "right", color: "var(--text-muted)" }}>{s.avg_latency_ms}ms</td>
+              <td className="analytics-provider-cell align-right analytics-provider-strong">{s.calls?.toLocaleString()}</td>
+              <td className="analytics-provider-cell align-right">{s.tokens?.toLocaleString()}</td>
+              <td className="analytics-provider-cell align-right success-text">{s.successful}</td>
+              <td className={`analytics-provider-cell align-right ${s.failed > 0 ? "danger-text" : "muted-text"}`}>{s.failed}</td>
+              <td className="analytics-provider-cell align-right muted-text">{s.avg_latency_ms}ms</td>
             </tr>
           ))}
         </tbody>
@@ -131,10 +131,10 @@ export default function AnalyticsTab() {
   if (loading) {
     return (
       <div className="panel">
-        <h2 style={{ display: "flex", alignItems: "center", gap: 8 }}><TrendingUp style={{ width: 20, height: 20 }} /> AI Analytics</h2>
-        <div style={{ padding: 40, textAlign: "center" }}>
+        <h2 className="analytics-title"><TrendingUp className="analytics-title-icon" /> AI Analytics</h2>
+        <div className="analytics-state-panel">
           <div className="spinner" />
-          <div className="muted" style={{ marginTop: 12 }}>Loading analytics...</div>
+          <div className="muted analytics-state-copy">Loading analytics...</div>
         </div>
       </div>
     );
@@ -143,8 +143,8 @@ export default function AnalyticsTab() {
   if (error) {
     return (
       <div className="panel">
-        <h2 style={{ display: "flex", alignItems: "center", gap: 8 }}><TrendingUp style={{ width: 20, height: 20 }} /> AI Analytics</h2>
-        <div style={{ padding: 40, textAlign: "center", color: "var(--red)" }}>Failed to load: {error}</div>
+        <h2 className="analytics-title"><TrendingUp className="analytics-title-icon" /> AI Analytics</h2>
+        <div className="analytics-state-panel danger-text">Failed to load: {error}</div>
       </div>
     );
   }
@@ -153,17 +153,16 @@ export default function AnalyticsTab() {
 
   return (
     <div className="panel">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
-        <h2 style={{ display: "flex", alignItems: "center", gap: 8, margin: 0 }}>
-          <TrendingUp style={{ width: 20, height: 20 }} />
+      <div className="analytics-toolbar">
+        <h2 className="analytics-title analytics-title-reset">
+          <TrendingUp className="analytics-title-icon" />
           AI Analytics
         </h2>
-        <div style={{ display: "flex", gap: 4 }}>
+        <div className="analytics-periods">
           {PERIODS.map(p => (
             <button
               key={p.value}
-              className={`btn ${days === p.value ? "primary" : ""}`}
-              style={{ fontSize: 12, padding: "4px 10px" }}
+              className={`btn analytics-period-btn ${days === p.value ? "primary" : ""}`}
               onClick={() => setDays(p.value)}
             >
               <Calendar style={{ width: 12, height: 12 }} />
@@ -174,15 +173,15 @@ export default function AnalyticsTab() {
       </div>
 
       {!hasData ? (
-        <div style={{ padding: 60, textAlign: "center" }}>
-          <Database style={{ width: 40, height: 40, color: "var(--text-muted)", opacity: 0.3, marginBottom: 12 }} />
-          <div style={{ fontSize: 15, color: "var(--text-muted)" }}>No analytics data yet</div>
-          <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>AI analytics will appear here once the bot starts handling AI messages.</div>
+        <div className="analytics-empty-state">
+          <Database className="analytics-empty-icon" />
+          <div className="analytics-empty-title">No analytics data yet</div>
+          <div className="muted analytics-empty-copy">AI analytics will appear here once the bot starts handling AI messages.</div>
         </div>
       ) : (
         <>
           {/* ── Stat cards ──────────────────────────────────────────────────── */}
-          <div className="stat-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginBottom: 20 }}>
+          <div className="stat-grid analytics-stat-grid">
             <StatCard icon={Zap} label="Total Calls" value={totalCalls.toLocaleString()} color="#6366f1" />
             <StatCard icon={Database} label="Total Tokens" value={totalTokens.toLocaleString()} color="#f59e0b" />
             <StatCard
@@ -196,11 +195,11 @@ export default function AnalyticsTab() {
           </div>
 
           {/* ── Charts row 1: Calls + Tokens by provider ───────────────────── */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(350px, 1fr))", gap: 16, marginBottom: 20 }}>
+          <div className="analytics-chart-grid">
             {/* Calls by provider */}
-            <div className="chart-card" style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: 14 }}>
-              <h3 style={{ fontSize: 13, margin: "0 0 10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                <Cpu style={{ width: 14, height: 14, verticalAlign: "middle", marginRight: 4 }} />
+            <div className="chart-card analytics-chart-card">
+              <h3 className="analytics-chart-title">
+                <Cpu className="analytics-chart-title-icon" />
                 Calls by Provider
               </h3>
               <ResponsiveContainer width="100%" height={200}>
@@ -222,9 +221,9 @@ export default function AnalyticsTab() {
             </div>
 
             {/* Tokens by provider */}
-            <div className="chart-card" style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: 14 }}>
-              <h3 style={{ fontSize: 13, margin: "0 0 10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                <Database style={{ width: 14, height: 14, verticalAlign: "middle", marginRight: 4 }} />
+            <div className="chart-card analytics-chart-card">
+              <h3 className="analytics-chart-title">
+                <Database className="analytics-chart-title-icon" />
                 Token Usage by Provider
               </h3>
               <ResponsiveContainer width="100%" height={200}>
@@ -247,12 +246,12 @@ export default function AnalyticsTab() {
           </div>
 
           {/* ── Charts row 2: Provider distribution pie + Daily trends line ─── */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(350px, 1fr))", gap: 16, marginBottom: 20 }}>
+          <div className="analytics-chart-grid">
             {/* Provider share pie */}
             {pieData.length > 0 && (
-              <div className="chart-card" style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: 14 }}>
-                <h3 style={{ fontSize: 13, margin: "0 0 10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                  <Cpu style={{ width: 14, height: 14, verticalAlign: "middle", marginRight: 4 }} />
+              <div className="chart-card analytics-chart-card">
+                <h3 className="analytics-chart-title">
+                  <Cpu className="analytics-chart-title-icon" />
                   Provider Call Share
                 </h3>
                 <ResponsiveContainer width="100%" height={200}>
@@ -275,11 +274,11 @@ export default function AnalyticsTab() {
                     />
                   </PieChart>
                 </ResponsiveContainer>
-                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center", marginTop: 4 }}>
+                <div className="analytics-legend-list">
                   {pieData.map((entry, i) => (
-                    <div key={entry.name} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11 }}>
-                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: COLORS[i % COLORS.length], flexShrink: 0 }} />
-                      <span style={{ color: "var(--text-muted)" }}>{entry.name}</span>
+                    <div key={entry.name} className="analytics-legend-item">
+                      <span className="analytics-provider-dot" style={{ background: COLORS[i % COLORS.length] }} />
+                      <span className="muted-text">{entry.name}</span>
                     </div>
                   ))}
                 </div>
@@ -288,9 +287,9 @@ export default function AnalyticsTab() {
 
             {/* Daily trend lines */}
             {dailyData.length > 1 && (
-              <div className="chart-card" style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: 14 }}>
-                <h3 style={{ fontSize: 13, margin: "0 0 10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                  <TrendingUp style={{ width: 14, height: 14, verticalAlign: "middle", marginRight: 4 }} />
+              <div className="chart-card analytics-chart-card">
+                <h3 className="analytics-chart-title">
+                  <TrendingUp className="analytics-chart-title-icon" />
                   Daily Call Trends
                 </h3>
                 <ResponsiveContainer width="100%" height={200}>
@@ -317,20 +316,13 @@ export default function AnalyticsTab() {
 
           {/* ── Top users ────────────────────────────────────────────────────── */}
           {data?.topUsers?.length > 0 && (
-            <div style={{ marginTop: 16 }}>
-              <h3 style={{ fontSize: 13, margin: "0 0 8px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.5px" }}>Top AI Users</h3>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <div className="analytics-top-users">
+              <h3 className="analytics-chart-title analytics-top-users-title">Top AI Users</h3>
+              <div className="analytics-top-user-list">
                 {data.topUsers.map((u) => (
-                  <div
-                    key={u.user_id}
-                    className="stat-pill"
-                    style={{
-                      padding: "6px 12px", fontSize: 12, display: "flex", alignItems: "center", gap: 8,
-                      background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "var(--radius)",
-                    }}
-                  >
-                    <span style={{ fontWeight: 600 }}><code style={{ fontSize: 11 }}>{u.user_id}</code></span>
-                    <span style={{ color: "var(--text-muted)", fontSize: 11 }}>{u.calls} calls</span>
+                  <div key={u.user_id} className="stat-pill analytics-top-user-pill">
+                    <span className="analytics-top-user-id"><code className="analytics-top-user-code">{u.user_id}</code></span>
+                    <span className="analytics-top-user-meta">{u.calls} calls</span>
                   </div>
                 ))}
               </div>

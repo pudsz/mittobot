@@ -24,6 +24,40 @@ const commandMap = new Map();
 const slashMap = new Map();
 const slashDefs = [];
 
+function normalizeCommandName(name) {
+  return String(name || "").trim().toLowerCase();
+}
+
+function commandAliases(def, guildId = null) {
+  const aliases = new Set();
+  for (const alias of def?.aliases || []) {
+    const normalized = normalizeCommandName(alias);
+    if (normalized) aliases.add(normalized);
+  }
+  const configured = config.resolve(guildId, def.name, def).settings?.aliases;
+  if (Array.isArray(configured)) {
+    for (const alias of configured) {
+      const normalized = normalizeCommandName(alias);
+      if (normalized) aliases.add(normalized);
+    }
+  }
+  aliases.delete(normalizeCommandName(def?.name));
+  return [...aliases];
+}
+
+function resolvePrefixCommand(input, guildId = null) {
+  const name = normalizeCommandName(input);
+  const direct = commandMap.get(name);
+  if (direct) return { name, def: direct, usedAlias: null };
+  for (const def of commandMap.values()) {
+    if (!def?.name) continue;
+    if (commandAliases(def, guildId).includes(name)) {
+      return { name: def.name, def, usedAlias: name };
+    }
+  }
+  return { name, def: null, usedAlias: null };
+}
+
 function registerCommands(defs) {
   for (const cmd of defs) {
     commandMap.set(cmd.name, cmd);
@@ -81,6 +115,8 @@ for (const file of moduleFiles) {
   }
 }
 
+let voiceManager = null;
+
 const ctx = {
   client: null,
   data,
@@ -88,6 +124,8 @@ const ctx = {
   commandMap,
   slashMap,
   slashDefs,
+  commandAliases,
+  resolvePrefixCommand,
   config,
   features,
   automod,
@@ -97,6 +135,7 @@ const ctx = {
   autoexec,
   roletracker,
   femboyify,
+  get voiceManager() { return voiceManager; },
 };
 
 // Central access control for commands.
@@ -138,10 +177,11 @@ function denyMessage(reason, remain) {
 }
 
 // Event helpers
-const { handleAfkChecks } = require("./src/commands/utility");
+const { handleAfkChecks, rememberDeletedMessage, handleHelpSelect, handleHelpBack, handleHelpSearchButton, handleHelpSearchModal, wireHelpContext } = require("./src/commands/utility");
 const { handleStickyRepost } = require("./src/commands/sticky");
 const { handleSettingsButton, handleSettingsModal } = require("./src/commands/settings");
 const { handleAiMessage } = require("./src/ai");
+const VoiceManager = require("./src/voice");
 
 // Discord client
 const client = new Client({
@@ -156,6 +196,7 @@ const client = new Client({
     // bot never sees direct messages at all, regardless of aiDmEnabled.
     GatewayIntentBits.DirectMessages,
     GatewayIntentBits.DirectMessageReactions,
+    GatewayIntentBits.GuildVoiceStates,
   ],
   partials: [Partials.Message, Partials.Channel, Partials.Reaction],
 });
@@ -202,8 +243,9 @@ client.on("messageCreate", async message => {
 
   // Maintenance mode — block everything for non-owners
   const maintenanceMode = settings.get("maintenanceMode");
+  const prefix = utils.PREFIX;
   if (maintenanceMode && !utils.isOwner(message.author.id)) {
-    if (message.content.startsWith(utils.PREFIX) || message.mentions.has(client.user.id)) {
+    if (message.content.startsWith(prefix) || message.mentions.has(client.user.id)) {
       const mainMsg = settings.get("maintenanceMessage") || "🔧 The bot is currently under maintenance. Please try again later.";
       safe.reply(message, { embeds: [utils.errorEmbed(mainMsg)] }, "maintenance mode");
     }
@@ -219,12 +261,12 @@ client.on("messageCreate", async message => {
   await handleAiMessage(message, ctx);
 
   const content = message.content;
-  if (!content.startsWith(utils.PREFIX)) return;
+  if (!content.startsWith(prefix)) return;
 
-  const parts = content.slice(utils.PREFIX.length).trim().split(/\s+/);
-  const command = parts.shift().toLowerCase();
+  const parts = content.slice(prefix.length).trim().split(/\s+/);
+  const rawCommand = parts.shift();
+  const { name: command, def: handler } = resolvePrefixCommand(rawCommand, message.guild.id);
   const args = parts;
-  const handler = commandMap.get(command);
 
   if (!handler || !handler.prefix) return;
 
@@ -254,6 +296,22 @@ client.on("messageCreate", async message => {
 
 client.on("interactionCreate", async interaction => {
   try {
+    // Help system: category select menu
+    if (interaction.isStringSelectMenu() && interaction.customId === "help:select") {
+      return await handleHelpSelect(interaction);
+    }
+    // Help system: back button
+    if (interaction.isButton() && interaction.customId === "help:back") {
+      return await handleHelpBack(interaction);
+    }
+    // Help system: search button (opens modal)
+    if (interaction.isButton() && interaction.customId === "help:search") {
+      return await handleHelpSearchButton(interaction);
+    }
+    // Help system: search modal submit
+    if (interaction.isModalSubmit() && interaction.customId === "help:search:modal") {
+      return await handleHelpSearchModal(interaction);
+    }
     // Settings GUI: buttons
     if (interaction.isButton() && interaction.customId.startsWith("settings:")) {
       return await handleSettingsButton(interaction);
@@ -268,6 +326,47 @@ client.on("interactionCreate", async interaction => {
       if (typeof rpsmpMod.handleRpsMpButton === "function") {
         return await rpsmpMod.handleRpsMpButton(interaction);
       }
+    }
+    // Alpha experiments: proceed button → open code modal
+    if (interaction.isButton() && interaction.customId === "experiments:proceed") {
+      const db = require("./src/db");
+      const modal = new (require("discord.js").ModalBuilder)()
+        .setCustomId("experiments:code")
+        .setTitle("Alpha Experiments — Enter Code")
+        .addComponents(
+          new (require("discord.js").ActionRowBuilder)().addComponents(
+            new (require("discord.js").TextInputBuilder)()
+              .setCustomId("code")
+              .setLabel("24-character activation code")
+              .setStyle(require("discord.js").TextInputStyle.Short)
+              .setPlaceholder("e.g. A1B2C3D4E5F6G7H8I9J0K1L2")
+              .setRequired(true)
+              .setMinLength(24)
+              .setMaxLength(24),
+          ),
+        );
+      return await interaction.showModal(modal);
+    }
+    // Alpha experiments: cancel button → just delete the ephemeral
+    if (interaction.isButton() && interaction.customId === "experiments:cancel") {
+      return await interaction.update({ components: [] });
+    }
+    // Alpha experiments: modal submit with code
+    if (interaction.isModalSubmit() && interaction.customId === "experiments:code") {
+      const code = interaction.fields.getTextInputValue("code").toUpperCase();
+      const db = require("./src/db");
+      const data = require("./src/data");
+      const codeRow = await db.getAlphaCode(code);
+      if (!codeRow || codeRow.used_by) {
+        return await interaction.reply({ embeds: [new (require("discord.js").EmbedBuilder)().setColor(0xed4245).setDescription("❌ Invalid or already-used alpha code.")], ephemeral: true });
+      }
+      data.addAlphaUser(interaction.user.id, interaction.guildId, { codeUsed: code });
+      await db.useAlphaCode(code, interaction.user.id);
+      try {
+        const user = await interaction.client.users.fetch(interaction.user.id);
+        await user.send({ embeds: [new (require("discord.js").EmbedBuilder)().setColor(0x9b59b6).setDescription("🧪 **Alpha experiments activated!**\nYou now have access to experimental AI server management tools.\nUse `/experiments status` to check your status.")] });
+      } catch {}
+      return await interaction.reply({ embeds: [new (require("discord.js").EmbedBuilder)().setColor(0x57f287).setDescription("✅ **Alpha activated!** Check your DMs for confirmation.")], ephemeral: true });
     }
     // Slash commands
     if (interaction.isChatInputCommand()) {
@@ -377,6 +476,13 @@ async function logReaction(reaction, user, added) {
   safe.send(ch, { embeds: [embed] }, "reaction log");
 }
 
+// ─── Voice State Handler ───────────────────────────────────────────────────
+client.on("voiceStateUpdate", (oldState, newState) => {
+  if (voiceManager) {
+    voiceManager.handleVoiceStateUpdate(oldState, newState);
+  }
+});
+
 client.on("messageReactionAdd", async (reaction, user) => {
   logReaction(reaction, user, true).catch(err => console.error("[safe] reaction log:", err.message));
   roles.onReaction(reaction, user, true).catch(err => console.error("[safe] reaction role add:", err.message));
@@ -425,7 +531,14 @@ client.on("guildMemberRemove", member => {
     userId: member.id,
   }).catch(err => console.error("autoexec leave:", err.message));
 });
-client.on("messageDelete",     message => greet.onMessageDelete(message).catch(err => console.error("[safe] greet.onMessageDelete:", err.message)));
+client.on("messageDelete", message => {
+  try {
+    rememberDeletedMessage(message);
+  } catch (err) {
+    console.error("[safe] rememberDeletedMessage:", err.message);
+  }
+  greet.onMessageDelete(message).catch(err => console.error("[safe] greet.onMessageDelete:", err.message));
+});
 client.on("messageUpdate",     (oldMsg, newMsg) => greet.onMessageUpdate(oldMsg, newMsg).catch(err => console.error("[safe] greet.onMessageUpdate:", err.message)));
 
 // Live role tracker and nickname lock
@@ -444,6 +557,7 @@ client.on("guildMemberUpdate", (oldMember, newMember) => {
 
 client.once("ready", async () => {
   ctx.client = client;
+  wireHelpContext(ctx);
   console.log(`Logged in as ${client.user.tag}`);
   client.user.setActivity(`${settings.get("prefix")}help | mambo`, { type: 3 });
 
@@ -475,6 +589,8 @@ async function shutdown(signal) {
     // Stop timers
     const automod = require("./src/automod");
     automod.stopSpamCleanup();
+    // Destroy all voice sessions
+    if (voiceManager) voiceManager.destroy();
     try {
       const mod = require("./src/commands/mod");
       if (typeof mod.stopProbationCleanup === "function") mod.stopProbationCleanup();
@@ -525,6 +641,9 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
     ]);
     // Load scheduled messages after settings are ready
     await scheduler.load(client).catch(err => console.error("[scheduler] Load error:", err.message));
+    // Initialize VoiceManager after client is ready
+    voiceManager = new VoiceManager(client);
+    console.log("[voice] VoiceManager initialized");
     settings.hydrateAiKeysFromEnv();
     // Start probation cleanup timer
     try {

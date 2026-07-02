@@ -5,6 +5,10 @@ const { OWNER_IDS, ANCHOR_ROLE_ID, canCreateCustomRole, isAuthorized, noPermEmbe
 function isValidHex(color) { return /^#?([0-9A-Fa-f]{6})$/.test(color); }
 function normalizeHex(color) { if (!color.startsWith('#')) color = '#' + color; return color.toUpperCase(); }
 
+function usage(ctx, text) {
+  return `\`${ctx?.utils?.PREFIX || "$"}${text}\``;
+}
+
 function blendColors(hex1, hex2) {
   const c1 = parseInt(hex1.replace('#', ''), 16), c2 = parseInt(hex2.replace('#', ''), 16);
   const r = Math.floor(((c1 >> 16 & 255) + (c2 >> 16 & 255)) / 2);
@@ -51,12 +55,12 @@ function parseRoleName(rawArgs) {
   return { roleName: rawArgs[0], remaining: rawArgs.slice(1) };
 }
 
-function usageEmbed() {
+function usageEmbed(ctx) {
   return new EmbedBuilder().setColor(0x5865f2).setTitle("🎨 Custom Role Usage").addFields(
-    { name: "⚪ Normal",      value: '`$customrole create @user "Name" normal #FF0000`' },
-    { name: "🌈 Gradient",    value: '`$customrole create @user "Name" gradient #FF0000 #0000FF`' },
-    { name: "✨ Holographic", value: '`$customrole create @user "Name" holographic`' },
-    { name: "Other",          value: '`$customrole remove` | `$customrole remove @user` | `$customrole list`' },
+    { name: "⚪ Normal",      value: usage(ctx, 'customrole create @user "Name" normal #FF0000') },
+    { name: "🌈 Gradient",    value: usage(ctx, 'customrole create @user "Name" gradient #FF0000 #0000FF') },
+    { name: "✨ Holographic", value: usage(ctx, 'customrole create @user "Name" holographic') },
+    { name: "Other",          value: `${usage(ctx, "customrole remove")} | ${usage(ctx, "customrole remove @user")} | ${usage(ctx, "customrole list")}` },
     { name: "📎 Icon",        value: "Attach an image to set a role icon (requires server boost level 2)." }
   );
 }
@@ -100,13 +104,13 @@ async function handleCustomRole(message, args, ctx) {
   }
 
   if (sub === "create") {
-    const userId = resolveUserId(args[1]); if (!userId) return message.reply({ embeds: [usageEmbed()] });
+    const userId = resolveUserId(args[1]); if (!userId) return message.reply({ embeds: [usageEmbed(ctx)] });
     if (userId !== message.author.id && !member.permissions.has(PermissionFlagsBits.Administrator) && !OWNER_IDS.has(message.author.id))
       return message.reply({ embeds: [errorEmbed("You can only create a custom role for yourself.")] });
     const targetMember = await safe.orNull(message.guild.members.fetch(userId), `customrole create fetch ${userId}`);
     if (!targetMember) return message.reply({ embeds: [errorEmbed("That user isn't in this server.")] });
     const parsed = parseRoleName(args.slice(2)); if (!parsed) return message.reply({ embeds: [errorEmbed('Unclosed quote in role name.')] });
-    const { roleName, remaining } = parsed; if (!roleName) return message.reply({ embeds: [usageEmbed()] });
+    const { roleName, remaining } = parsed; if (!roleName) return message.reply({ embeds: [usageEmbed(ctx)] });
     if (roleName.length > 100) return message.reply({ embeds: [errorEmbed("Role name is too long (max 100 characters).")] });
     const style = remaining[0]?.toLowerCase();
     if (!style || !['normal', 'gradient', 'holographic'].includes(style))
@@ -160,11 +164,11 @@ async function handleCustomRole(message, args, ctx) {
       return message.reply({ embeds: [errorEmbed(`Failed to create role: ${err.message}`)] });
     }
   }
-  return message.reply({ embeds: [usageEmbed()] });
+  return message.reply({ embeds: [usageEmbed(ctx)] });
 }
 
 async function slashCustomRole(interaction, ctx) {
-  await interaction.reply({ embeds: [usageEmbed().setDescription("Use `$customrole` in chat — slash support for custom roles coming soon.")] });
+  await interaction.reply({ embeds: [usageEmbed(ctx).setDescription(`Use ${usage(ctx, "customrole")} in chat — slash support for custom roles coming soon.`)] });
 }
 
 module.exports = [

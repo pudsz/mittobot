@@ -241,16 +241,44 @@ async function buildSpeakerProfile(message, ctx) {
       .slice(0, 5)
       .map(r => r.name);
     
-    const parts = [];
+        const parts = [];
     const displayName = member.displayName || message.author.username;
     parts.push(`- Current speaker: ${displayName} (@${message.author.username}, id:${message.author.id})`);
     if (topRoles.length) parts.push(`- Top roles: ${topRoles.join(", ")}`);
+
+    // Join date with context
     if (member.joinedAt) {
       const daysAgo = Math.floor((Date.now() - member.joinedAt.getTime()) / 86400000);
-      parts.push(`- Joined: ${member.joinedAt.toISOString().slice(0, 10)} (${daysAgo} days ago)`);
+      const dateStr = member.joinedAt.toISOString().slice(0, 10);
+      if (daysAgo < 7) {
+        parts.push(`- Joined: ${dateStr} (${daysAgo} days ago - recently!)`);
+      } else if (daysAgo > 365) {
+        parts.push(`- Joined: ${dateStr} (${Math.floor(daysAgo / 365)} years ago - veteran)`);
+      } else {
+        parts.push(`- Joined: ${dateStr} (${daysAgo} days ago)`);
+      }
     }
-    if (warnings.length) parts.push(`- Warning count: ${warnings.length}`);
-    
+
+    // Server boosting status
+    if (member.premiumSince) {
+      const boostDays = Math.floor((Date.now() - member.premiumSince.getTime()) / 86400000);
+      parts.push(`- Boosting: Yes (${boostDays} days)`);
+    }
+
+    // Warning count
+    if (warnings.length) {
+      parts.push(`- Warning count: ${warnings.length}`);
+    }
+
+    // Notable permissions
+    if (member.permissions) {
+      const notablePerms = [];
+      if (member.permissions.has(1n)) notablePerms.push("Admin");
+      if (member.permissions.has(1n << 3n)) notablePerms.push("ManageMessages");
+      if (member.permissions.has(1n << 40n)) notablePerms.push("ModerateMembers");
+      if (notablePerms.length) parts.push(`- Notable perms: ${notablePerms.join(", ")}`);
+    }
+
     return parts.length ? `\n### SPEAKER PROFILE (who you're replying to):\n${parts.join("\n")}\n` : "";
   } catch {
     return "";
@@ -685,7 +713,7 @@ async function handleAiMessage(message, ctx) {
       images
     );
     let loopCount = 0;
-    const MAX_LOOPS = 5;
+    const MAX_LOOPS = 15;
     let finalReply = "";
     const thinkingEnabled = settings.get("aiThinkingEnabled") === true;
     startTime = Date.now(); // for analytics latency tracking
@@ -787,10 +815,13 @@ async function handleAiMessage(message, ctx) {
         }
         console.log(`[ai] Executing tool: ${tc.name} with args:`, tc.args);
         let resultStr;
+        const toolStart = Date.now();
         try {
           resultStr = await tools.executeTool(tc.name, tc.args, ctx, message);
+          if (message.guild) ctx.data.logAlphaTelemetry({ userId: message.author.id, guildId: message.guild.id, toolName: tc.name, success: true, durationMs: Date.now() - toolStart });
         } catch (err) {
           resultStr = `Error executing tool: ${err.message}`;
+          if (message.guild) ctx.data.logAlphaTelemetry({ userId: message.author.id, guildId: message.guild.id, toolName: tc.name, success: false, errorMsg: err.message, durationMs: Date.now() - toolStart });
         }
         // Persist tool interaction so the thread buffer can reference it on next turn
         toolInteractions.push({ name: tc.name, args: tc.args, result: resultStr });
@@ -1035,7 +1066,7 @@ function updateSettings(body) {
   }
 
   if (typeof body.aiSystemPrompt === "string") {
-    settings.set("aiSystemPrompt", body.aiSystemPrompt.slice(0, 2000));
+    settings.set("aiSystemPrompt", body.aiSystemPrompt.slice(0, 20000));
   }
 
   if (typeof body.aiAllowedChannels === "string") {

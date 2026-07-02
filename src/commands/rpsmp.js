@@ -16,6 +16,10 @@ const GAME_TIMEOUT_MS = 60_000;
 
 const EMOJI = { rock: "🪨", paper: "📄", scissors: "✂️" };
 
+function usage(ctx, text) {
+  return `\`${ctx?.utils?.PREFIX || "$"}${text}\``;
+}
+
 // In-memory game registry: messageId -> { player1, player2, picks, messageRef }
 const games = new Map();
 
@@ -160,11 +164,11 @@ module.exports = [
       .setName("rpsmp")
       .setDescription("Challenge another user to multiplayer Rock Paper Scissors")
       .addUserOption(o => o.setName("opponent").setDescription("User to challenge").setRequired(true)),
-    prefix: async (message) => {
+    prefix: async (message, args, ctx) => {
       const opponent = message.mentions?.users?.first();
       if (!opponent) {
         return message.reply({
-          embeds: [new EmbedBuilder().setColor(0xed4245).setDescription("❌ Usage: `$rpsmp @user`")],
+          embeds: [new EmbedBuilder().setColor(0xed4245).setDescription(`❌ Usage: ${usage(ctx, "rpsmp @user")}`)],
         });
       }
       await startGame(message, opponent);

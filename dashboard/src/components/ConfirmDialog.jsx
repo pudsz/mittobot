@@ -1,19 +1,6 @@
 import { useEffect, useRef } from "react";
 import { X } from "lucide-react";
 
-/**
- * Modal confirmation dialog — replaces window.confirm() with a styled UI.
- *
- * Props:
- *   open         – Whether the dialog is visible
- *   title        – Dialog heading
- *   message      – Body text
- *   confirmLabel – Text for the confirm button (default "Confirm")
- *   cancelLabel  – Text for the cancel button (default "Cancel")
- *   variant      – "danger" (red confirm) | "warning" (orange confirm) | "normal" (default)
- *   onConfirm    – Called when user clicks confirm
- *   onCancel     – Called when user clicks cancel, backdrop, or presses Escape
- */
 export default function ConfirmDialog({
   open,
   title,
@@ -27,10 +14,8 @@ export default function ConfirmDialog({
   const confirmRef = useRef(null);
   const dialogRef = useRef(null);
 
-  // Auto-focus confirm button and handle Escape
   useEffect(() => {
     if (!open) return;
-    // Focus confirm button on open
     const timer = setTimeout(() => confirmRef.current?.focus(), 50);
 
     const handler = (e) => {
@@ -39,7 +24,6 @@ export default function ConfirmDialog({
         onCancel?.();
         return;
       }
-      // Trap Tab within dialog
       if (e.key === "Tab" && dialogRef.current) {
         const focusable = dialogRef.current.querySelectorAll(
           'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
@@ -69,17 +53,7 @@ export default function ConfirmDialog({
 
   return (
     <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 2000,
-        background: "rgba(0,0,0,0.6)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 20,
-        animation: "fadeIn 0.15s ease",
-      }}
+      className="palette-overlay"
       onClick={onCancel}
     >
       <div
@@ -87,15 +61,8 @@ export default function ConfirmDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="confirm-dialog-title"
-        style={{
-          background: "var(--bg-alt)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--radius-lg)",
-          width: 420,
-          maxWidth: "100%",
-          boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
-          animation: "scaleIn 0.15s ease",
-        }}
+        className="palette-box"
+        style={{ width: 420 }}
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px 8px" }}>

@@ -69,8 +69,8 @@ export default function BackupTab({ guildId }) {
   if (loading) {
     return (
       <div className="tab active">
-        <Panel><div className="skeleton skeleton-heading" /><div className="skeleton skeleton-text" style={{ width: "70%" }} /></Panel>
-        {[1, 2].map(i => <Panel key={i}><div className="skeleton skeleton-heading" style={{ width: "40%" }} /><div className="skeleton skeleton-text" /></Panel>)}
+        <Panel><div className="skeleton skeleton-heading" /><div className="skeleton skeleton-text skeleton-w70" /></Panel>
+        {[1, 2].map(i => <Panel key={i}><div className="skeleton skeleton-heading skeleton-w40" /><div className="skeleton skeleton-text" /></Panel>)}
       </div>
     );
   }
@@ -78,7 +78,7 @@ export default function BackupTab({ guildId }) {
   return (
     <div className="tab active">
       <Panel icon={HardDrive} title="Server Backups">
-        <p className="muted" style={{ marginBottom: 14 }}>
+        <p className="muted backup-desc-mb">
           Backup your server structure: roles (with permissions), categories, channels (with permissions & settings).
           Restore backs up roles, categories, and channels to a new state. Existing items with the same name are skipped.
         </p>
@@ -97,7 +97,7 @@ export default function BackupTab({ guildId }) {
               onKeyDown={e => { if (e.key === "Enter") handleCreate(); }}
             />
           </div>
-          <div className="row" style={{ marginTop: 14 }}>
+          <div className="row backup-actions-mt">
             <button className="btn green" onClick={handleCreate}><Plus /> Create</button>
             <button className="btn secondary" onClick={() => { setShowForm(false); setName(""); }}>Cancel</button>
           </div>
@@ -105,33 +105,33 @@ export default function BackupTab({ guildId }) {
       )}
 
       {!backups.length ? (
-        <Panel><div className="muted" style={{ textAlign: "center", padding: 20 }}>No backups yet. Create one to save your server structure.</div></Panel>
+        <Panel><div className="panel-empty">No backups yet. Create one to save your server structure.</div></Panel>
       ) : (
         backups.map(b => (
           <Panel compact key={b.id}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <HardDrive size={16} style={{ color: "var(--accent)", flexShrink: 0 }} />
-              <span className="badge info" style={{ flexShrink: 0 }}>#{b.id}</span>
-              <span style={{ fontSize: 13, fontWeight: 500, flex: 1, minWidth: 150 }}>{b.name}</span>
-              <span className="muted" style={{ fontSize: 12, flexShrink: 0 }}>
+            <div className="backup-item-row">
+              <HardDrive size={16} className="backup-item-icon" />
+              <span className="badge info">#{b.id}</span>
+              <span className="backup-item-name flex-1">{b.name}</span>
+              <span className="muted flex-shrink-0">
                 {new Date(b.created_at).toLocaleDateString()} by {b.created_by || "unknown"}
               </span>
-              <button className="btn secondary" onClick={() => handleInfo(b.id)} style={{ padding: "4px 8px", flexShrink: 0 }}>
+              <button className="btn secondary sm" onClick={() => handleInfo(b.id)}>
                 <Info size={14} />
               </button>
-              <button className="btn" onClick={() => handleRestore(b.id, b.name)} disabled={restoring === b.id} style={{ padding: "4px 8px", flexShrink: 0 }}>
+              <button className="btn sm" onClick={() => handleRestore(b.id, b.name)} disabled={restoring === b.id}>
                 <RotateCcw size={14} /> {restoring === b.id ? "..." : "Restore"}
               </button>
-              <button className="btn danger" onClick={() => handleDelete(b.id)} style={{ padding: "4px 8px", flexShrink: 0 }}>
+              <button className="btn danger sm" onClick={() => handleDelete(b.id)}>
                 <Trash2 size={14} />
               </button>
             </div>
             {infoId === b.id && infoData && (
-              <div style={{ marginTop: 8, padding: "8px 12px", background: "var(--surface)", borderRadius: "var(--radius-sm)", fontSize: 12 }}>
+              <div className="backup-info-box">
                 <strong>Backup contents:</strong>{" "}
                 {infoData.data?.roles?.length ?? 0} roles · {infoData.data?.categories?.length ?? 0} categories · {infoData.data?.channels?.length ?? 0} channels
                 {infoData.data?.roles?.length > 0 && (
-                  <div className="muted" style={{ marginTop: 4 }}>
+                  <div className="muted mt-1">
                     Roles: {infoData.data.roles.slice(0, 10).map(r => r.name).join(", ")}{infoData.data.roles.length > 10 ? ` +${infoData.data.roles.length - 10} more` : ""}
                   </div>
                 )}

@@ -74,7 +74,7 @@ export default function StatusTab({ onStatus, admin }) {
           <div className="stat-grid">
             {[1, 2, 3, 4].map((i) => (
               <div className="stat" key={i}>
-                <div className="skeleton skeleton-stat" style={{ height: 80, margin: 0 }} />
+                <div className="skeleton skeleton-stat status-skeleton" />
               </div>
             ))}
           </div>
@@ -84,23 +84,17 @@ export default function StatusTab({ onStatus, admin }) {
               const I = ICONS[icon];
               return (
                 <div className="stat" key={l}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div className="stat-head">
                     <div className="lbl">{l}</div>
                     <I className="stat-icon" />
                   </div>
                   <div className="num" style={color ? { color } : {}}>{n}</div>
                   {pct != null && (
-                    <div style={{ marginTop: 6 }}>
-                      <div style={{ width: "100%", height: 4, background: "var(--bg)", borderRadius: 2, overflow: "hidden" }}>
-                        <div style={{
-                          width: `${Math.min(pct, 100)}%`,
-                          height: "100%",
-                          background: color || "var(--accent)",
-                          borderRadius: 2,
-                          transition: "width 0.5s ease",
-                        }} />
+                    <div className="stat-meter-wrap">
+                      <div className="stat-meter">
+                        <div className="stat-meter-fill" style={{ width: `${Math.min(pct, 100)}%`, background: color || "var(--accent)" }} />
                       </div>
-                      <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>{pct}% used</div>
+                      <div className="stat-meter-label">{pct}% used</div>
                     </div>
                   )}
                 </div>
@@ -111,13 +105,13 @@ export default function StatusTab({ onStatus, admin }) {
       </Panel>
       {admin && status && (
         <Panel icon={Gauge} title="Process Health">
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+          <div className="process-health-grid">
             {/* CPU Load */}
-            <div style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: 14 }}>
-              <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 8 }}>
+            <div className="process-card">
+              <div className="process-card-title">
                 CPU Load Average
               </div>
-              <div style={{ display: "flex", gap: 12 }}>
+              <div className="process-stat-grid">
                 {[
                   { label: "1m", value: status.cpuLoad?.load1 },
                   { label: "5m", value: status.cpuLoad?.load5 },
@@ -128,26 +122,26 @@ export default function StatusTab({ onStatus, admin }) {
                     : 0;
                   const color = loadPct > 80 ? "var(--red)" : loadPct > 50 ? "var(--orange)" : "var(--green)";
                   return (
-                    <div key={label} style={{ textAlign: "center", flex: 1 }}>
-                      <div style={{ fontSize: 22, fontWeight: 700, color }}>{value?.toFixed(1) ?? "—"}</div>
-                      <div style={{ fontSize: 10, color: "var(--text-muted)" }}>{label}</div>
-                      <div style={{ marginTop: 4, height: 3, background: "var(--surface)", borderRadius: 2, overflow: "hidden" }}>
-                        <div style={{ width: `${loadPct}%`, height: "100%", background: color, borderRadius: 2, transition: "width 0.5s ease" }} />
+                    <div key={label} className="process-stat-block">
+                      <div className="process-stat-value" style={{ color }}>{value?.toFixed(1) ?? "—"}</div>
+                      <div className="process-stat-label">{label}</div>
+                      <div className="process-stat-meter">
+                        <div className="process-stat-meter-fill" style={{ width: `${loadPct}%`, background: color }} />
                       </div>
                     </div>
                   );
                 })}
               </div>
-              <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 8 }}>
+              <div className="process-card-meta">
                 {status.cpuLoad?.cpuCount ?? "?"} logical cores
               </div>
             </div>
             {/* Process Uptime */}
-            <div style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: 14 }}>
-              <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 8 }}>
+            <div className="process-card">
+              <div className="process-card-title">
                 Process Uptime
               </div>
-              <div style={{ fontSize: 22, fontWeight: 700 }}>
+              <div className="process-stat-value">
                 {(() => {
                   const sec = status.processUptimeSec ?? 0;
                   const d = Math.floor(sec / 86400);
@@ -158,19 +152,19 @@ export default function StatusTab({ onStatus, admin }) {
                   return `${m}m ${sec % 60}s`;
                 })()}
               </div>
-              <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 4 }}>
+              <div className="process-card-meta">
                 Since last restart
               </div>
             </div>
             {/* Node.js Process Info */}
-            <div style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: 14 }}>
-              <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 8 }}>
+            <div className="process-card">
+              <div className="process-card-title">
                 Node.js Runtime
               </div>
-              <div style={{ fontSize: 13, lineHeight: 1.6 }}>
-                <div>Version: <code style={{ fontSize: 12 }}>{status.nodeRuntime?.version || "?"}</code></div>
-                <div>Platform: <code style={{ fontSize: 12 }}>{status.nodeRuntime?.platform} {status.nodeRuntime?.arch}</code></div>
-                <div>PID: <code style={{ fontSize: 12 }}>{status.nodeRuntime?.pid}</code></div>
+              <div className="process-runtime-list">
+                <div>Version: <code className="process-runtime-code">{status.nodeRuntime?.version || "?"}</code></div>
+                <div>Platform: <code className="process-runtime-code">{status.nodeRuntime?.platform} {status.nodeRuntime?.arch}</code></div>
+                <div>PID: <code className="process-runtime-code">{status.nodeRuntime?.pid}</code></div>
               </div>
             </div>
           </div>
@@ -182,7 +176,7 @@ export default function StatusTab({ onStatus, admin }) {
             <label>Activity Text</label>
             <div className="row">
               <input
-                placeholder="$help | mambo"
+                placeholder={`${status?.prefix || "$"}help | mambo`}
                 value={presText}
                 onChange={(e) => setPresText(e.target.value)}
                 onFocus={() => (presFocused.current = true)}

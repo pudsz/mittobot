@@ -23,16 +23,13 @@ function parseProof(raw) {
 function AttachmentThumb({ att }) {
   const isImage = att.type?.startsWith("image/") || /\.(png|jpg|jpeg|gif|webp)(\?|$)/i.test(att.url);
   return (
-    <a href={att.url} target="_blank" rel="noopener noreferrer" title={att.name}
-      style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 8px",
-        background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
-        textDecoration: "none", color: "var(--text)", fontSize: 12 }}>
+    <a href={att.url} target="_blank" rel="noopener noreferrer" title={att.name} className="cases-attach-thumb">
       {isImage ? (
-        <img src={att.url} alt={att.name} style={{ width: 60, height: 36, objectFit: "cover", borderRadius: 3 }} loading="lazy" />
+        <img src={att.url} alt={att.name} className="cases-attach-thumb-img" loading="lazy" />
       ) : (
         <Image style={{ width: 14, height: 14, color: "var(--text-muted)" }} />
       )}
-      <span style={{ maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{att.name}</span>
+      <span className="cases-attach-thumb-name">{att.name}</span>
     </a>
   );
 }
@@ -40,28 +37,26 @@ function AttachmentThumb({ att }) {
 function ProofSection({ proof }) {
   if (!proof) return null;
   return (
-    <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+    <div className="cases-proof-section">
       {proof.repliedMessage && (
-        <div style={{ background: "var(--bg)", border: "1px solid var(--border)", borderLeft: "3px solid var(--accent)", borderRadius: "var(--radius-sm)", padding: "8px 10px", fontSize: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-            <MessageSquare style={{ width: 12, height: 12, color: "var(--accent)" }} />
-            <span style={{ fontWeight: 600, color: "var(--accent-hover)", fontSize: 11 }}>Replied to {proof.repliedMessage.author}</span>
-            <code style={{ fontSize: 10, background: "none", padding: 0, color: "var(--text-muted)" }}>{proof.repliedMessage.authorId}</code>
+        <div className="cases-proof-replied">
+          <div className="cases-proof-replied-header">
+            <MessageSquare />
+            <span className="cases-proof-replied-author">Replied to {proof.repliedMessage.author}</span>
+            <code className="cases-proof-replied-id">{proof.repliedMessage.authorId}</code>
           </div>
           {proof.repliedMessage.content ? (
-            <div style={{ color: "var(--text-secondary)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 120, overflowY: "auto", lineHeight: 1.4 }}>
-              {proof.repliedMessage.content}
-            </div>
+            <div className="cases-proof-replied-content">{proof.repliedMessage.content}</div>
           ) : <span className="muted" style={{ fontSize: 11 }}>[no text content]</span>}
           {proof.repliedMessage.attachments?.length > 0 && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
+            <div className="cases-proof-attachments-row">
               {proof.repliedMessage.attachments.map((a) => <AttachmentThumb key={a.id || a.url} att={a} />)}
             </div>
           )}
         </div>
       )}
       {proof.attachments?.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+        <div className="cases-proof-attachments">
           {proof.attachments.map((a) => <AttachmentThumb key={a.id || a.url} att={a} />)}
         </div>
       )}
@@ -77,12 +72,14 @@ export default function CasesTab({ guildId }) {
   const [actionFilter, setActionFilter] = useState("all");
   const [severityFilter, setSeverityFilter] = useState("all");
   const [expanded, setExpanded] = useState(new Set());
+  const [prefix, setPrefix] = useState("$");
 
   async function load() {
     setLoading(true);
     try {
-      const { entries: list } = await api("GET", `/api/modlog${guildQuery(guildId)}`);
+      const { entries: list, prefix: commandPrefix } = await api("GET", `/api/modlog${guildQuery(guildId)}`);
       setEntries(list || []);
+      setPrefix(commandPrefix || "$");
     } catch (e) {
       toast(e.message, true);
       setEntries([]);
@@ -129,36 +126,35 @@ export default function CasesTab({ guildId }) {
   return (
     <div className="tab active">
       <Panel icon={FolderOpen} title="Cases">
-        <p className="muted" style={{ marginBottom: 14 }}>
+        <p className="muted mb-4">
           Moderation actions with attached proof — images, files, and replied-to messages.
-          Use <code>$realwarn @user reason</code> while replying to a message or attaching files.
+          Use <code>{prefix}realwarn @user reason</code> while replying to a message or attaching files.
         </p>
 
-        {/* Stats Pills */}
         {stats.total > 0 && (
           <div className="mod-stats-row" style={{ marginBottom: 14 }}>
             <div className="stat-pill"><div className="stat-pill-value">{stats.total}</div><div className="stat-pill-label">Total Cases</div></div>
-            {stats.warn > 0 && <div className="stat-pill" style={{ borderLeftColor: "var(--orange)" }}><div className="stat-pill-value" style={{ color: "var(--orange)" }}>{stats.warn}</div><div className="stat-pill-label">Warns</div></div>}
-            {stats.mute > 0 && <div className="stat-pill" style={{ borderLeftColor: "var(--accent)" }}><div className="stat-pill-value" style={{ color: "var(--accent)" }}>{stats.mute}</div><div className="stat-pill-label">Mutes</div></div>}
-            {stats.kick > 0 && <div className="stat-pill" style={{ borderLeftColor: "var(--orange)" }}><div className="stat-pill-value" style={{ color: "var(--orange)" }}>{stats.kick}</div><div className="stat-pill-label">Kicks</div></div>}
-            {(stats.ban || stats.softban || stats.tempban) > 0 && <div className="stat-pill" style={{ borderLeftColor: "var(--red)" }}><div className="stat-pill-value" style={{ color: "var(--red)" }}>{(stats.ban || 0) + (stats.softban || 0) + (stats.tempban || 0)}</div><div className="stat-pill-label">Bans</div></div>}
-            {hasImages && <div className="stat-pill" style={{ borderLeftColor: "#bc8cff" }}><div className="stat-pill-value" style={{ color: "#bc8cff" }}>📸</div><div className="stat-pill-label">With Images</div></div>}
+            {stats.warn > 0 && <div className="stat-pill cases-stat-pill cases-stat-pill--warn"><div className="stat-pill-value">{stats.warn}</div><div className="stat-pill-label">Warns</div></div>}
+            {stats.mute > 0 && <div className="stat-pill cases-stat-pill cases-stat-pill--mute"><div className="stat-pill-value">{stats.mute}</div><div className="stat-pill-label">Mutes</div></div>}
+            {stats.kick > 0 && <div className="stat-pill cases-stat-pill cases-stat-pill--kick"><div className="stat-pill-value">{stats.kick}</div><div className="stat-pill-label">Kicks</div></div>}
+            {(stats.ban || stats.softban || stats.tempban) > 0 && <div className="stat-pill cases-stat-pill cases-stat-pill--ban"><div className="stat-pill-value">{(stats.ban || 0) + (stats.softban || 0) + (stats.tempban || 0)}</div><div className="stat-pill-label">Bans</div></div>}
+            {hasImages && <div className="stat-pill cases-stat-pill cases-stat-pill--images"><div className="stat-pill-value">📸</div><div className="stat-pill-label">With Images</div></div>}
           </div>
         )}
 
-        <div className="row" style={{ marginBottom: 12 }}>
-          <div className="field" style={{ flex: 1, margin: 0, minWidth: 200 }}>
+        <div className="row cases-filter-row">
+          <div className="field cases-filter-field">
             <label>Search</label>
             <input placeholder="User ID, moderator ID, or reason..." value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
-          <div className="field" style={{ flex: 0.4, margin: 0, minWidth: 100 }}>
+          <div className="field cases-filter-action">
             <label>Action</label>
             <select value={actionFilter} onChange={(e) => setActionFilter(e.target.value)}>
               <option value="all">All actions</option>
               {actions.map((a) => <option key={a} value={a}>{a}</option>)}
             </select>
           </div>
-          <div className="field" style={{ flex: 0.4, margin: 0, minWidth: 100 }}>
+          <div className="field cases-filter-severity">
             <label>Severity</label>
             <select value={severityFilter} onChange={(e) => setSeverityFilter(e.target.value)}>
               <option value="all">All severities</option>
@@ -169,7 +165,7 @@ export default function CasesTab({ guildId }) {
               <option value="5">⛔ Severe (Ban)</option>
             </select>
           </div>
-          <button className="btn secondary" onClick={load} style={{ alignSelf: "flex-end" }}>
+          <button className="btn secondary cases-refresh-btn" onClick={load}>
             <RotateCw /> Refresh
           </button>
         </div>
@@ -196,18 +192,11 @@ export default function CasesTab({ guildId }) {
                   <div
                     className="mod-log-row visible"
                     onClick={() => toggleExpand(entry.id)}
-                    style={{
-                      cursor: "pointer",
-                      gridTemplateColumns: "100px 1fr 100px 30px",
-                    }}
+                    style={{ cursor: "pointer", gridTemplateColumns: "100px 1fr 100px 30px" }}
                   >
                     <div className="mod-log-cell" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <div style={{
-                        width: 8, height: 8, borderRadius: "50%",
-                        background: meta.color, flexShrink: 0,
-                        boxShadow: `0 0 6px ${meta.color}66`,
-                      }} />
-                      <span className="mod-log-action" style={{ color: meta.color, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                      <div className="cases-dot" style={{ background: meta.color, boxShadow: `0 0 6px ${meta.color}66` }} />
+                      <span className="mod-log-action cases-action-label" style={{ color: meta.color }}>
                         {meta.label}
                       </span>
                     </div>

@@ -17,6 +17,10 @@ function errEmbed(desc) {
   return new EmbedBuilder().setColor(0xed4245).setDescription(`❌ ${desc}`);
 }
 
+function usage(ctx, text) {
+  return `\`${ctx?.utils?.PREFIX || "$"}${text}\``;
+}
+
 function formatCoins(n) {
   if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
   if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
@@ -155,9 +159,9 @@ module.exports = [
   // pay
   {
     name: "pay", description: "Transfer coins to another user", category: CATEGORY,
-    prefix: async (m, a) => {
+    prefix: async (m, a, ctx) => {
       const target = m.mentions.users.first();
-      if (!target) return m.reply({ embeds: [errEmbed("Usage: `$pay @user amount`")] });
+      if (!target) return m.reply({ embeds: [errEmbed(`Usage: ${usage(ctx, "pay @user amount")}`)] });
       const amount = parseInt(a[1], 10);
       if (!amount || amount < 1) return m.reply({ embeds: [errEmbed("Invalid amount.")] });
       return m.reply({ embeds: [await cmdPay(m.guild, m.guild.id, m.author.id, m.author.tag, target.id, target.tag, amount)] });
@@ -174,21 +178,17 @@ module.exports = [
   // leaderboard (prefix uses "lb" alias too)
   {
     name: "leaderboard", description: "View the richest members", category: CATEGORY,
+    aliases: ["lb"],
     prefix: async (m) => m.reply({ embeds: [await cmdLeaderboard(m.guild, m.guild.id)] }),
     slash: new SlashCommandBuilder().setName("leaderboard").setDescription("View the richest members"),
     execute: async (i) => i.reply({ embeds: [await cmdLeaderboard(i.guild, i.guild.id)] }),
   },
-  {
-    name: "lb", description: "View the richest members (alias for leaderboard)", category: CATEGORY,
-    prefix: async (m) => m.reply({ embeds: [await cmdLeaderboard(m.guild, m.guild.id)] }),
-    // No slash command for the alias — just prefix
-  },
   // gamble
   {
     name: "gamble", description: "Gamble your coins for a chance to double them", category: CATEGORY,
-    prefix: async (m, a) => {
+    prefix: async (m, a, ctx) => {
       const amount = parseInt(a[0], 10);
-      if (!amount || amount < 1) return m.reply({ embeds: [errEmbed("Usage: `$gamble amount`")] });
+      if (!amount || amount < 1) return m.reply({ embeds: [errEmbed(`Usage: ${usage(ctx, "gamble amount")}`)] });
       return m.reply({ embeds: [await cmdGamble(m.guild.id, m.author.id, m.author.tag, amount)] });
     },
     slash: new SlashCommandBuilder().setName("gamble").setDescription("Gamble your coins for a chance to double them")
@@ -201,9 +201,9 @@ module.exports = [
   // rob
   {
     name: "rob", description: "Attempt to rob another user", category: CATEGORY,
-    prefix: async (m) => {
+    prefix: async (m, a, ctx) => {
       const target = m.mentions.users.first();
-      if (!target) return m.reply({ embeds: [errEmbed("Usage: `$rob @user`")] });
+      if (!target) return m.reply({ embeds: [errEmbed(`Usage: ${usage(ctx, "rob @user")}`)] });
       return m.reply({ embeds: [await cmdRob(m.guild.id, m.author.id, m.author.tag, target.id, target.tag)] });
     },
     slash: new SlashCommandBuilder().setName("rob").setDescription("Attempt to rob another user")

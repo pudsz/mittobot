@@ -44,13 +44,13 @@ export default function SettingsTab({ onReset }) {
       <div className="tab active">
         <Panel>
           <div className="skeleton skeleton-heading" />
-          <div className="skeleton skeleton-text" style={{ width: "70%" }} />
-          <div className="skeleton skeleton-text" style={{ width: "50%" }} />
-          <div style={{ marginTop: 20 }}>
+          <div className="skeleton skeleton-text skeleton-w70" />
+          <div className="skeleton skeleton-text skeleton-w50" />
+          <div className="settings-skel-mt">
             {[1, 2, 3, 4, 5].map((i) => (
-              <div key={i} style={{ marginBottom: 16 }}>
-                <div className="skeleton skeleton-text" style={{ width: "20%", height: 10, marginBottom: 8 }} />
-                <div className="skeleton" style={{ height: 40, borderRadius: "var(--radius-sm)" }} />
+              <div key={i} className="mb-4">
+                <div className="skeleton skeleton-text settings-skel-sub mb-2" />
+                <div className="skeleton skeleton-block" />
               </div>
             ))}
           </div>
@@ -64,11 +64,11 @@ export default function SettingsTab({ onReset }) {
   return (
     <div className="tab active">
       <Panel icon={Cog} title="Bot Settings">
-        <div className="card" style={{ marginBottom: 20, border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: 16 }}>
-          <div className="row" style={{ marginBottom: 12 }}>
-            <div style={{ flex: 1 }}>
-              <strong><Wrench style={{ width: 16, height: 16, marginRight: 6 }} />Maintenance Mode</strong>
-              <div className="muted" style={{ fontSize: 13 }}>When enabled, all commands and AI responses are blocked. Only bot owners can use the bot.</div>
+        <div className="card settings-card">
+          <div className="row mb-3">
+            <div className="flex-1">
+              <strong><Wrench className="settings-icon-inline" />Maintenance Mode</strong>
+              <div className="muted settings-text-base">When enabled, all commands and AI responses are blocked. Only bot owners can use the bot.</div>
             </div>
             <Toggle
               checked={values.maintenanceMode === true}
@@ -77,22 +77,22 @@ export default function SettingsTab({ onReset }) {
           </div>
           {(values.maintenanceMode === true) && (
             <div>
-              <label style={{ fontSize: 13, marginBottom: 4, display: "block" }}>Custom Maintenance Message</label>
+              <label className="settings-label-sm">Custom Maintenance Message</label>
               <div className="row">
                 <input
                   value={values.maintenanceMessage || ""}
                   onChange={(e) => setValues({ ...values, maintenanceMessage: e.target.value })}
                   onBlur={() => { if (values.maintenanceMessage !== undefined) saveSetting("maintenanceMessage"); }}
                   placeholder="🔧 The bot is currently under maintenance. Please try again later."
-                  style={{ flex: 1 }}
+                  className="flex-1"
                 />
               </div>
-              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>This message will be shown to users when they try to use commands during maintenance. Auto-saves when you click away.</div>
+              <div className="hint">This message will be shown to users when they try to use commands during maintenance. Auto-saves when you click away.</div>
             </div>
           )}
         </div>
 
-        <div className="muted" style={{ marginBottom: 14 }}>
+        <div className="muted settings-desc-mb">
           Variables for fake-mod messages: <code>{"{user}"}</code> <code>{"{reason}"}</code> <code>{"{channel}"}</code>
         </div>
         <div>

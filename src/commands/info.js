@@ -5,6 +5,10 @@ const { resolveUserId, errorEmbed } = require("../utils");
 const CATEGORY = "info";
 const BLURPLE = 0x5865f2;
 
+function usage(ctx, text) {
+  return `\`${ctx?.utils?.PREFIX || "$"}${text}\``;
+}
+
 const ts = (date) => `<t:${Math.floor(date.getTime() / 1000)}:F> (<t:${Math.floor(date.getTime() / 1000)}:R>)`;
 
 // ─── userinfo ────────────────────────────────────────────────
@@ -156,7 +160,7 @@ const labelFor = (key) => key.replace(/([a-z0-9])([A-Z])/g, "$1 $2"); // ManageM
 
 // Normalized alias -> { flags: [bigint], label, note? }. Every Discord permission
 // is auto-indexed by its flag key/label; curated human aliases are added on top.
-function buildPermIndex() {
+function buildPermIndex(ctx) {
   const index = new Map();
   for (const [key, bit] of Object.entries(PermissionFlagsBits)) {
     const entry = { flags: [bit], label: labelFor(key) };
@@ -175,7 +179,7 @@ function buildPermIndex() {
   // BypassSlowmode is a real Discord permission (1 << 52). Members with Manage Messages
   // or Manage Channels also bypass slowmode in practice, so surface them as a note.
   alias(["bypass slowmode", "slowmode bypass", "slowmode", "ignore slowmode", "no slowmode"], "BypassSlowmode", {
-    note: "Members with **Manage Messages** or **Manage Channels** also bypass slowmode in practice — use `$whohas manage messages` / `$whohas manage channels` to find those.",
+    note: `Members with **Manage Messages** or **Manage Channels** also bypass slowmode in practice — use ${usage(ctx, "whohas manage messages")} / ${usage(ctx, "whohas manage channels")} to find those.`,
   });
   alias(["admin"], "Administrator");
   alias(["ban", "ban members"], "BanMembers");
@@ -201,10 +205,9 @@ function buildPermIndex() {
   alias(["manage emojis", "emojis", "manage emojis and stickers", "manage expressions"], "ManageGuildExpressions");
   return index;
 }
-const PERM_INDEX = buildPermIndex();
-
-function resolvePerm(input) {
+function resolvePerm(input, ctx) {
   const key = norm(input || "");
+  const PERM_INDEX = buildPermIndex(ctx);
   if (!key) return null;
   if (PERM_INDEX.has(key)) return PERM_INDEX.get(key);
   // Fall back to a substring match (e.g. "manage mess" -> Manage Messages).
@@ -243,9 +246,9 @@ function whoHasEmbed(guild, perm) {
   return e;
 }
 
-function whoHasReply(guild, query) {
-  if (!query) return errorEmbed("Give a permission to look up, e.g. `$whohas bypass slowmode` or `$whohas ban members`.");
-  const perm = resolvePerm(query);
+function whoHasReply(guild, query, ctx) {
+  if (!query) return errorEmbed(`Give a permission to look up, e.g. ${usage(ctx, "whohas bypass slowmode")} or ${usage(ctx, "whohas ban members")}.`);
+  const perm = resolvePerm(query, ctx);
   if (!perm)
     return errorEmbed(`Unknown permission \`${query}\`. Try names like \`bypass slowmode\`, \`ban members\`, \`manage roles\`, \`administrator\`, or \`timeout\`.`);
   return whoHasEmbed(guild, perm);
@@ -282,14 +285,14 @@ module.exports = [
   },
   {
     name: "whohas", description: "List which roles have a given permission", category: CATEGORY,
-    prefix: (m, a) => m.reply({ embeds: [whoHasReply(m.guild, a.join(" "))] }),
+    prefix: (m, a, ctx) => m.reply({ embeds: [whoHasReply(m.guild, a.join(" "), ctx)] }),
     slash: new SlashCommandBuilder().setName("whohas").setDescription("List which roles have a given permission")
       .addStringOption(o => o.setName("permission").setDescription("e.g. bypass slowmode, ban members, manage roles, administrator").setRequired(true)),
-    execute: (i) => i.reply({ embeds: [whoHasReply(i.guild, i.options.getString("permission"))] }),
+    execute: (i, ctx) => i.reply({ embeds: [whoHasReply(i.guild, i.options.getString("permission"), ctx)] }),
   },
   {
     name: "avatar", description: "Show a user's avatar", category: CATEGORY,
-    prefix: async (m, a) => {
+    prefix: async (m, a, ctx) => {
       const id = resolveUserId(a[0]) || m.author.id;
       const user = await safe.orNull(m.client.users.fetch(id), `avatar fetch user ${id}`);
       if (!user) return m.reply({ embeds: [errorEmbed("User not found.")] });
@@ -327,7 +330,7 @@ module.exports = [
         ).filter(Boolean);
       }
       if (!roles || roles.length === 0) {
-        return m.reply({ embeds: [errorEmbed("Mention at least one role, e.g. `$trackroles @Owner @Staff`")] });
+        return m.reply({ embeds: [errorEmbed(`Mention at least one role, e.g. ${usage(ctx, "trackroles @Owner @Staff")}`)] });
       }
 
       try {
@@ -421,13 +424,13 @@ module.exports = [
   },
   {
     name: "untrackroles", description: "Stop live-tracking roles in this channel", category: CATEGORY,
-    prefix: async (m) => {
+    prefix: async (m, a, ctx) => {
       try {
         const roletracker = require("../roletracker");
         const tracks = roletracker.getTracked(m.guild.id);
         const track = tracks.find(t => t.channelId === m.channel.id);
         if (!track) {
-          return m.reply({ embeds: [errorEmbed("No tracked roles in this channel. Reply to a tracked message or use `$trackroles` to start tracking.")] });
+          return m.reply({ embeds: [errorEmbed(`No tracked roles in this channel. Reply to a tracked message or use ${usage(ctx, "trackroles")} to start tracking.`)] });
         }
         await roletracker.removeTrack(m.guild.id, m.channel.id);
 
@@ -482,12 +485,12 @@ module.exports = [
   },
   {
     name: "trackedroles", description: "List all active role tracks in the server", category: CATEGORY,
-    prefix: (m) => {
+    prefix: (m, a, ctx) => {
       try {
         const roletracker = require("../roletracker");
         const tracks = roletracker.getTracked(m.guild.id);
         if (tracks.length === 0) {
-          return m.reply({ embeds: [errorEmbed("No active role tracks in this server. Use `$trackroles @role1 @role2` to start one.")] });
+          return m.reply({ embeds: [errorEmbed(`No active role tracks in this server. Use ${usage(ctx, "trackroles @role1 @role2")} to start one.`)] });
         }
         const lines = tracks.map((t, i) => {
           const channel = m.guild.channels.cache.get(t.channelId);
@@ -536,7 +539,7 @@ module.exports = [
   },
   {
     name: "listroles", description: "List members in specific roles", category: CATEGORY,
-    prefix: (m, a) => {
+    prefix: (m, a, ctx) => {
       let roles;
       if (m.mentions.roles.size > 0) {
         // Parse role mentions from message content to preserve the order the user typed them.
@@ -552,7 +555,7 @@ module.exports = [
         ).filter(Boolean);
       }
       if (!roles || roles.length === 0) {
-        return m.reply({ embeds: [errorEmbed("Mention at least one role, e.g. `$listroles @Owner @Staff`")] });
+        return m.reply({ embeds: [errorEmbed(`Mention at least one role, e.g. ${usage(ctx, "listroles @Owner @Staff")}`)] });
       }
       const text = buildListRolesText(roles);
       const chunks = splitRoleChunks(text);

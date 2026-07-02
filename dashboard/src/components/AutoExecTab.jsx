@@ -41,17 +41,17 @@ function ChannelSelectField({ guildId, value, onChange, placeholder = "Channel I
       .catch(() => setChannels([]));
   }, [guildId]);
   return (
-    <div style={{ display: "flex", gap: 8 }}>
+    <div className="row">
       <input
+        className="autoexec-channel-input"
         placeholder={placeholder}
         value={value || ""}
         onChange={(e) => onChange(e.target.value)}
-        style={{ width: 200 }}
       />
       <select
+        className="flex-1"
         value=""
         onChange={(e) => e.target.value && onChange(e.target.value)}
-        style={{ flex: 1 }}
       >
         <option value="">— pick a text channel —</option>
         {channels.map((c) => (
@@ -165,7 +165,7 @@ export default function AutoExecTab({ guildId }) {
   return (
     <div className="tab active">
       <Panel icon={Zap} title="Auto-Execute Rules">
-        <p className="muted" style={{ marginBottom: 14 }}>
+        <p className="muted autoexec-panel-copy">
           Define trigger → condition → action rules that run automatically when moderation events occur.
           Rules are evaluated in priority order. <strong>Note:</strong> The runtime engine is now active —
           rules will fire when triggered.
@@ -174,15 +174,15 @@ export default function AutoExecTab({ guildId }) {
       </Panel>
 
       {!rules?.length && !editRule ? (
-        <Panel><div className="muted" style={{ textAlign: "center", padding: 20 }}>No auto-exec rules configured yet. Click "New Rule" to create one.</div></Panel>
+        <Panel><div className="muted autoexec-empty-state">No auto-exec rules configured yet. Click "New Rule" to create one.</div></Panel>
       ) : (
         rules?.map((rule, idx) => (
           <Panel compact key={rule.id || idx}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div className="row autoexec-rule-row">
               <Toggle checked={rule.enabled} onChange={(v) => toggleRule(rule.id, v)} />
-              <span className="cmd-name" style={{ fontSize: 13 }}>{TRIGGER_EVENTS.find((e) => e.id === rule.trigger_event)?.label || rule.trigger_event}</span>
+              <span className="cmd-name autoexec-trigger-name">{TRIGGER_EVENTS.find((e) => e.id === rule.trigger_event)?.label || rule.trigger_event}</span>
               <span className="badge info">#{rule.priority || 0}</span>
-              <span className="muted" style={{ fontSize: 12, flex: 1 }}>{rule.actions?.length || 0} action{(rule.actions?.length || 0) !== 1 ? "s" : ""}</span>
+              <span className="muted flex-1">{rule.actions?.length || 0} action{(rule.actions?.length || 0) !== 1 ? "s" : ""}</span>
               <button className="btn secondary" onClick={() => startEdit(idx)}>Edit</button>
               <button className="btn danger" onClick={() => deleteRule(rule.id)}><Trash2 /> Delete</button>
             </div>
@@ -213,28 +213,28 @@ export default function AutoExecTab({ guildId }) {
           )}
           <div className="field">
             <label>Priority (lower = runs first)</label>
-            <input type="number" min="0" max="1000" value={editRule.priority || 0} style={{ width: 100 }} onChange={(e) => updRule({ priority: parseInt(e.target.value, 10) || 0 })} />
+            <input type="number" min="0" max="1000" value={editRule.priority || 0} className="autoexec-priority-input" onChange={(e) => updRule({ priority: parseInt(e.target.value, 10) || 0 })} />
           </div>
           <div className="field">
             <label>Actions (all actions in a rule are executed when triggered)</label>
             {editRule.actions.map((action, idx) => (
-              <div key={idx} style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: 12, marginBottom: 8 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                  <select value={action.type} style={{ flex: 1 }} onChange={(e) => updAction(idx, { type: e.target.value })}>
+              <div key={idx} className="autoexec-action-card mb-2">
+                <div className="row mb-2">
+                  <select value={action.type} className="flex-1" onChange={(e) => updAction(idx, { type: e.target.value })}>
                     {ACTION_TYPES.map((at) => <option key={at.id} value={at.id}>{at.label}</option>)}
                   </select>
-                  <button className="btn danger" onClick={() => removeAction(idx)} style={{ padding: "4px 8px" }}><Trash2 /> Remove</button>
+                  <button className="btn danger sm" onClick={() => removeAction(idx)}><Trash2 /> Remove</button>
                 </div>
-                <div className="hint" style={{ marginBottom: 6 }}>{ACTION_TYPES.find((a) => a.id === action.type)?.desc || ""}</div>
+                <div className="hint autoexec-hint-mb">{ACTION_TYPES.find((a) => a.id === action.type)?.desc || ""}</div>
                 {(action.type === "dm_user" || action.type === "dm_mod" || action.type === "log_channel") && (
-                  <textarea style={{ minHeight: 60 }} placeholder="Message content (supports {user}, {reason}, {server}, etc.)" value={action.message || ""} onChange={(e) => updAction(idx, { message: e.target.value })} />
+                  <textarea className="autoexec-action-msg" placeholder="Message content (supports {user}, {reason}, {server}, etc.)" value={action.message || ""} onChange={(e) => updAction(idx, { message: e.target.value })} />
                 )}
                 {(action.type === "add_role" || action.type === "remove_role") && (
                   <input placeholder="Role ID" value={action.roleId || ""} onChange={(e) => updAction(idx, { roleId: e.target.value })} />
                 )}
                 {action.type === "send_channel" && (
                   <>
-                    <div className="hint" style={{ marginTop: 4 }}>Destination channel + optional ping.</div>
+                    <div className="hint autoexec-hint-mt">Destination channel + optional ping.</div>
                     <ChannelSelectField
                       guildId={guildId}
                       value={action.channelId}
@@ -242,13 +242,13 @@ export default function AutoExecTab({ guildId }) {
                       placeholder="Destination channel ID"
                     />
                     <input
+                      className="autoexec-field-mt"
                       placeholder='Mention: "everyone", "here", or a role ID'
                       value={action.mention || ""}
                       onChange={(e) => updAction(idx, { mention: e.target.value })}
-                      style={{ marginTop: 6 }}
                     />
                     <textarea
-                      style={{ minHeight: 60, marginTop: 6 }}
+                      className="autoexec-channel-msg"
                       placeholder="Message content (supports {user}, {emoji}, {message}, etc.)"
                       value={action.message || ""}
                       onChange={(e) => updAction(idx, { message: e.target.value })}
@@ -257,13 +257,13 @@ export default function AutoExecTab({ guildId }) {
                 )}
               </div>
             ))}
-            <button className="btn secondary" onClick={addAction} style={{ marginTop: 4 }}><Plus /> Add Action</button>
+            <button className="btn secondary autoexec-add-action-btn" onClick={addAction}><Plus /> Add Action</button>
           </div>
           <div className="field">
             <label>Enabled</label>
             <Toggle checked={editRule.enabled !== false} onChange={(v) => updRule({ enabled: v })} />
           </div>
-          <div className="row" style={{ marginTop: 14 }}>
+          <div className="row autoexec-btn-row-mt">
             <button className="btn green" onClick={saveRule}><Save /> Save Rule</button>
             <button className="btn secondary" onClick={cancelEdit}>Cancel</button>
             {!editRule._isNew && editRule.id && <button className="btn danger" onClick={() => deleteRule(editRule.id)}><Trash2 /> Delete</button>}

@@ -15,28 +15,18 @@ function formatTime(ts) {
   return d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-// Avatar circle: Discord CDN image if available, otherwise gradient + initial letter.
 function AvatarCircle({ url, name, size = 40, fontSize = 16, selected = false }) {
   const initial = (name || "?").slice(0, 1).toUpperCase();
   return (
     <div
+      className={`conv-avatar-circle${selected ? " conv-avatar-circle--selected" : ""}`}
       style={{
         width: size,
         height: size,
-        borderRadius: "50%",
+        fontSize,
         background: url
           ? `url(${url}) center/cover no-repeat`
           : "linear-gradient(135deg, var(--accent), var(--green))",
-        color: "#fff",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        fontSize,
-        fontWeight: 700,
-        flexShrink: 0,
-        overflow: "hidden",
-        border: selected ? "2px solid var(--accent)" : "none",
-        boxShadow: selected ? "0 0 0 2px var(--accent-subtle)" : "none",
       }}
       title={name}
     >
@@ -45,46 +35,18 @@ function AvatarCircle({ url, name, size = 40, fontSize = 16, selected = false })
   );
 }
 
-// Private-user list item: avatar + name + last-active time, hover affordant.
 function PrivateUserCard({ user, onClick }) {
   return (
-    <button
-      onClick={onClick}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 12,
-        padding: "10px 14px",
-        background: "var(--surface)",
-        border: "1px solid var(--border)",
-        borderRadius: 8,
-        cursor: "pointer",
-        transition: "background var(--transition-fast), border-color var(--transition-fast)",
-        textAlign: "left",
-        width: "100%",
-        color: "var(--text)",
-        fontSize: 13,
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.borderColor = "var(--accent)";
-        e.currentTarget.style.background = "var(--accent-subtle)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.borderColor = "var(--border)";
-        e.currentTarget.style.background = "var(--surface)";
-      }}
-    >
+    <button onClick={onClick} className="conv-user-card">
       <AvatarCircle url={user.avatarUrl} name={user.displayName} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: 600, fontSize: 14 }}>{user.displayName}</div>
-        <div
-          title="The user's most recent message across all of their DM threads, not just the one you'll open."
-          style={{ fontSize: 11, color: "var(--muted)", marginTop: 2, cursor: "help", borderBottom: "1px dotted var(--muted)" }}
-        >
+      <div className="conv-user-body">
+        <div className="conv-user-card-name">{user.displayName}</div>
+        <div className="conv-user-card-meta"
+          title="The user's most recent message across all of their DM threads, not just the one you'll open.">
           Last turn (across DMs) {formatTime(user.lastActive)}
         </div>
       </div>
-      <span style={{ color: "var(--muted)", fontSize: 20, flexShrink: 0 }}>›</span>
+      <span className="conv-user-card-chevron">›</span>
     </button>
   );
 }
@@ -129,26 +91,17 @@ function DiagModal({ open, onClose }) {
 
   if (!open) return null;
   return (
-    <div
-      onClick={onClose}
-      style={{
-        position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)",
-        display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000,
-      }}
-    >
+    <div onClick={onClose} className="conv-diag-overlay">
       <div
         role="dialog"
         aria-modal="true"
         aria-label="AI conversations DB stats"
         onClick={(e) => e.stopPropagation()}
-        style={{
-          background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10,
-          padding: 20, maxWidth: 720, width: "92vw", maxHeight: "80vh", overflowY: "auto",
-        }}
+        className="conv-diag-modal"
       >
-        <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
-          <h3 style={{ margin: 0, flex: 1 }}>AI conversations — DB stats</h3>
-          <button className="btn secondary" onClick={onClose} style={{ padding: "4px 10px" }}>Close</button>
+        <div className="conv-diag-header">
+          <h3>AI conversations — DB stats</h3>
+          <button className="btn secondary sm" onClick={onClose}>Close</button>
         </div>
         {loading ? (
           <div className="muted">Loading...</div>
@@ -156,7 +109,7 @@ function DiagModal({ open, onClose }) {
           <div className="muted" style={{ color: "var(--danger, #d44)" }}>{err}</div>
         ) : !data ? null : (
           <>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+            <div className="conv-diag-badge-row">
               <span className="badge">Total rows: {data.total}</span>
               {data.byScope.map((s) => (
                 <span key={s.scope ?? "null"} className="badge">
@@ -171,7 +124,7 @@ function DiagModal({ open, onClose }) {
             </div>
             {/* The two tables below are rendered independently and intentionally do not
                 cross-align — `byThread` is sorted by activity, `sample` by row recency. */}
-            <h4 style={{ marginTop: 12, marginBottom: 6, fontSize: 13 }}>Top active threads</h4>
+            <h4 className="conv-diag-section-title">Top active threads</h4>
             <table>
               <thead>
                 <tr><th>scope</th><th>guild</th><th>channel</th><th>user</th><th>count</th><th>last</th></tr>
@@ -192,7 +145,7 @@ function DiagModal({ open, onClose }) {
 
             {data.sample && data.sample.length > 0 && (
               <>
-                <h4 style={{ marginTop: 16, marginBottom: 6, fontSize: 13 }}>Recent 3 rows</h4>
+                <h4 className="conv-diag-section-title" style={{ marginTop: 16 }}>Recent 3 rows</h4>
                 <table>
                   <thead>
                     <tr><th>when</th><th>role</th><th>scope</th><th>guild</th><th>channel</th><th>user</th><th>len</th></tr>
@@ -228,8 +181,8 @@ function DiagModal({ open, onClose }) {
 function EmptyState({ fetchError, selectedScope, usersCount, onSwitchToAll, onShowDiag, onRetry }) {
   const filteredCtas =
     !fetchError && (selectedScope === "global" || selectedScope === "private") ? (
-      <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 12 }}>
-        <button className="btn secondary" onClick={onSwitchToAll}>Switch to “All scopes”</button>
+      <div className="conv-empty-ctas">
+        <button className="btn secondary" onClick={onSwitchToAll}>Switch to "All scopes"</button>
         <button className="btn secondary" onClick={onShowDiag}>DB stats</button>
       </div>
     ) : null;
@@ -239,7 +192,7 @@ function EmptyState({ fetchError, selectedScope, usersCount, onSwitchToAll, onSh
   if (fetchError) {
     body = `Failed to load logs: ${fetchError}`;
     ctas = (
-      <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 12 }}>
+      <div className="conv-empty-ctas">
         <button className="btn secondary" onClick={onRetry}>Retry</button>
         <button className="btn secondary" onClick={onShowDiag}>DB stats</button>
       </div>
@@ -258,13 +211,12 @@ function EmptyState({ fetchError, selectedScope, usersCount, onSwitchToAll, onSh
 
   return (
     <Panel>
-      <p className="muted" style={{ textAlign: "center", margin: 0 }}>{body}</p>
+      <p className="muted conv-empty-text">{body}</p>
       {ctas}
     </Panel>
   );
 }
 
-// Chat-history bubble rendering for a selected thread. Auto-scrolls to bottom.
 function ChatBubbleView({ logs, user, emptyText }) {
   const scrollRef = useRef(null);
   useEffect(() => {
@@ -273,29 +225,16 @@ function ChatBubbleView({ logs, user, emptyText }) {
 
   return (
     <>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, padding: "4px 2px" }}>
+      <div className="conv-chat-header">
         <AvatarCircle url={user?.avatarUrl} name={user?.displayName} size={40} fontSize={15} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: 15 }}>{user?.displayName || "Thread"}</div>
-          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+        <div className="conv-chat-header-info">
+          <div className="conv-chat-header-name">{user?.displayName || "Thread"}</div>
+          <div className="conv-chat-header-meta">
             {logs.length} message{logs.length === 1 ? "" : "s"} in this thread
           </div>
         </div>
       </div>
-      <div
-        ref={scrollRef}
-        style={{
-          background: "var(--bg)",
-          border: "1px solid var(--border)",
-          borderRadius: 8,
-          padding: 16,
-          maxHeight: 540,
-          overflowY: "auto",
-          display: "flex",
-          flexDirection: "column",
-          gap: 10,
-        }}
-      >
+      <div ref={scrollRef} className="conv-chat-scroll">
         {logs.length === 0 && (
           <div className="muted" style={{ textAlign: "center", padding: 20 }}>
             {emptyText || "No conversation turns yet for this thread."}
@@ -304,41 +243,9 @@ function ChatBubbleView({ logs, user, emptyText }) {
         {logs.map((entry) => {
           const isUser = entry.role === "user";
           return (
-            <div
-              key={entry.id}
-              style={{
-                display: "flex",
-                justifyContent: isUser ? "flex-end" : "flex-start",
-                gap: 8,
-              }}
-            >
-              <div
-                style={{
-                  maxWidth: "75%",
-                  padding: "10px 14px",
-                  borderRadius: 16,
-                  background: isUser ? "var(--accent)" : "var(--surface)",
-                  border: `1px solid ${isUser ? "var(--accent)" : "var(--border)"}`,
-                  color: isUser ? "#fff" : "var(--text)",
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
-                  fontSize: 13,
-                  borderTopRightRadius: isUser ? 4 : 16,
-                  borderTopLeftRadius: isUser ? 16 : 4,
-                  lineHeight: 1.5,
-                  boxShadow: "0 1px 2px rgba(0, 0, 0, 0.06)",
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 10,
-                    color: isUser ? "rgba(255, 255, 255, 0.85)" : "var(--muted)",
-                    marginBottom: 4,
-                    fontWeight: 600,
-                    letterSpacing: 0.3,
-                    textTransform: "uppercase",
-                  }}
-                >
+            <div key={entry.id} className={`conv-bubble-row conv-bubble-row--${isUser ? "user" : "bot"}`}>
+              <div className={`conv-bubble conv-bubble--${isUser ? "user" : "bot"}`}>
+                <div className={`conv-bubble-label conv-bubble-label--${isUser ? "user" : "bot"}`}>
                   {isUser ? (entry.displayName || "User") : "Bot"} · {formatTime(entry.timestamp)}
                 </div>
                 {entry.content}
@@ -456,25 +363,23 @@ export default function ConversationsTab({ guildId }) {
   return (
     <div className="tab active">
       <Panel icon={MessageSquare} title="AI Conversation Logs">
-        <p className="muted" style={{ marginBottom: 12 }}>
+        <p className="muted mb-3">
           AI conversation history. Pick a scope to filter:
         </p>
-        <div className="row" style={{ marginBottom: 10, flexWrap: "wrap", gap: 6 }}>
+        <div className="row conv-toolbar">
           <button
             className={`btn ${selectedScope === "" ? "" : "secondary"}`}
             onClick={() => selectScope("")}
           >All scopes</button>
           <button
-            className={`btn ${selectedScope === "global" ? "green" : "secondary"}`}
+            className={`btn ${selectedScope === "global" ? "green" : "secondary"} conv-scope-btn`}
             onClick={() => selectScope("global")}
-            style={{ display: "flex", alignItems: "center", gap: 4 }}
           >
             <Globe style={{ width: 14, height: 14 }} /> Global (per-channel threads)
           </button>
           <button
-            className={`btn ${selectedScope === "private" ? "green" : "secondary"}`}
+            className={`btn ${selectedScope === "private" ? "green" : "secondary"} conv-scope-btn`}
             onClick={() => selectScope("private")}
-            style={{ display: "flex", alignItems: "center", gap: 4 }}
           >
             <Lock style={{ width: 14, height: 14 }} /> Private (per-user DM threads)
           </button>
@@ -486,13 +391,11 @@ export default function ConversationsTab({ guildId }) {
           </button>
         </div>
 
-        {/* Global chip filter (channels) */}
         {selectedScope === "global" && users.length > 0 && (
-          <div className="row" style={{ marginBottom: 12, flexWrap: "wrap", gap: 4 }}>
-            <span className="muted" style={{ fontSize: 12, marginRight: 8 }}>Channels:</span>
+          <div className="row conv-chip-bar">
+            <span className="conv-chip-label">Channels:</span>
             <button
-              className={`badge ${selectedThread === "" ? "ok" : ""}`}
-              style={{ cursor: "pointer", padding: "3px 10px", fontSize: 11 }}
+              className={`badge${selectedThread === "" ? " ok" : ""} conv-chip`}
               onClick={() => selectThread("")}
             >All channels</button>
             {users.map((u) => {
@@ -501,8 +404,7 @@ export default function ConversationsTab({ guildId }) {
               return (
                 <button
                   key={`${u.scope}:${tid}`}
-                  className={`badge ${selectedThread === tid ? "ok" : ""}`}
-                  style={{ cursor: "pointer", padding: "3px 10px", fontSize: 11 }}
+                  className={`badge${selectedThread === tid ? " ok" : ""} conv-chip`}
                   onClick={() => selectThread(tid)}
                   title={tid}
                 >
@@ -513,10 +415,9 @@ export default function ConversationsTab({ guildId }) {
           </div>
         )}
 
-        {/* Private user list with avatars — click to enter chat view */}
         {selectedScope === "private" && !selectedThread && users.length > 0 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
-            <span className="muted" style={{ fontSize: 12, padding: "0 4px" }}>
+          <div className="conv-userlist">
+            <span className="conv-userlist-header">
               {users.length} user{users.length === 1 ? "" : "s"} — click to open their chat:
             </span>
             {users.map((u) => (
@@ -529,24 +430,21 @@ export default function ConversationsTab({ guildId }) {
           </div>
         )}
 
-        {/* Back button when in focused chat view */}
         {isThreadChatMode && (
           <button
-            className="btn secondary"
+            className="btn secondary conv-back-btn"
             onClick={() => selectThread("")}
-            style={{ marginBottom: 12, padding: "5px 12px", fontSize: 12, display: "inline-flex", alignItems: "center", gap: 6 }}
           >
             <ArrowLeft style={{ width: 14, height: 14 }} /> Back to {selectedScope === "global" ? "channel list" : "user list"}
           </button>
         )}
       </Panel>
 
-      {/* Body: chat bubbles (focused thread) | loading | empty | thread list */}
       {loading ? (
         <Panel>
           <div className="skeleton skeleton-heading" /><div className="skeleton skeleton-text" style={{ width: "70%" }} />
           {[1, 2, 3].map((i) => (
-            <div key={i} style={{ marginTop: 12 }}>
+            <div key={i} className="mt-3">
               <div className="skeleton skeleton-text" style={{ width: "40%" }} />
               <div className="skeleton skeleton-text" />
             </div>
@@ -570,7 +468,7 @@ export default function ConversationsTab({ guildId }) {
           onRetry={refreshLogs}
         />
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+        <div className="conv-log-list">
           {logs.map((entry) => {
             const isUser = entry.role === "user";
             const isExpanded = expanded.has(entry.id);
@@ -578,72 +476,25 @@ export default function ConversationsTab({ guildId }) {
               ? { icon: Globe, label: "Global", color: "var(--accent)" }
               : { icon: Lock, label: "Private", color: "var(--muted)" };
             return (
-              <div
-                key={entry.id}
-                style={{
-                  background: "var(--surface)",
-                  border: "1px solid var(--border)",
-                  borderRadius: "var(--radius-sm)",
-                  overflow: "hidden",
-                  transition: "border-color var(--transition-fast)",
-                }}
-              >
+              <div key={entry.id} className="conv-log-card">
                 <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "auto auto minmax(0, 1fr) auto",
-                    gap: 10,
-                    alignItems: "center",
-                    padding: "8px 12px",
-                    cursor: isUser ? "pointer" : "default",
-                    fontSize: 12,
-                  }}
+                  className="conv-log-row"
+                  style={{ cursor: isUser ? "pointer" : "default" }}
                   onClick={() => isUser && entry.content && toggleExpand(entry.id)}
                 >
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                      background: isUser ? "var(--accent-subtle)" : "var(--green-subtle)",
-                      border: `1px solid ${isUser ? "var(--accent)" : "var(--green)"}`,
-                      borderRadius: 999,
-                      padding: "2px 10px",
-                      fontSize: 11,
-                      fontWeight: 600,
-                      whiteSpace: "nowrap",
-                    }}
-                  >
+                  <div className={`conv-log-badge conv-log-badge--${isUser ? "user" : "bot"}`}>
                     {isUser ? <User style={{ width: 12, height: 12 }} /> : <Bot style={{ width: 12, height: 12 }} />}
                     {isUser ? "User" : "Bot"}
                   </div>
                   <div
                     title={`Scope: ${scopeTag.label}${entry.channelId ? ` (#${entry.channelId})` : ""}${entry.userId ? ` <@${entry.userId}>` : ""}`}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 4,
-                      background: "transparent",
-                      border: `1px solid ${scopeTag.color}`,
-                      color: scopeTag.color,
-                      borderRadius: 999,
-                      padding: "2px 8px",
-                      fontSize: 10,
-                      fontWeight: 600,
-                      whiteSpace: "nowrap",
-                    }}
+                    className="conv-scope-tag"
+                    style={{ border: `1px solid ${scopeTag.color}`, color: scopeTag.color }}
                   >
                     <scopeTag.icon style={{ width: 10, height: 10 }} />
                     {scopeTag.label}
                   </div>
-                  <div
-                    style={{
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      color: isUser ? "var(--text)" : "var(--text-secondary)",
-                    }}
-                  >
+                  <div className="conv-log-text" style={{ color: isUser ? "var(--text)" : "var(--text-secondary)" }}>
                     {isUser ? (
                       <span>
                         <strong>{entry.displayName}</strong>{" "}
@@ -654,9 +505,9 @@ export default function ConversationsTab({ guildId }) {
                       <span>{entry.content}</span>
                     )}
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+                  <div className="conv-log-timestamp">
                     <Clock style={{ width: 10, height: 10, color: "var(--text-muted)" }} />
-                    <span style={{ color: "var(--text-muted)", fontSize: 10, whiteSpace: "nowrap" }}>
+                    <span className="muted" style={{ fontSize: 10, whiteSpace: "nowrap" }}>
                       {formatTime(entry.timestamp)}
                     </span>
                     {isUser && entry.content && (
@@ -667,20 +518,7 @@ export default function ConversationsTab({ guildId }) {
                   </div>
                 </div>
                 {isExpanded && isUser && entry.content && (
-                  <div
-                    style={{
-                      borderTop: "1px solid var(--border-light)",
-                      padding: "8px 14px",
-                      fontSize: 12,
-                      color: "var(--text-secondary)",
-                      background: "var(--bg)",
-                      animation: "slideDown 0.15s ease",
-                      whiteSpace: "pre-wrap",
-                      wordBreak: "break-word",
-                      maxHeight: 200,
-                      overflowY: "auto",
-                    }}
-                  >
+                  <div className="conv-log-expanded" style={{ animation: "slideDown 0.15s ease" }}>
                     {entry.content}
                   </div>
                 )}

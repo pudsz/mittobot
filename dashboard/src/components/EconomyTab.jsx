@@ -197,7 +197,7 @@ export default function EconomyTab({ guildId }) {
   const error = lbQuery.error;
 
   if (!guildId) {
-    return <div className="muted" style={{ padding: 24, textAlign: "center" }}>Select a guild to manage its economy.</div>;
+    return <div className="economy-empty muted">Select a guild to manage its economy.</div>;
   }
 
   if (loading && !leaderboard.length) {
@@ -221,7 +221,7 @@ export default function EconomyTab({ guildId }) {
 
       {/* ─── Stats Cards ──────────────────────────────────────────────── */}
       {stats && (
-        <div className="stat-grid" style={{ marginBottom: 16 }}>
+        <div className="stat-grid economy-stat-grid">
           <div className="stat">
             <span className="lbl">Total Users</span>
             <span className="num">{stats.users || 0}</span>
@@ -241,7 +241,7 @@ export default function EconomyTab({ guildId }) {
           {stats.richestName && (
             <div className="stat">
               <span className="lbl">Richest</span>
-              <span className="num" style={{ fontSize: 14 }}>{stats.richestName}</span>
+              <span className="num economy-stat-sub">{stats.richestName}</span>
             </div>
           )}
         </div>
@@ -250,7 +250,7 @@ export default function EconomyTab({ guildId }) {
       {/* ─── Payout Config ────────────────────────────────────────────── */}
       <div className="panel">
         <h2>⚙️ Payouts & Rates</h2>
-        {error && <div className="muted" style={{ color: "var(--red)", marginBottom: 12 }}>{error}</div>}
+        {error && <div className="economy-error">{error}</div>}
         {configForm && (
           <form onSubmit={saveConfig}>
             <div className="grid-2">
@@ -309,7 +309,7 @@ export default function EconomyTab({ guildId }) {
                 <div className="hint">Probability of winning /gamble</div>
               </div>
             </div>
-            <div className="row" style={{ marginTop: 12 }}>
+            <div className="row economy-mt-3">
               <button className="btn primary" type="submit" disabled={configSaving}>
                 {configSaving ? "Saving..." : "Save Config"}
               </button>
@@ -321,23 +321,23 @@ export default function EconomyTab({ guildId }) {
       {/* ─── Shop Editor ──────────────────────────────────────────────── */}
       <div className="panel">
         <h2>🛒 Item Shop</h2>
-        <p className="muted" style={{ marginBottom: 12 }}>
+        <p className="muted mb-3">
           Create items users can buy with <code>/buy</code>. Optionally link a role reward.
         </p>
 
         {shopLoading ? (
-          <div className="skeleton skeleton-card" style={{ height: 60 }} />
+          <div className="skeleton skeleton-card economy-skelly-sm" />
         ) : shopItems.length === 0 ? (
-          <div className="muted" style={{ marginBottom: 12 }}>No shop items yet. Add one below.</div>
+          <div className="muted mb-3">No shop items yet. Add one below.</div>
         ) : (
-          <table style={{ marginBottom: 12 }}>
+          <table className="mb-3">
             <thead>
               <tr>
                 <th>Item</th>
                 <th>Price</th>
                 <th>Role</th>
                 <th>Stock</th>
-                <th style={{ width: 80 }}></th>
+                <th className="economy-th-action"></th>
               </tr>
             </thead>
             <tbody>
@@ -345,15 +345,15 @@ export default function EconomyTab({ guildId }) {
                 <tr key={item.id}>
                   <td>
                     <strong>{item.name}</strong>
-                    {item.description && <div className="muted" style={{ fontSize: 11 }}>{item.description}</div>}
+                    {item.description && <div className="muted text-xs">{item.description}</div>}
                   </td>
                   <td>🪙 {formatCoins(item.price)}</td>
                   <td>{item.roleName ? <span className="badge info">{item.roleName}</span> : <span className="muted">—</span>}</td>
                   <td>{item.stock === -1 ? <span className="muted">∞</span> : item.stock}</td>
                   <td>
                     <div className="row gap-4">
-                      <button className="btn secondary text-sm" onClick={() => openEditShopItem(item)} style={{ padding: "4px 8px" }}>Edit</button>
-                      <button className="btn danger text-sm" onClick={() => deleteShopItem(item)} style={{ padding: "4px 8px" }}>✕</button>
+                      <button className="btn secondary sm" onClick={() => openEditShopItem(item)}>Edit</button>
+                      <button className="btn danger sm" onClick={() => deleteShopItem(item)}>✕</button>
                     </div>
                   </td>
                 </tr>
@@ -363,8 +363,8 @@ export default function EconomyTab({ guildId }) {
         )}
 
         {editingShop ? (
-          <form onSubmit={saveShopItem} style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: 14 }}>
-            <h3 style={{ marginTop: 0 }}>{editingShop.isNew ? "Add Item" : `Edit "${editingShop.name}"`}</h3>
+          <form onSubmit={saveShopItem} className="economy-shop-form">
+            <h3>{editingShop.isNew ? "Add Item" : `Edit "${editingShop.name}"`}</h3>
             <div className="grid-2">
               <div className="field">
                 <label>Name</label>
@@ -393,7 +393,7 @@ export default function EconomyTab({ guildId }) {
                 <input type="number" min="-1" value={shopForm.stock} onChange={(e) => setShopForm({ ...shopForm, stock: parseInt(e.target.value, 10) ?? -1 })} />
               </div>
             </div>
-            <div className="row" style={{ marginTop: 12 }}>
+            <div className="row economy-mt-3">
               <button className="btn primary" type="submit" disabled={shopSaving}>
                 {shopSaving ? "Saving..." : editingShop.isNew ? "Add Item" : "Update Item"}
               </button>
@@ -413,24 +413,24 @@ export default function EconomyTab({ guildId }) {
         {leaderboard.length === 0 ? (
           <p className="muted">No one has earned any coins yet. Be the first!</p>
         ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <table className="economy-table-leaderboard">
             <thead>
-              <tr style={{ textAlign: "left", borderBottom: "1px solid var(--border)" }}>
-                <th style={{ padding: "8px 12px", width: 40 }}>#</th>
-                <th style={{ padding: "8px 12px" }}>Member</th>
-                <th style={{ padding: "8px 12px", textAlign: "right", width: 90 }}>Wallet</th>
-                <th style={{ padding: "8px 12px", textAlign: "right", width: 90 }}>Bank</th>
-                <th style={{ padding: "8px 12px", textAlign: "right", width: 90 }}>Total</th>
+              <tr className="economy-lb-head-row">
+                <th className="economy-lb-cell economy-lb-cell--rank">#</th>
+                <th className="economy-lb-cell">Member</th>
+                <th className="economy-lb-cell economy-lb-cell--right">Wallet</th>
+                <th className="economy-lb-cell economy-lb-cell--right">Bank</th>
+                <th className="economy-lb-cell economy-lb-cell--right">Total</th>
               </tr>
             </thead>
             <tbody>
               {leaderboard.map((row, i) => (
-                <tr key={row.user_id} style={{ borderBottom: "1px solid var(--border)" }}>
-                  <td style={{ padding: "8px 12px", fontSize: 16 }}>{medal(i)}</td>
-                  <td style={{ padding: "8px 12px", fontWeight: 600 }}>{row.displayName || row.user_id}</td>
-                  <td style={{ padding: "8px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{formatCoins(row.balance)}</td>
-                  <td style={{ padding: "8px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{formatCoins(row.bank)}</td>
-                  <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{formatCoins(row.total)}</td>
+                <tr key={row.user_id} className="economy-lb-row">
+                  <td className="economy-lb-cell economy-lb-rank">{medal(i)}</td>
+                  <td className="economy-lb-cell economy-lb-name">{row.displayName || row.user_id}</td>
+                  <td className="economy-lb-cell economy-lb-cell--right">{formatCoins(row.balance)}</td>
+                  <td className="economy-lb-cell economy-lb-cell--right">{formatCoins(row.bank)}</td>
+                  <td className="economy-lb-cell economy-lb-cell--right economy-lb-total">{formatCoins(row.total)}</td>
                 </tr>
               ))}
             </tbody>
@@ -441,7 +441,7 @@ export default function EconomyTab({ guildId }) {
       {/* ─── Commands Reference ───────────────────────────────────────── */}
       <div className="panel">
         <h2>📋 Available Commands</h2>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 24px" }}>
+        <div className="economy-cmd-grid">
           {[
             ["/balance [user]", "Check your or someone's wallet"],
             ["/daily", `Claim ${configForm?.dailyAmount ?? 200} coins every 24h`],
@@ -453,16 +453,16 @@ export default function EconomyTab({ guildId }) {
           ].map(([cmd, desc]) => (
             <div key={cmd}>
               <code>{cmd}</code>
-              <p className="muted" style={{ marginTop: 2, fontSize: 12 }}>{desc}</p>
+              <p className="economy-cmd-desc muted">{desc}</p>
             </div>
           ))}
         </div>
       </div>
 
       {/* ─── Danger Zone ──────────────────────────────────────────────── */}
-      <div className="panel" style={{ borderColor: "var(--red)", background: "var(--red-subtle)" }}>
-        <h2 style={{ color: "var(--red)" }}>⚠ Reset Economy</h2>
-        <p className="muted" style={{ marginBottom: 12 }}>
+      <div className="panel economy-danger-panel">
+        <h2 className="economy-danger-title">⚠ Reset Economy</h2>
+        <p className="muted mb-3">
           This will permanently delete all balances, shop items, and config for this server. This action cannot be undone.
         </p>
         <button className="btn danger" onClick={resetEconomy}>Reset Entire Economy</button>

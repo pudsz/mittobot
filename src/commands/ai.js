@@ -4,6 +4,10 @@ const settings = require("../settings");
 const { chatWithProvider, splitMessage, parseFallbackList, cleanResponse } = require("../ai");
 const { getProvider } = require("../ai/providers");
 
+function usage(ctx, text) {
+  return `\`${ctx?.utils?.PREFIX || "$"}${text}\``;
+}
+
 // ─── $resetglobalconversation — clear all AI memories for this server
 //     Owner-only. Resets the AI's learned facts so it starts fresh.
 async function prefixResetGlobalConversation(message, args, ctx) {
@@ -55,10 +59,13 @@ async function runAiQuery(userContent, authorTag, authorId, ctx, msgLike) {
       const tools = require("../ai/tools");
       for (const tc of toolCalls) {
         let toolResult;
+        const toolStart = Date.now();
         try {
           toolResult = await tools.executeTool(tc.name, tc.args, ctx, msgLike);
+          if (msgLike.guild) ctx.data.logAlphaTelemetry({ userId: msgLike.author.id, guildId: msgLike.guild.id, toolName: tc.name, success: true, durationMs: Date.now() - toolStart });
         } catch (err) {
           toolResult = "Error: " + err.message;
+          if (msgLike.guild) ctx.data.logAlphaTelemetry({ userId: msgLike.author.id, guildId: msgLike.guild.id, toolName: tc.name, success: false, errorMsg: err.message, durationMs: Date.now() - toolStart });
         }
         reply += "\n\n> *Used `" + tc.name + "`:* " + toolResult;
       }
@@ -75,7 +82,7 @@ async function prefixAi(message, args, ctx) {
   const query = args.join(" ").trim();
   if (!query) {
     return message.reply({
-      embeds: [errorEmbed("Usage: `$ai <your message>` — ask the AI a question directly.")],
+      embeds: [errorEmbed(`Usage: ${usage(ctx, "ai <your message>")} — ask the AI a question directly.`)],
     });
   }
 

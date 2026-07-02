@@ -2,6 +2,10 @@ const { EmbedBuilder, SlashCommandBuilder, MessageFlags } = require("discord.js"
 const safe = require("../safe");
 const { isAuthorized, noPermEmbed, errorEmbed, successEmbed } = require("../utils");
 
+function usage(ctx, text) {
+  return `\`${ctx?.utils?.PREFIX || "$"}${text}\``;
+}
+
 function stickyEmbed(text, pinnedBy) {
   return new EmbedBuilder().setColor(0xfee75c).setTitle("📌 Sticky").setDescription(text).setFooter({ text: `Pinned by ${pinnedBy}` });
 }
@@ -40,7 +44,7 @@ async function prefixSticky(message, args, ctx) {
   const sub = args[0]?.toLowerCase();
   if (sub === "set") {
     const text = args.slice(1).join(" ");
-    if (!text) return message.reply({ embeds: [errorEmbed("Usage: $sticky set <text>")] });
+    if (!text) return message.reply({ embeds: [errorEmbed(`Usage: ${usage(ctx, "sticky set <text>")}`)] });
     data.stickies[message.channel.id] = { text, pinnedBy: message.author.tag, messageId: null };
     await repostSticky(message.channel, data);
     await message.reply({ embeds: [successEmbed("Sticky set.")] });
@@ -55,7 +59,7 @@ async function prefixSticky(message, args, ctx) {
     data.saveStickies();
     await message.reply({ embeds: [successEmbed("Sticky removed.")] });
   } else {
-    await message.reply({ embeds: [errorEmbed("Usage: `$sticky set <text>` or `$sticky remove`")] });
+    await message.reply({ embeds: [errorEmbed(`Usage: ${usage(ctx, "sticky set <text>")} or ${usage(ctx, "sticky remove")}`)] });
   }
 }
 

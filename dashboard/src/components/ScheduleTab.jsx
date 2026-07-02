@@ -113,8 +113,8 @@ export default function ScheduleTab({ guildId }) {
   if (loading) {
     return (
       <div className="tab active">
-        <Panel><div className="skeleton skeleton-heading" /><div className="skeleton skeleton-text" style={{ width: "70%" }} /></Panel>
-        {[1, 2].map(i => <Panel key={i}><div className="skeleton skeleton-heading" style={{ width: "40%" }} /><div className="skeleton skeleton-text" /><div className="skeleton" style={{ height: 60, borderRadius: "var(--radius-sm)" }} /></Panel>)}
+        <Panel><div className="skeleton skeleton-heading" /><div className="skeleton skeleton-text skeleton-w70" /></Panel>
+        {[1, 2].map(i => <Panel key={i}><div className="skeleton skeleton-heading skeleton-w40" /><div className="skeleton skeleton-text" /><div className="skeleton sched-skel-block" /></Panel>)}
       </div>
     );
   }
@@ -122,7 +122,7 @@ export default function ScheduleTab({ guildId }) {
   return (
     <div className="tab active">
       <Panel icon={Clock} title="Scheduled Messages">
-        <p className="muted" style={{ marginBottom: 14 }}>
+        <p className="muted sched-desc-mb">
           Schedule messages to be sent automatically at a specific date/time, or on a recurring schedule (daily, weekly, monthly).
           Messages are sent to the configured channel when the schedule fires.
         </p>
@@ -135,7 +135,7 @@ export default function ScheduleTab({ guildId }) {
 
           <div className="field">
             <label>Schedule Type</label>
-            <div className="row" style={{ gap: 8 }}>
+            <div className="row gap-2">
               <button className={`btn ${mode === "once" ? "accent" : "secondary"}`} onClick={() => setMode("once")}>One-Time</button>
               <button className={`btn ${mode === "recurring" ? "accent" : "secondary"}`} onClick={() => setMode("recurring")}>Recurring</button>
             </div>
@@ -204,7 +204,7 @@ export default function ScheduleTab({ guildId }) {
           <div className="field">
             <label>Message</label>
             <textarea
-              style={{ minHeight: 80 }}
+              className="textarea"
               placeholder="Message content to send..."
               value={content}
               onChange={e => setContent(e.target.value)}
@@ -213,7 +213,7 @@ export default function ScheduleTab({ guildId }) {
             <div className="hint">{content.length}/2000 characters</div>
           </div>
 
-          <div className="row" style={{ marginTop: 14 }}>
+          <div className="row sched-actions-mt">
             <button className="btn green" onClick={handleCreate}><Plus /> Create</button>
             <button className="btn secondary" onClick={resetForm}>Cancel</button>
           </div>
@@ -221,24 +221,24 @@ export default function ScheduleTab({ guildId }) {
       )}
 
       {!schedules.length && !showForm ? (
-        <Panel><div className="muted" style={{ textAlign: "center", padding: 20 }}>No scheduled messages yet. Click "New Schedule" to create one.</div></Panel>
+        <Panel><div className="panel-empty">No scheduled messages yet. Click "New Schedule" to create one.</div></Panel>
       ) : (
         schedules.map(s => (
           <Panel compact key={s.id}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <Calendar size={16} style={{ color: "var(--accent)", flexShrink: 0 }} />
-              <span className="badge info" style={{ flexShrink: 0 }}>#{s.id}</span>
-              <span style={{ fontSize: 13, fontWeight: 500, flex: 1, minWidth: 200 }}>
+            <div className="sched-item-row">
+              <Calendar size={16} className="sched-item-icon" />
+              <span className="badge info">#{s.id}</span>
+              <span className="sched-item-preview flex-1">
                 {s.content.slice(0, 80)}{s.content.length > 80 ? "…" : ""}
               </span>
-              <span className="muted" style={{ fontSize: 12, flexShrink: 0 }}>
+              <span className="muted flex-shrink-0">
                 {s.recurrence ? `${RECURRENCE_LABELS[s.recurrence] || s.recurrence} · ` : ""}
                 {formatTime(s.scheduledAt)}
               </span>
-              <span className="muted" style={{ fontSize: 11, flexShrink: 0 }}>
+              <span className="muted text-xs flex-shrink-0">
                 {channelName(s.channelId, channels)}
               </span>
-              <button className="btn danger" onClick={() => handleDelete(s.id)} style={{ padding: "4px 8px", flexShrink: 0 }}>
+              <button className="btn danger sm" onClick={() => handleDelete(s.id)}>
                 <Trash2 size={14} />
               </button>
             </div>

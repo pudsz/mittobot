@@ -15,6 +15,51 @@ const AI_KEY_PLACEHOLDERS = {
   custom: "api key (leave blank if not required, e.g. local Ollama)",
 };
 
+const NVIDIA_PROVIDER_META = {
+  id: "nvidia",
+  label: "NVIDIA NIM",
+  envVar: "NVIDIA_API_KEY",
+  keyField: "nvidiaApiKey",
+  modelField: "nvidiaModel",
+  defaultModel: "mistralai/ministral-14b-instruct-2512",
+  defaultModels: [
+    "mistralai/ministral-14b-instruct-2512",
+    "mistralai/mistral-large-3-instruct",
+    "meta/llama-3.3-70b-instruct",
+    "nvidia/llama-3.1-nemotron-70b-instruct",
+    "deepseek-ai/deepseek-r1",
+  ],
+};
+
+function withDashboardProviders(providers = []) {
+  const byId = new Map(providers.map((p) => [p.id, p]));
+  byId.set(NVIDIA_PROVIDER_META.id, {
+    ...NVIDIA_PROVIDER_META,
+    ...(byId.get(NVIDIA_PROVIDER_META.id) || {}),
+  });
+  return [...byId.values()];
+}
+
+function normalizeAiSettings(d = {}) {
+  const providers = withDashboardProviders(d.providers);
+  const aiProvider = providers.some((p) => p.id === d.aiProvider)
+    ? d.aiProvider
+    : providers[0]?.id || "";
+  const activeProvider = providers.find((p) => p.id === aiProvider);
+  const model = d.model || activeProvider?.defaultModel || "";
+  const models = [...(d.models || [])];
+  if (models.length === 0 && activeProvider?.defaultModels) models.push(...activeProvider.defaultModels);
+  if (model && !models.includes(model)) models.unshift(model);
+
+  return {
+    ...d,
+    aiProvider,
+    providers,
+    model,
+    models,
+  };
+}
+
 // plural(n, "memory", "memories") → "1 memory" / "5 memories".
 // `pluralForm` is mandatory: English has too many irregulars ("memory" →
 // "memories", "person" → "people") to derive safely. We intentionally do NOT
@@ -32,9 +77,9 @@ function AiSkeleton() {
         <div className="skeleton skeleton-text" style={{ width: "80%" }} />
         <div className="skeleton skeleton-text" style={{ width: "60%" }} />
         {[1, 2, 3, 4].map((i) => (
-          <div key={i} style={{ marginBottom: 16 }}>
-            <div className="skeleton skeleton-text" style={{ width: "15%", height: 10, marginBottom: 8 }} />
-            <div className="skeleton" style={{ height: 40, borderRadius: "var(--radius-sm)" }} />
+          <div className="mb-4" key={i}>
+            <div className="skeleton skeleton-text" style={{ width: "15%", height: 10 }} />
+            <div className="skeleton skeleton-block" />
           </div>
         ))}
       </div>
@@ -48,33 +93,18 @@ function ProviderDot({ status }) {
   const color = isBusy ? "#f0a020" : "#3fb950";
   return (
     <span
+      className="aicfg-provider-dot"
       title={isBusy ? "Busy — handling a request" : "Free — available"}
-      style={{
-        display: "inline-block",
-        width: 8,
-        height: 8,
-        borderRadius: "50%",
-        backgroundColor: color,
-        flexShrink: 0,
-        marginRight: 4,
-        boxShadow: `0 0 6px ${color}66`,
-      }}
+      style={{ backgroundColor: color, boxShadow: `0 0 6px ${color}66` }}
     />
   );
 }
 
 function SectionCard({ icon: Icon, title, children, style }) {
   return (
-    <div style={{
-      background: "rgba(255,255,255,0.02)",
-      border: "1px solid var(--border)",
-      borderRadius: 8,
-      padding: 16,
-      marginBottom: 12,
-      ...style,
-    }}>
-      <h3 style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 0, marginBottom: 12, fontSize: 14 }}>
-        {Icon && <Icon style={{ width: 16, height: 16, color: "var(--accent)" }} />}
+    <div className="aicfg-section-card" style={style}>
+      <h3>
+        {Icon && <Icon />}
         {title}
       </h3>
       {children}
@@ -83,24 +113,11 @@ function SectionCard({ icon: Icon, title, children, style }) {
 }
 
 function StatBadge({ label, value, variant }) {
-  const colors = {
-    default: { bg: "rgba(255,255,255,0.04)", color: "var(--text)" },
-    accent: { bg: "rgba(99,179,237,0.1)", color: "var(--accent)" },
-    success: { bg: "rgba(63,185,80,0.1)", color: "#3fb950" },
-    warn: { bg: "rgba(240,160,32,0.1)", color: "#f0a020" },
-  };
-  const c = colors[variant] || colors.default;
+  const cls = `aicfg-stat-badge${variant && variant !== "default" ? ` aicfg-stat-badge--${variant}` : ""}`;
   return (
-    <div style={{
-      background: c.bg,
-      border: "1px solid var(--border)",
-      borderRadius: 6,
-      padding: "8px 14px",
-      textAlign: "center",
-      minWidth: 80,
-    }}>
-      <div style={{ fontSize: 20, fontWeight: 700, color: c.color }}>{value}</div>
-      <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{label}</div>
+    <div className={cls}>
+      <div className="aicfg-stat-badge-value">{value}</div>
+      <div className="aicfg-stat-badge-label">{label}</div>
     </div>
   );
 }
@@ -139,6 +156,10 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
   const [memClearUserId, setMemClearUserId] = useState("");
   const [clearing, setClearing] = useState(false); // disables button mid-flight
   const [fallbackProviders, setFallbackProviders] = useState([]);
+  const [fallbackApiKeys, setFallbackApiKeys] = useState({});
+  const [fallbackModels, setFallbackModels] = useState({});
+  const [fallbackModelLists, setFallbackModelLists] = useState({});
+  const [fallbackFetching, setFallbackFetching] = useState({});
   const [chattyMode, setChattyMode] = useState(false);
   const [chattyCooldown, setChattyCooldown] = useState(60);
   const [dmEnabled, setDmEnabled] = useState(true);
@@ -151,19 +172,21 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
   const PERM_LABELS = { all: "Everyone", mod: "Mod (ModerateMembers)", admin: "Admin only", owner: "Owner only" };
 
   function applyState(d) {
-    setS(d);
+    const nextState = normalizeAiSettings(d);
+    setS(nextState);
     setEnabled(!!d.aiEnabled);
     setApiKey("");
     setAllowedChannels(d.aiAllowedChannels || "");
     setIgnoredChannels(d.aiIgnoredChannels || "");
     setSystemPrompt(d.aiSystemPrompt || "");
-    setProvider(d.aiProvider || (d.providers && d.providers[0] && d.providers[0].id) || "");
+
+    const providers = nextState.providers;
+    setProvider(nextState.aiProvider);
     setCustomBaseUrl(d.customBaseUrl || "");
     setCustomApiType(d.customApiType || "openai");
 
-    const models = [...(d.models || [])];
-    const current = d.model || "";
-    if (current && !models.includes(current)) models.unshift(current);
+    const models = nextState.models;
+    const current = nextState.model || "";
     if (current) setModel(current);
     else if (models.length) setModel(models[0]);
     else setModel("");
@@ -177,8 +200,19 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
     setMemoryEnabled(d.aiMemoryEnabled !== false);
     setThinkingEnabled(!!d.aiThinkingEnabled);
 
-    const raw = (d.aiFallbackProviders || "").split(",").map(x => x.trim()).filter(Boolean);
-    setFallbackProviders(raw.slice(0, 5));
+    const raw = (d.aiFallbackProviders || "").split(",").map(x => x.trim()).filter(Boolean).slice(0, 5);
+    setFallbackProviders(raw);
+    // Initialize per-fallback key/model state from saved settings
+    const initKeys = {};
+    const initModels = {};
+    for (const fbId of raw) {
+      if (!fbId) continue;
+      initKeys[fbId] = ""; // don't prefill key (security)
+      const fbMeta = providers.find((p) => p.id === fbId);
+      if (fbMeta) initModels[fbId] = d[fbMeta.modelField] || "";
+    }
+    setFallbackApiKeys(initKeys);
+    setFallbackModels(initModels);
     setChattyMode(!!d.aiChattyMode);
     setChattyCooldown(d.aiChattyCooldown ?? 60);
     setDmEnabled(d.aiDmEnabled !== false);
@@ -197,6 +231,24 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
       setMemories(res.memories || []);
     } catch (e) {
       console.error("Failed to load memories:", e);
+    }
+  }
+
+  async function fetchFallbackModels(fbId) {
+    if (!fbId) return;
+    const fbMeta = allProviders.find((p) => p.id === fbId);
+    if (!fbMeta) return;
+    setFallbackFetching(prev => ({ ...prev, [fbId]: true }));
+    try {
+      const res = await api("GET", `/api/ai/models/${fbId}`);
+      if (res.models && res.models.length > 0) {
+        setFallbackModelLists(prev => ({ ...prev, [fbId]: res.models }));
+      }
+      toast(`Loaded ${res.models?.length || 0} models for ${fbMeta.label}`);
+    } catch (e) {
+      toast(`Failed to fetch ${fbMeta.label} models: ${e.message}`, true);
+    } finally {
+      setFallbackFetching(prev => ({ ...prev, [fbId]: false }));
     }
   }
 
@@ -295,9 +347,21 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
     return [...map.values()].sort((a, b) => b.count - a.count);
   }, [memories]);
 
-  const meta = (s?.providers || []).find((p) => p.id === provider);
+  const allProviders = useMemo(() => {
+    return withDashboardProviders(s?.providers);
+  }, [s?.providers]);
+
+  const meta = allProviders.find((p) => p.id === provider);
   const label = meta?.label || provider;
   const isCustom = Boolean(meta?.baseUrlField) || provider === "custom";
+
+  const fallbackOptions = useMemo(() => {
+    const options = allProviders.filter((p) => p.id !== provider);
+    if (provider !== NVIDIA_PROVIDER_META.id && !options.some((p) => p.id === NVIDIA_PROVIDER_META.id)) {
+      options.push(NVIDIA_PROVIDER_META);
+    }
+    return options;
+  }, [allProviders, provider]);
 
   let modelOptions = [];
   if (s) {
@@ -337,6 +401,19 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
     }
     const key = apiKey.trim();
     if (key) body.apiKey = key;
+    // Include per-fallback API keys and models
+    for (const [fbId, fbKey] of Object.entries(fallbackApiKeys)) {
+      if (fbKey && fbKey.trim()) {
+        const fbMeta = allProviders.find((p) => p.id === fbId);
+        if (fbMeta) body[fbMeta.keyField] = fbKey.trim();
+      }
+    }
+    for (const [fbId, fbModel] of Object.entries(fallbackModels)) {
+      if (fbModel && fbModel.trim()) {
+        const fbMeta = allProviders.find((p) => p.id === fbId);
+        if (fbMeta) body[fbMeta.modelField] = fbModel.trim();
+      }
+    }
     return { body, finalModel };
   }
 
@@ -481,7 +558,7 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
           The bot replies with AI when pinged (<code>@bot message</code>), replied to, triggered by keyword, or in chatty mode.
           Channel lists use Discord channel IDs (comma or space separated). Leave allowed empty to permit all except ignored ones.
         </p>
-        <div className="field" style={{ marginBottom: 12 }}>
+        <div className="field mb-3">
           <label>Enabled</label>
           <div className="row">
             <Toggle checked={enabled} onChange={setEnabled} />
@@ -489,7 +566,7 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
           </div>
         </div>
 
-        <div className="field" style={{ marginBottom: 12 }}>
+        <div className="field mb-3">
           <label>💬 Direct Messages</label>
           <div className="row">
             <Toggle checked={dmEnabled} onChange={setDmEnabled} />
@@ -497,10 +574,10 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
           </div>
         </div>
 
-        <div className="field" style={{ marginBottom: 12 }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div className="field mb-3">
+          <label className="aicfg-label-icon-row">
             <span>🌐 Browser Mode</span>
-            <span className="badge ok" style={{ fontSize: 10 }}>NEW</span>
+            <span className="badge ok">NEW</span>
           </label>
           <div className="row">
             <Toggle checked={browserEnabled} onChange={setBrowserEnabled} />
@@ -508,19 +585,19 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
           </div>
         </div>
 
-        <div className="field" style={{ marginBottom: 12 }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div className="field mb-3">
+          <label className="aicfg-label-icon-row">
             <span>💬 Chatty Mode</span>
           </label>
-          <div className="row" style={{ marginBottom: 8 }}>
+          <div className="row mb-2">
             <Toggle checked={chattyMode} onChange={setChattyMode} />
             <span className="muted">Respond to conversations naturally without being pinged</span>
           </div>
           {chattyMode && (
-            <div style={{ marginTop: 8, padding: 10, background: "rgba(255,255,255,0.03)", borderRadius: 6, border: "1px solid var(--border)" }}>
-              <label style={{ display: "flex", justifyContent: "space-between" }}>
+            <div className="aicfg-chatty-panel">
+              <label className="row-between">
                 <span>Cooldown</span>
-                <span style={{ color: "var(--accent)", fontWeight: "bold" }}>{chattyCooldown}s</span>
+                <span className="accent bold">{chattyCooldown}s</span>
               </label>
               <input
                 type="range"
@@ -531,14 +608,14 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
                 onChange={(e) => setChattyCooldown(parseInt(e.target.value, 10))}
                 style={{ padding: 0 }}
               />
-              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+              <div className="muted text-xs mt-2">
                 Minimum seconds between responses in the same channel. Lower = more active.
               </div>
             </div>
           )}
         </div>
 
-        <div className="field" style={{ marginBottom: 8 }}>
+        <div className="field mb-2">
           <label>Allowed channels</label>
           <input
             placeholder="123456789, 987654321"
@@ -546,7 +623,7 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
             onChange={(e) => setAllowedChannels(e.target.value)}
           />
         </div>
-        <div className="field" style={{ marginBottom: 8 }}>
+        <div className="field mb-2">
           <label>Ignored channels</label>
           <input
             placeholder="123456789, 987654321"
@@ -557,21 +634,21 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
         <div className="field">
           <label>System prompt</label>
           <textarea
-            style={{ minHeight: 120 }}
+            className="textarea-md"
             spellCheck={false}
             value={systemPrompt}
             onChange={(e) => setSystemPrompt(e.target.value)}
           />
-          <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>Max 2000 chars — currently {systemPrompt.length}</div>
+          <div className="muted text-xs mt-2">Max 2000 chars — currently {systemPrompt.length}</div>
         </div>
 
         {/* Personality presets */}
         <div className="field">
           <label>Personality Presets</label>
-          <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>Save and load system prompt presets for quick switching.</div>
-          <div className="row" style={{ marginBottom: 8 }}>
+          <div className="muted text-sm mb-2">Save and load system prompt presets for quick switching.</div>
+          <div className="row mb-2">
             <select
-              style={{ flex: 1 }}
+              className="flex-1"
               value=""
               onChange={(e) => {
                 const p = personalities.find(x => x.id === Number(e.target.value));
@@ -584,22 +661,22 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
               ))}
             </select>
           </div>
-          <div className="row" style={{ gap: 6 }}>
+          <div className="row gap-3">
             <input
               placeholder="Preset name..."
-              style={{ flex: 1 }}
+              className="flex-1"
               value={newPersName}
               onChange={(e) => setNewPersName(e.target.value)}
             />
             <button className="btn" onClick={savePersonality}>Save Current</button>
           </div>
           {personalities.length > 0 && (
-            <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 4 }}>
+            <div className="aicfg-personality-list">
               {personalities.map(p => (
-                <span key={p.id} className="badge" style={{ display: "inline-flex", alignItems: "center", gap: 4, cursor: "pointer" }}
+                <span key={p.id} className="badge aicfg-personality-badge"
                   onClick={() => setSystemPrompt(p.prompt)}>
                   {p.name}
-                  <X style={{ width: 10, height: 10 }} onClick={(e) => { e.stopPropagation(); deletePersonality(p.id); }} />
+                  <X className="aicfg-personality-x" onClick={(e) => { e.stopPropagation(); deletePersonality(p.id); }} />
                 </span>
               ))}
             </div>
@@ -609,51 +686,128 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
 
       {/* ─── Provider & Model Card ─── */}
       <SectionCard icon={Activity} title="Provider &amp; Model">
-        <div className="field" style={{ marginBottom: 12 }}>
+        <div className="field mb-3">
           <label>Provider</label>
-          <div className="row" style={{ alignItems: "center" }}>
+          <div className="row">
             <ProviderDot status={(s.providerStatus || {})[provider]} />
-            <select value={provider} onChange={(e) => onProviderChange(e.target.value)} style={{ flex: 1 }}>
-              {(s.providers || []).map((p) => (
+            <select value={provider} onChange={(e) => onProviderChange(e.target.value)} className="flex-1">
+              {allProviders.map((p) => (
                 <option key={p.id} value={p.id}>{p.label}</option>
               ))}
             </select>
           </div>
         </div>
 
-        <div className="field" style={{ marginBottom: 12 }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div className="field mb-3">
+          <label className="aicfg-label-icon-row">
             <span><ArrowDown style={{ width: 14, height: 14 }} /> Fallback Providers</span>
           </label>
           <p className="muted" style={{ marginTop: 0, marginBottom: 8, fontSize: 12 }}>
-            If the primary fails, the bot tries these in order. Configure API keys in each provider's settings.
+            If the primary fails, the bot tries these in order. Each fallback needs its own API key and model.
           </p>
           {fallbackProviders.map((fbId, idx) => {
-            const fbMeta = (s.providers || []).find(p => p.id === fbId);
+            const fbMeta = allProviders.find((p) => p.id === fbId);
+            const fbModels = fallbackModelLists[fbId] || null;
+            const fetching = fallbackFetching[fbId];
             return (
-              <div key={idx} className="row" style={{ marginBottom: 6, alignItems: "center" }}>
-                <span className="muted" style={{ width: 28, fontSize: 12, flexShrink: 0 }}>#{idx + 1}</span>
-                <ProviderDot status={fbId ? (s.providerStatus || {})[fbId] : null} />
-                <select
-                  style={{ flex: 1 }}
-                  value={fbId}
-                  onChange={(e) => {
-                    const next = fallbackProviders.map((f, i) => i === idx ? e.target.value : f);
-                    setFallbackProviders(next);
-                  }}
-                >
-                  <option value="">— none —</option>
-                  {(s.providers || []).filter(p => p.id !== provider).map(p => (
-                    <option key={p.id} value={p.id}>{p.label}</option>
-                  ))}
-                </select>
-                <button
-                  className="btn danger"
-                  style={{ padding: "4px 8px" }}
-                  onClick={() => setFallbackProviders(fallbackProviders.filter((_, i) => i !== idx))}
-                >
-                  <X style={{ width: 14, height: 14 }} />
-                </button>
+              <div key={idx} className="aicfg-fallback-card">
+                <div className="row mb-2">
+                  <span className="muted" style={{ width: 28, fontSize: 12, flexShrink: 0 }}>#{idx + 1}</span>
+                  <ProviderDot status={fbId ? (s.providerStatus || {})[fbId] : null} />
+                  <select
+                    className="flex-1"
+                    value={fbId}
+                    onChange={(e) => {
+                      const newId = e.target.value;
+                      const next = fallbackProviders.map((f, i) => i === idx ? newId : f);
+                      setFallbackProviders(next);
+                      if (newId) {
+                        setFallbackApiKeys(prev => {
+                          if (prev[newId] === undefined) return { ...prev, [newId]: "" };
+                          return prev;
+                        });
+                        setFallbackModels(prev => {
+                          if (prev[newId] === undefined) {
+                            const m = allProviders.find((p) => p.id === newId);
+                            return { ...prev, [newId]: m && s[m.modelField] ? s[m.modelField] : "" };
+                          }
+                          return prev;
+                        });
+                      }
+                    }}
+                  >
+                    <option value="">— none —</option>
+                    {fallbackOptions.map(p => (
+                      <option key={p.id} value={p.id}>{p.label}</option>
+                    ))}
+                  </select>
+                  <button
+                    className="btn danger sm"
+                    onClick={() => {
+                      const next = fallbackProviders.filter((_, i) => i !== idx);
+                      setFallbackProviders(next);
+                      setFallbackApiKeys(prev => { const c = { ...prev }; delete c[fbId]; return c; });
+                      setFallbackModels(prev => { const c = { ...prev }; delete c[fbId]; return c; });
+                      setFallbackModelLists(prev => { const c = { ...prev }; delete c[fbId]; return c; });
+                    }}
+                  >
+                    <X style={{ width: 14, height: 14 }} />
+                  </button>
+                </div>
+                {fbId && (
+                  <div className="aicfg-fallback-row">
+                    <div className="row" style={{ marginBottom: 6, gap: 6 }}>
+                      <input
+                        type="password"
+                        autoComplete="off"
+                        placeholder={AI_KEY_PLACEHOLDERS[fbId] || "API key..."}
+                        value={fallbackApiKeys[fbId] || ""}
+                        onChange={(e) => setFallbackApiKeys(prev => ({ ...prev, [fbId]: e.target.value }))}
+                        className="aicfg-fallback-input"
+                      />
+                    </div>
+                    <div className="row" style={{ gap: 6 }}>
+                      {fbModels && fbModels.length > 0 ? (
+                        <select
+                          className="aicfg-fallback-input"
+                          value={fallbackModels[fbId] || ""}
+                          onChange={(e) => setFallbackModels(prev => ({ ...prev, [fbId]: e.target.value }))}
+                        >
+                          <option value="">— pick a model —</option>
+                          {fbModels.map(m => (
+                            <option key={m} value={m}>{m}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          placeholder="Model (e.g. mistralai/ministral-14b)"
+                          value={fallbackModels[fbId] || ""}
+                          onChange={(e) => setFallbackModels(prev => ({ ...prev, [fbId]: e.target.value }))}
+                          className="aicfg-fallback-input"
+                        />
+                      )}
+                      <button
+                        className="btn secondary sm"
+                        onClick={() => fetchFallbackModels(fbId)}
+                        disabled={fetching}
+                      >
+                        {fetching ? "Loading..." : "Fetch"}
+                      </button>
+                    </div>
+                    {fbModels && fbModels.length > 0 && (
+                      <input
+                        placeholder="Or type a custom model..."
+                        value={fallbackModels[fbId] || ""}
+                        onChange={(e) => setFallbackModels(prev => ({ ...prev, [fbId]: e.target.value }))}
+                        style={{ width: "100%" }}
+                        className="aicfg-fallback-input mt-1"
+                      />
+                    )}
+                    <div className="muted" style={{ fontSize: 10, marginTop: 2 }}>
+                      {fbMeta?.envVar || ""} — saved on next Save
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -665,7 +819,7 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
         </div>
 
         {isCustom && (
-          <div className="field" style={{ marginBottom: 12, padding: 10, background: "rgba(255,255,255,0.03)", borderRadius: 6 }}>
+          <div className="aicfg-custom-endpoint">
             <label>Custom endpoint</label>
             <div className="row">
               <input
@@ -689,7 +843,7 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
           </div>
         )}
 
-        <div className="field" style={{ marginBottom: 12 }}>
+        <div className="field mb-3">
           <label>{label} API Key</label>
           <div className="row">
             <input
@@ -721,45 +875,45 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
             />
             <button className="btn secondary" onClick={refreshModels}><RotateCw /> <span>Fetch</span></button>
           </div>
-          <div className="muted" style={{ marginTop: 4, fontSize: 12 }}>{modelHint || baseHint}</div>
+          <div style={{ marginTop: 4 }} className="muted text-xs">{modelHint || baseHint}</div>
         </div>
       </SectionCard>
 
       {/* ─── Agentic Settings Card ─── */}
       <SectionCard icon={Brain} title="Agentic Parameters">
-        <div className="grid-2" style={{ marginBottom: 8 }}>
+        <div className="grid-2 mb-2">
           <div className="field">
-            <label style={{ display: "flex", justifyContent: "space-between" }}>
+            <label className="row-between">
               <span>Temperature</span>
-              <span style={{ color: "var(--accent)", fontWeight: "bold" }}>{temperature}</span>
+              <span className="accent bold">{temperature}</span>
             </label>
             <input type="range" min="0" max="2" step="0.1" value={temperature}
               onChange={(e) => setTemperature(parseFloat(e.target.value))} style={{ padding: 0 }} />
-            <div className="muted" style={{ fontSize: 11 }}>Creativity — higher = more chaotic</div>
+            <div className="muted text-xs">Creativity — higher = more chaotic</div>
           </div>
           <div className="field">
-            <label style={{ display: "flex", justifyContent: "space-between" }}>
+            <label className="row-between">
               <span>Top P</span>
-              <span style={{ color: "var(--accent)", fontWeight: "bold" }}>{topP}</span>
+              <span className="accent bold">{topP}</span>
             </label>
             <input type="range" min="0" max="1" step="0.05" value={topP}
               onChange={(e) => setTopP(parseFloat(e.target.value))} style={{ padding: 0 }} />
-            <div className="muted" style={{ fontSize: 11 }}>Nucleus sampling threshold</div>
+            <div className="muted text-xs">Nucleus sampling threshold</div>
           </div>
         </div>
 
-        <div className="grid-2" style={{ marginBottom: 8 }}>
+        <div className="grid-2 mb-2">
           <div className="field">
             <label>Max Tokens</label>
             <input type="number" min="1" max="32768" value={maxTokens}
               onChange={(e) => setMaxTokens(parseInt(e.target.value, 10))} />
-            <div className="muted" style={{ fontSize: 11 }}>Response length limit</div>
+            <div className="muted text-xs">Response length limit</div>
           </div>
           <div className="field">
             <label>Context Messages</label>
             <input type="number" min="0" max="50" value={contextLimit}
               onChange={(e) => setContextLimit(parseInt(e.target.value, 10))} />
-            <div className="muted" style={{ fontSize: 11 }}>Channel history to load</div>
+            <div className="muted text-xs">Channel history to load</div>
           </div>
         </div>
 
@@ -779,23 +933,22 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
         </div>
 
         {/* Tool Permissions */}
-        <div className="field" style={{ marginTop: 12, padding: 12, background: "rgba(255,255,255,0.02)", borderRadius: 6, border: "1px solid var(--border)" }}>
+        <div className="aicfg-tool-perms-box">
           <label>
-            <Shield style={{ width: 14, height: 14, marginRight: 4, verticalAlign: "middle" }} />
+            <Shield />
             Moderation Tool Permissions
           </label>
           <p className="muted" style={{ fontSize: 12, marginBottom: 10 }}>
             Restrict who can trigger mod actions through the AI. Default: mod tools require ModerateMembers permission.
           </p>
           {TOOL_NAMES.map(tool => (
-            <div key={tool} className="row" style={{ marginBottom: 6, alignItems: "center" }}>
-              <code style={{ width: 130, fontSize: 11, flexShrink: 0 }}>{tool}</code>
+            <div key={tool} className="aicfg-tool-row">
+              <code>{tool}</code>
               <select
-                style={{ flex: 1, maxWidth: 240 }}
                 value={toolPerms[tool] || "mod"}
                 onChange={(e) => {
                   const next = { ...toolPerms };
-                  if (e.target.value === "mod") delete next[tool]; // default
+                  if (e.target.value === "mod") delete next[tool];
                   else next[tool] = e.target.value;
                   setToolPerms(next);
                 }}
@@ -808,7 +961,7 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
           ))}
         </div>
 
-        <button className="btn green" onClick={saveAi} style={{ marginTop: 14 }}>
+        <button className="btn green" style={{ marginTop: 14 }} onClick={saveAi}>
           <Save /> <span>Save AI settings</span>
         </button>
       </SectionCard>
@@ -820,41 +973,33 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
           Currently active: <code>{prompts?.resolved?.source || "settings fallback"}</code>
         </p>
 
-        {/* Targeted guild banner — uses the parent App's guild picker; clicking
-            the sidebar guild selector switches which guild this card applies to. */}
-        <div className="field" style={{
-          marginBottom: 12, padding: "10px 12px",
-          background: "rgba(63,185,80,0.05)",
-          border: "1px solid var(--green)",
-          borderRadius: 6,
-        }}>
-          <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 2, textTransform: "uppercase", letterSpacing: 0.4 }}>
+        <div className="aicfg-target-banner">
+          <div className="aicfg-target-banner-label">
             <Home style={{ width: 11, height: 11, verticalAlign: "middle", marginRight: 4 }} /> Guild Override target
           </div>
-          <div style={{ fontSize: 14, fontWeight: 600 }}>
+          <div className="aicfg-target-banner-name">
             {guilds.find((g) => g.id === guildId)?.name || guildId || "(no guild selected)"}
           </div>
-          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+          <div className="aicfg-target-banner-hint">
             Switch the guild in the sidebar to target a different guild.
           </div>
         </div>
 
         {/* Default tier */}
-        <div className="field" style={{ marginBottom: 14, padding: 10, background: "rgba(99,179,237,0.05)", border: "1px solid var(--accent)", borderRadius: 6 }}>
+        <div className="aicfg-prompt-tier aicfg-prompt-tier--default">
           <div className="row" style={{ alignItems: "center", marginBottom: 6 }}>
             <label style={{ flex: 1, fontSize: 13 }}>⭐ Default (applies everywhere unless overridden)</label>
             {prompts?.default !== null && prompts?.default !== undefined && (
-              <button className="btn danger" style={{ padding: "3px 8px", fontSize: 11 }}
+              <button className="btn danger sm"
                 onClick={() => deletePromptLayer("default", null)}>Remove</button>
             )}
           </div>
           {editPrompt?.scope === "default" ? (
             <div>
-              <textarea style={{ minHeight: 100, width: "100%" }} spellCheck={false}
+              <textarea className="textarea-full" style={{ minHeight: 100 }} spellCheck={false}
                 value={editPrompt.prompt}
-
                 onChange={(e) => setEditPrompt({ ...editPrompt, prompt: e.target.value })} />
-              <div className="row" style={{ marginTop: 6 }}>
+              <div className="row mt-2">
                 <button className="btn green" onClick={() => savePromptLayer("default", null, editPrompt.prompt)}>
                   <Save /> <span>Save Default</span>
                 </button>
@@ -863,7 +1008,7 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
             </div>
           ) : (
             <div>
-              <div style={{ fontSize: 12, padding: 8, background: "rgba(0,0,0,0.15)", borderRadius: 4, whiteSpace: "pre-wrap", minHeight: 40 }}>
+              <div className="aicfg-prompt-box">
                 {prompts?.default || <span className="muted">No default prompt set. Use settings.aiSystemPrompt above as the fallback.</span>}
               </div>
               <button className="btn secondary" style={{ marginTop: 6 }}
@@ -875,11 +1020,11 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
         </div>
 
         {/* Guild tier */}
-        <div className="field" style={{ marginBottom: 14, padding: 10, background: "rgba(63,185,80,0.05)", border: "1px solid var(--green)", borderRadius: 6 }}>
+        <div className="aicfg-prompt-tier aicfg-prompt-tier--guild">
           <div className="row" style={{ alignItems: "center", marginBottom: 6 }}>
             <label style={{ flex: 1, fontSize: 13 }}>🏠 Guild Override (applies to all channels here)</label>
             {prompts?.guild && (
-              <button className="btn danger" style={{ padding: "3px 8px", fontSize: 11 }}
+              <button className="btn danger sm"
                 onClick={() => deletePromptLayer("guild", prompts.guild.targetId)}>Remove</button>
             )}
           </div>
@@ -888,12 +1033,12 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
               <div className="muted" style={{ fontSize: 11, marginBottom: 6 }}>
                 Saving to guild: <strong>{guilds.find((g) => g.id === guildId)?.name || "(none selected)"}</strong>
               </div>
-              <textarea style={{ minHeight: 100, width: "100%" }} spellCheck={false}
+              <textarea className="textarea-full" style={{ minHeight: 100 }} spellCheck={false}
                 value={editPrompt.prompt}
                 placeholder={guildId ? "Overrides the default for this guild only." : "Pick a guild in the sidebar first."}
                 disabled={!guildId}
                 onChange={(e) => setEditPrompt({ ...editPrompt, prompt: e.target.value })} />
-              <div className="row" style={{ marginTop: 6 }}>
+              <div className="row mt-2">
                 <button className="btn green"
                   disabled={!guildId}
                   onClick={() => savePromptLayer("guild", guildId, editPrompt.prompt)}>
@@ -904,7 +1049,7 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
             </div>
           ) : (
             <div>
-              <div style={{ fontSize: 12, padding: 8, background: "rgba(0,0,0,0.15)", borderRadius: 4, whiteSpace: "pre-wrap", minHeight: 40 }}>
+              <div className="aicfg-prompt-box">
                 {prompts?.guild?.prompt || <span className="muted">No guild override — falls through to default.</span>}
               </div>
               <button className="btn secondary" style={{ marginTop: 6 }}
@@ -917,7 +1062,7 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
         </div>
 
         {/* Channel tier */}
-        <div className="field" style={{ padding: 10, background: "rgba(240,160,32,0.05)", border: "1px solid #f0a020", borderRadius: 6 }}>
+        <div className="aicfg-prompt-tier aicfg-prompt-tier--channel" style={{ marginBottom: 0 }}>
           <div className="row" style={{ alignItems: "center", marginBottom: 6 }}>
             <label style={{ flex: 1, fontSize: 13 }}>📍 Channel Overrides</label>
           </div>
@@ -928,12 +1073,12 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
           ) : (
             <div style={{ marginBottom: 6 }}>
               {Object.entries(prompts.channels).map(([channelId, info]) => (
-                <div key={channelId} className="row" style={{ alignItems: "center", padding: "6px 8px", borderBottom: "1px solid var(--border)", fontSize: 12 }}>
-                  <code style={{ width: 130, fontSize: 11 }}>#{info.channel?.name || channelId}</code>
-                  <span style={{ flex: 1, color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <div key={channelId} className="aicfg-channel-override-row">
+                  <code>#{info.channel?.name || channelId}</code>
+                  <span className="aicfg-channel-override-text">
                     {String(info.prompt || "").slice(0, 80) || <span className="muted">(empty)</span>}
                   </span>
-                  <button className="btn danger" style={{ padding: "3px 8px", fontSize: 11 }}
+                  <button className="btn danger sm"
                     onClick={() => deletePromptLayer("channel", channelId)}>×</button>
                 </div>
               ))}
@@ -942,7 +1087,8 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
           {editPrompt?.scope === "channel" ? (
             <div>
               <select
-                style={{ width: "100%", marginBottom: 6 }}
+                className="textarea-full"
+                style={{ marginBottom: 6 }}
                 value={editPrompt.targetId || ""}
                 onChange={(e) => setEditPrompt({ ...editPrompt, targetId: e.target.value })}>
                 <option value="">Pick a channel…</option>
@@ -950,11 +1096,11 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
                   <option key={c.id} value={c.id}>#{c.name}</option>
                 ))}
               </select>
-              <textarea style={{ minHeight: 100, width: "100%" }} spellCheck={false}
+              <textarea className="textarea-full" style={{ minHeight: 100 }} spellCheck={false}
                 value={editPrompt.prompt}
                 placeholder="Overrides the guild prompt for this channel only."
                 onChange={(e) => setEditPrompt({ ...editPrompt, prompt: e.target.value })} />
-              <div className="row" style={{ marginTop: 6 }}>
+              <div className="row mt-2">
                 <button className="btn green"
                   disabled={!editPrompt.targetId}
                   onClick={() => savePromptLayer("channel", editPrompt.targetId, editPrompt.prompt)}>
@@ -974,25 +1120,23 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
 
       {/* ─── Memories Card ─── */}
       <SectionCard icon={Database} title="Memory Manager">
-        {/* Stats row */}
-        <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+        <div className="aicfg-stats-row">
           <StatBadge label="Total Memories" value={memories.length} variant="accent" />
           <StatBadge label="Server Memories" value={serverMemCount} variant="default" />
           <StatBadge label="User Memories" value={userMemCount} variant="success" />
           <StatBadge label="Users Tracked" value={uniqueUsers} variant="warn" />
         </div>
 
-        <div className="row" style={{ marginBottom: 12 }}>
-          <input placeholder="Search by content or user ID..." style={{ flex: 1 }}
+        <div className="row mb-3">
+          <input placeholder="Search by content or user ID..." className="flex-1"
             value={memSearch} onChange={(e) => setMemSearch(e.target.value)} />
           <button className="btn secondary" onClick={loadMemories}>
             <RotateCw style={{ width: 16, height: 16 }} /> <span>Refresh</span>
           </button>
         </div>
 
-        {/* Bulk-clear scope row — picks what the "Clear" button will target */}
-        <div className="row" style={{ marginBottom: 12, flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-          <span className="muted" style={{ fontSize: 12, marginRight: 4 }}>Clear scope:</span>
+        <div className="aicfg-mem-scope-row">
+          <span className="aicfg-mem-scope-label">Clear scope:</span>
           {[
             { id: "all",    label: `All (${memories.length})` },
             { id: "server", label: `Server ${plural(serverMemCount, "memory", "memories")} (${serverMemCount})` },
@@ -1000,7 +1144,7 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
           ].map((chip) => (
             <button
               key={chip.id}
-              className={`badge ${memClearScope === chip.id ? "ok" : ""}`}
+              className={`badge${memClearScope === chip.id ? " ok" : ""}`}
               style={{ cursor: "pointer", padding: "3px 10px", fontSize: 11 }}
               onClick={() => setMemClearScope(chip.id)}
               title={
@@ -1033,8 +1177,8 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
           </button>
         </div>
 
-        <div className="field" style={{ background: "rgba(255, 255, 255, 0.02)", padding: 12, borderRadius: 6, border: "1px solid var(--border)", marginBottom: 16 }}>
-          <label style={{ fontWeight: 600, fontSize: 13, marginBottom: 8, display: "block" }}>Add Memory</label>
+        <div className="aicfg-mem-add-card">
+          <label>Add Memory</label>
           <div className="row">
             <input placeholder="e.g. 'Prefers Node.js' or 'Server rules updated'" style={{ flex: 3 }}
               value={newMemContent} onChange={(e) => setNewMemContent(e.target.value)} />
@@ -1044,7 +1188,7 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
           </div>
         </div>
 
-        <div style={{ maxHeight: 350, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
+        <div className="aicfg-mem-table-wrap">
           {filteredMemories.length === 0 ? (
             <div className="muted" style={{ padding: 30, textAlign: "center" }}>
               {memories.length === 0 ? "No memories yet. The AI will save memories as it learns about users and the server." : "No memories match your search."}
@@ -1065,25 +1209,22 @@ export default function AiConfigTab({ guildId = "", guilds = [] }) {
                   const daysAgo = Math.floor((Date.now() - (m.createdAt || 0)) / 86400000);
                   return (
                     <tr key={m.id}>
-                      <td style={{ color: "var(--muted)", fontSize: 12 }}>#{m.id}</td>
+                      <td className="muted-text" style={{ fontSize: 12 }}>#{m.id}</td>
                       <td>
                         {m.userId ? (
-                          <span className="badge warn" style={{ display: "inline-block", maxWidth: 110, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                            title={m.userId}>
+                          <span className="badge warn aicfg-mem-user-badge" title={m.userId}>
                             👤 {m.displayName || m.userId}
                           </span>
                         ) : (
-                          <span className="badge ok" style={{ display: "inline-block" }}>🌐 Server</span>
+                          <span className="badge ok">🌐 Server</span>
                         )}
                       </td>
                       <td>{m.content}</td>
-                      <td style={{ color: "var(--muted)", fontSize: 12 }}>
+                      <td className="muted-text" style={{ fontSize: 12 }}>
                         {daysAgo === 0 ? "today" : `${daysAgo}d ago`}
                       </td>
-                      <td style={{ textAlign: "center" }}>
-                        <button className="btn danger" style={{ padding: "4px 8px", fontSize: 12 }} onClick={() => deleteMemory(m.id)}>
-                          Del
-                        </button>
+                      <td className="align-center">
+                        <button className="btn danger sm" onClick={() => deleteMemory(m.id)}>Del</button>
                       </td>
                     </tr>
                   );

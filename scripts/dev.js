@@ -22,7 +22,7 @@ const RUN_DASHBOARD = !args.includes("--no-dashboard");
 
 // Defaults for local development
 const DASHBOARD_PORT = 5173;
-const API_PORT = process.env.API_PORT || process.env.PORT || "3432";
+const API_PORT = process.env.API_PORT || process.env.PORT || process.env.SERVER_PORT || "3432";
 
 // Child processes
 const children = [];

@@ -5,6 +5,10 @@ const config = require("../config");
 
 const BLURPLE = 0x5865f2;
 
+function usage(ctx, text) {
+  return `\`${ctx?.utils?.PREFIX || "$"}${text}\``;
+}
+
 function canManage(member, userId) {
   return config.memberLevel(member, userId) >= config.PERM_LEVELS.admin;
 }
@@ -20,7 +24,7 @@ async function prefixBackup(message, args, ctx) {
   // $backup list
   if (sub === "list") {
     const items = await backup.get(message.guild.id);
-    if (!items.length) return message.reply({ embeds: [new EmbedBuilder().setColor(BLURPLE).setTitle("💾 Server Backups").setDescription("No backups yet. Use `$backup create [name]` to create one.")] });
+    if (!items.length) return message.reply({ embeds: [new EmbedBuilder().setColor(BLURPLE).setTitle("💾 Server Backups").setDescription(`No backups yet. Use ${usage(ctx, "backup create [name]")} to create one.`)] });
 
     const embed = new EmbedBuilder().setColor(BLURPLE).setTitle("💾 Server Backups");
     for (const item of items) {
@@ -30,7 +34,7 @@ async function prefixBackup(message, args, ctx) {
         value: `Created: ${created} | By: ${item.created_by || "unknown"}`,
       });
     }
-    embed.setFooter({ text: "Use $backup restore <id> to restore" });
+    embed.setFooter({ text: `Use ${ctx?.utils?.PREFIX || "$"}backup restore <id> to restore` });
     return message.reply({ embeds: [embed] });
   }
 
@@ -51,7 +55,7 @@ async function prefixBackup(message, args, ctx) {
   // $backup restore <id>
   if (sub === "restore") {
     const id = parseInt(args[1], 10);
-    if (isNaN(id)) return message.reply({ embeds: [errorEmbed("Usage: $backup restore <id>")] });
+    if (isNaN(id)) return message.reply({ embeds: [errorEmbed(`Usage: ${usage(ctx, "backup restore <id>")}`)] });
 
     const entry = await backup.getById(id);
     if (!entry) return message.reply({ embeds: [errorEmbed("Backup not found.")] });
@@ -82,7 +86,7 @@ async function prefixBackup(message, args, ctx) {
   // $backup delete <id>
   if (sub === "delete" || sub === "remove") {
     const id = parseInt(args[1], 10);
-    if (isNaN(id)) return message.reply({ embeds: [errorEmbed("Usage: $backup delete <id>")] });
+    if (isNaN(id)) return message.reply({ embeds: [errorEmbed(`Usage: ${usage(ctx, "backup delete <id>")}`)] });
     await backup.remove(id);
     return message.reply({ embeds: [successEmbed(`Backup #${id} deleted.`)] });
   }
@@ -90,7 +94,7 @@ async function prefixBackup(message, args, ctx) {
   // $backup info <id>
   if (sub === "info") {
     const id = parseInt(args[1], 10);
-    if (isNaN(id)) return message.reply({ embeds: [errorEmbed("Usage: $backup info <id>")] });
+    if (isNaN(id)) return message.reply({ embeds: [errorEmbed(`Usage: ${usage(ctx, "backup info <id>")}`)] });
     const entry = await backup.getById(id);
     if (!entry) return message.reply({ embeds: [errorEmbed("Backup not found.")] });
 
@@ -111,11 +115,11 @@ async function prefixBackup(message, args, ctx) {
   return message.reply({ embeds: [
     new EmbedBuilder().setColor(BLURPLE).setTitle("💾 Backup Commands")
       .setDescription([
-        "`$backup create [name]` — Create a backup of the current server structure",
-        "`$backup list` — List all backups for this server",
-        "`$backup info <id>` — View backup details (roles, channels, categories)",
-        "`$backup restore <id>` — Restore roles, categories, and channels from a backup",
-        "`$backup delete <id>` — Delete a backup",
+        `${usage(ctx, "backup create [name]")} — Create a backup of the current server structure`,
+        `${usage(ctx, "backup list")} — List all backups for this server`,
+        `${usage(ctx, "backup info <id>")} — View backup details (roles, channels, categories)`,
+        `${usage(ctx, "backup restore <id>")} — Restore roles, categories, and channels from a backup`,
+        `${usage(ctx, "backup delete <id>")} — Delete a backup`,
         "",
         "⚠ **Restore creates new roles/channels** — existing ones with the same name will be skipped.",
       ].join("\n"))

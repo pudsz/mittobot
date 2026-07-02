@@ -6,6 +6,10 @@ const safe = require("../safe");
 
 const BLURPLE = 0x5865f2;
 
+function usage(ctx, text) {
+  return `\`${ctx?.utils?.PREFIX || "$"}${text}\``;
+}
+
 // Parse an emoji argument into a key usable for lookup: custom -> id, unicode -> char.
 function parseEmojiArg(arg) {
   if (!arg) return null;
@@ -38,7 +42,7 @@ async function handleReactionRole(message, args, ctx) {
     const emoji = parseEmojiArg(args[2]);
     const role = message.mentions.roles.first() || message.guild.roles.cache.get(args[3]);
     if (!messageId || !emoji || !role)
-      return message.reply({ embeds: [errorEmbed("Usage: `$reactionrole add <messageId> <emoji> <@role>`")] });
+      return message.reply({ embeds: [errorEmbed(`Usage: ${usage(ctx, "reactionrole add <messageId> <emoji> <@role>")}`)] });
 
     const target = await resolveMessage(message.channel, messageId);
     if (!target) return message.reply({ embeds: [errorEmbed("Message not found in this channel. Run the command in the same channel as the target message.")] });
@@ -53,15 +57,15 @@ async function handleReactionRole(message, args, ctx) {
   if (sub === "remove") {
     const messageId = args[1];
     const emoji = parseEmojiArg(args[2]);
-    if (!messageId || !emoji) return message.reply({ embeds: [errorEmbed("Usage: `$reactionrole remove <messageId> <emoji>`")] });
+    if (!messageId || !emoji) return message.reply({ embeds: [errorEmbed(`Usage: ${usage(ctx, "reactionrole remove <messageId> <emoji>")}`)] });
     const ok = roles.removeReactionRole(message.guild.id, messageId, emoji.key);
     return message.reply({ embeds: ok ? [successEmbed("Reaction role removed.")] : [errorEmbed("No such reaction role binding.")] });
   }
 
   return message.reply({ embeds: [new EmbedBuilder().setColor(BLURPLE).setTitle("🎭 Reaction Roles").setDescription([
-    "`$reactionrole add <messageId> <emoji> <@role>` — bind an emoji to a role",
-    "`$reactionrole remove <messageId> <emoji>` — remove a binding",
-    "`$reactionrole list` — list all bindings",
+    `${usage(ctx, "reactionrole add <messageId> <emoji> <@role>")} — bind an emoji to a role`,
+    `${usage(ctx, "reactionrole remove <messageId> <emoji>")} — remove a binding`,
+    `${usage(ctx, "reactionrole list")} — list all bindings`,
     "",
     "Tip: enable Developer Mode to copy a message ID, and run the command in the same channel as that message.",
   ].join("\n"))] });

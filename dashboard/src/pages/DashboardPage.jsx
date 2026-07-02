@@ -5,7 +5,7 @@ import {
   Settings, Sparkles, Blocks, Database, KeyRound, FolderSync,
   Gauge, ScrollText, StickyNote, Zap, ShieldPlus, Mail, RefreshCw,
   Users, Cpu, Disc, Flame, FolderOpen, CalendarDays, HardDrive, Coins,
-  Menu, Palette, ArrowLeft,
+  Menu, Palette, ArrowLeft, FlaskConical,
 } from "lucide-react";
 import { api, setToken, clearToken, onUnauthorized, BASE } from "../api.js";
 import { ToastProvider } from "../components/Toast.jsx";
@@ -31,6 +31,7 @@ import EconomyTab from "../components/EconomyTab.jsx";
 import RoleMembersTab from "../components/RoleMembersTab.jsx";
 import DangerZoneTab from "../components/DangerZoneTab.jsx";
 import EmbedBuilderTab from "../components/EmbedBuilderTab.jsx";
+import ExperimentsTab from "../components/ExperimentsTab.jsx";
 import Sidebar from "../components/Sidebar.jsx";
 import CommandPalette from "../components/CommandPalette.jsx";
 import ErrorBoundary from "../components/ErrorBoundary.jsx";
@@ -84,6 +85,7 @@ const ADMIN_SECTIONS = [
       { id: "ai",        label: "AI Assistant",  Icon: Sparkles },
       { id: "modules",   label: "Modules",       Icon: Blocks },
       { id: "data",      label: "Data",          Icon: Database },
+      { id: "experiments", label: "Experiments",   Icon: FlaskConical },
     ],
   },
 ];
@@ -284,38 +286,66 @@ export default function DashboardPage({ user, onLogout, isAdminMode, onToggleMod
       )}
 
       {/* ─── Desktop sidebar ─── */}
-      <aside>
-        <Sidebar
-          sections={activeSections}
-          tab={tab}
-          onTab={setTab}
-          collapsedSections={collapsedSections}
-          onToggleSection={toggleSection}
-          user={user}
-          guilds={guilds}
-          guildId={guildId}
-          onGuildChange={setGuildId}
-          isAdminMode={isAdminMode}
-          renderPanelToggle={renderPanelToggle}
-          headerStatus={headerStatus}
-          onLogout={onLogout}
-        />
-      </aside>
+      <Sidebar
+        sections={activeSections}
+        tab={tab}
+        onTab={setTab}
+        collapsedSections={collapsedSections}
+        onToggleSection={toggleSection}
+        user={user}
+        guilds={guilds}
+        guildId={guildId}
+        onGuildChange={setGuildId}
+        isAdminMode={isAdminMode}
+        renderPanelToggle={renderPanelToggle}
+        headerStatus={headerStatus}
+        onLogout={onLogout}
+      />
 
       <div className="content-area" ref={contentRef}>
         <header>
-          <button
-            className="btn secondary"
-            onClick={() => navigate("/")}
-            style={{ marginRight: 8, padding: "5px 10px", fontSize: 12 }}
-            title="Back to Home"
-          >
-            <ArrowLeft style={{ width: 14, height: 14 }} />
-            <span>Home</span>
-          </button>
-          <h1>ggboi / {activeTabs.find(t => t.id === tab)?.label || tab}</h1>
-          <div className="spacer"></div>
-          <span className="muted" style={{ fontSize: 10, opacity: 0.5 }}>Alt+1-9 to switch tabs</span>
+          <div className="header-left">
+            <div className="header-nav">
+              <button
+                className="header-nav-btn"
+                onClick={() => navigate("/")}
+                title="Back to Home"
+              >
+                <ArrowLeft style={{ width: 14, height: 14 }} />
+                <span>Home</span>
+              </button>
+              <button
+                className="header-nav-btn"
+                title="Dashboard"
+              >
+                <Cpu style={{ width: 14, height: 14 }} />
+                <span>Dashboard</span>
+              </button>
+            </div>
+            <h1 className="header-title">ggboi / {activeTabs.find(t => t.id === tab)?.label || tab}</h1>
+          </div>
+          <div className="header-right">
+            <div className="header-search">
+              <input type="search" placeholder="Search settings, commands..." aria-label="Search" />
+            </div>
+            <div className="header-actions">
+              <button className="header-icon-btn" title="Notifications" aria-label="Notifications">
+                <MessageSquareCode style={{ width: 18, height: 18 }} />
+              </button>
+              <button className="header-icon-btn" title="Command Palette (⌘K)" onClick={() => setPaletteOpen(true)} aria-label="Command Palette">
+                <Menu style={{ width: 18, height: 18 }} />
+              </button>
+              <img
+                className="header-avatar"
+                src={
+                  user.avatar
+                    ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png`
+                    : `https://cdn.discordapp.com/embed/avatars/${Number(user.id) % 5}.png`
+                }
+                alt={user.tag}
+              />
+            </div>
+          </div>
         </header>
         <main>
           <ErrorBoundary resetKey={tab + guildId}>
@@ -341,6 +371,7 @@ export default function DashboardPage({ user, onLogout, isAdminMode, onToggleMod
             {tab === "modules" && <ModulesTab />}
             {tab === "data" && <DataTab />}
             {tab === "embeds" && <EmbedBuilderTab guildId={guildId} />}
+            {tab === "experiments" && <ExperimentsTab />}
           </ErrorBoundary>
         </main>
       </div>

@@ -2,6 +2,10 @@ const { EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder } = require("disc
 const safe = require("../safe");
 const { isAuthorized, noPermEmbed, errorEmbed } = require("../utils");
 
+function usage(ctx, text) {
+  return `\`${ctx?.utils?.PREFIX || "$"}${text}\``;
+}
+
 // Builds a word-boundary regex for the search term.
 // Single words get strict non-alphanumeric boundaries; multi-word phrases do a plain substring match.
 function buildSearchRegex(text) {
@@ -95,9 +99,9 @@ async function runScrape(message, reply, editReply, channel, guild, authorUserna
 
 async function prefixScrapeMessage(message, args, ctx) {
   const countArg = parseInt(args[0], 10);
-  if (isNaN(countArg) || countArg < 1) return message.reply({ embeds: [errorEmbed("Usage: `$scrapemessage <amount> <text>`\nExample: `$scrapemessage 500 nig`\nMax per channel: **5,000**")] });
+  if (isNaN(countArg) || countArg < 1) return message.reply({ embeds: [errorEmbed(`Usage: ${usage(ctx, "scrapemessage <amount> <text>")}\nExample: ${usage(ctx, "scrapemessage 500 hello")}\nMax per channel: **5,000**`)] });
   const displayText = args.slice(1).join(" ");
-  if (!displayText) return message.reply({ embeds: [errorEmbed("Provide the text to search for.\nUsage: `$scrapemessage <amount> <text>`")] });
+  if (!displayText) return message.reply({ embeds: [errorEmbed(`Provide the text to search for.\nUsage: ${usage(ctx, "scrapemessage <amount> <text>")}`)] });
 
   const searchMsg = await message.reply({ embeds: [new EmbedBuilder().setColor(0xfee75c).setTitle("🔍 Scraping Server...").setDescription(`Searching the last **${Math.min(countArg, 5000).toLocaleString()}** messages in each channel for: \`${displayText}\`\n\n*This may take a while. Do not run the command again.*`)] });
   await runScrape(message, searchMsg, (opts) => searchMsg.edit(opts), message.channel, message.guild, message.author.username, countArg, displayText);

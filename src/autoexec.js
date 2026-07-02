@@ -116,6 +116,17 @@ function evaluateConditions(conditions, context) {
 }
 
 // Format a message template with placeholders from the event context.
+function messageLink(context) {
+  if (context.message?.url) return context.message.url;
+  const guildId = context.guild?.id || context.guildId;
+  const channelId = context.channel?.id || context.message?.channelId || context.channelId;
+  const messageId = context.message?.id || context.messageId;
+  if (guildId && channelId && messageId) {
+    return `https://discord.com/channels/${guildId}/${channelId}/${messageId}`;
+  }
+  return messageId || "";
+}
+
 function formatMessage(template, context) {
   if (!template) return "";
   const userStr = context.user?.id
@@ -124,6 +135,7 @@ function formatMessage(template, context) {
   const emojiStr = context.emoji?.id
     ? `<:${context.emoji.name}:${context.emoji.id}>`
     : (context.emoji?.name || "");
+  const jumpLink = messageLink(context);
   return template
     .replace(/\{user\}/g, userStr)
     .replace(/\{username\}/g, context.username || "Unknown")
@@ -133,7 +145,8 @@ function formatMessage(template, context) {
     .replace(/\{mod\}/g, context.moderator || "Moderator")
     .replace(/\{emoji\}/g, emojiStr)
     .replace(/\{channel\}/g, context.channel?.name || "Unknown")
-    .replace(/\{messageId\}/g, context.message?.id || context.messageId || "")
+    .replace(/\{messageId\}/g, jumpLink)
+    .replace(/\{messageid\}/g, jumpLink)
     .replace(/\{message\}/g, context.content || context.message?.content || "");
 }
 

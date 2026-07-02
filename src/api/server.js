@@ -1,4 +1,5 @@
 const express = require("express");
+const https   = require("https");
 const cors    = require("cors");
 const crypto  = require("crypto");
 const jwt     = require("jsonwebtoken");
@@ -6,6 +7,7 @@ const fs      = require("fs");
 const os      = require("os");
 const path    = require("path");
 const { ChannelType, PermissionFlagsBits } = require("discord.js");
+const { getProvider } = require("../ai/providers");
 
 const { OWNER_IDS } = require("../utils");
 const settings = require("../settings");
@@ -55,6 +57,7 @@ function getBotSettings() {
 
 const DATA_STORES = ["stickies", "warnings", "reactionlogs", "afkUsers", "customRoles"];
 const NAME_RE     = /^[a-zA-Z0-9_-]+$/;
+const COMMAND_ALIAS_RE = /^[a-z0-9_-]{1,32}$/;
 
 function passwordMatches(input, expected) {
   if (typeof input !== "string" || typeof expected !== "string") return false;
@@ -66,7 +69,8 @@ function passwordMatches(input, expected) {
 
 function startApi(ctx) {
   const PASSWORD = process.env.DASHBOARD_PASSWORD;
-  const PORT = parseInt(process.env.API_PORT, 10) || parseInt(process.env.PORT, 10) || 3432;
+  // Port resolution: API_PORT → PORT → SERVER_PORT (injected by Pterodactyl) → 3432
+  const PORT = parseInt(process.env.API_PORT, 10) || parseInt(process.env.PORT, 10) || parseInt(process.env.SERVER_PORT, 10) || 3432;
 
   // Command rate tracking (rolling window for dashboard display)
   const cmdTimes = [];
@@ -598,6 +602,7 @@ function startApi(ctx) {
 
     res.json({
       online:   true,
+      prefix:   settings.get("prefix") || "$",
       tag:      client.user.tag,
       uptimeMs: client.uptime ?? 0,
       ping:     Math.round(client.ws.ping || 0),
@@ -768,6 +773,34 @@ function startApi(ctx) {
       const cleared = await db.clearAiMemories({ guildId, userId: userFilter });
       res.json({ ok: true, cleared });
     } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });  // ─── AI Model List (per-provider) ──────────────────────────────────────
+  // Owner-only — fetches available models for any registered provider.
+  app.get("/api/ai/models/:providerId", requireAuth, requireOwner, async (req, res) => {
+    try {
+      const { providerId } = req.params;
+      const provider = getProvider(providerId);
+      if (!provider) return res.status(400).json({ error: `Unknown provider: ${providerId}` });
+
+      if (typeof provider.listModels !== "function") {
+        return res.json({ models: provider.defaultModels || [] });
+      }
+
+      const key = settings.getAiApiKey(providerId);
+      const hasBaseUrl = provider.baseUrlField && settings.get(provider.baseUrlField);
+
+      if (!key && !hasBaseUrl) {
+        return res.json({ models: provider.defaultModels || [] });
+      }
+
+      const opts = {};
+      if (provider.baseUrlField) opts.baseUrl = settings.get(provider.baseUrlField);
+
+      const models = await provider.listModels(key, opts);
+      res.json({ models: models || provider.defaultModels || [] });
+    } catch (err) {
+      console.error("[api] Failed to fetch models for", req.params.providerId, ":", err.message);
       res.status(500).json({ error: err.message });
     }
   });
@@ -1100,7 +1133,7 @@ function startApi(ctx) {
         .map(c => c.name);
       return { id: cat.id, label: cat.label, description: cat.description, enabled: settings.get(cat.key) !== false, commands };
     });
-    res.json({ features: cats });
+    res.json({ features: cats, prefix: settings.get("prefix") || "$" });
   });
 
   app.post("/api/features", requireAuth, requireOwner, (req, res) => {
@@ -1113,6 +1146,39 @@ function startApi(ctx) {
   });
 
   // ─── Per-command config ──────────────────────────────────────────────────
+  function cleanCommandAliases(value) {
+    if (Array.isArray(value)) {
+      return value.map(x => String(x).trim().toLowerCase()).filter(Boolean);
+    }
+    if (typeof value === "string") {
+      return value.split(/[,\s]+/).map(x => x.trim().toLowerCase()).filter(Boolean);
+    }
+    return [];
+  }
+
+  function validateCommandAliases(guildId, name, aliases) {
+    const seen = new Set();
+    const cleaned = [];
+    for (const alias of aliases) {
+      if (!COMMAND_ALIAS_RE.test(alias)) {
+        return { error: "aliases may only use lowercase letters, numbers, _ and - and must be 1-32 chars" };
+      }
+      if (alias === name) continue;
+      const direct = ctx.commandMap.get(alias);
+      if (direct && direct.name !== name) return { error: `alias conflicts with existing command: ${alias}` };
+      if (seen.has(alias)) continue;
+      for (const def of ctx.commandMap.values()) {
+        if (!def?.name || def.name === name || typeof ctx.commandAliases !== "function") continue;
+        if (ctx.commandAliases(def, guildId).includes(alias)) {
+          return { error: `alias already belongs to command: ${def.name}` };
+        }
+      }
+      seen.add(alias);
+      cleaned.push(alias);
+    }
+    return { aliases: cleaned.slice(0, 10) };
+  }
+
   app.get("/api/commands", requireAuth, (req, res) => {
     const guildInfo = getGuildInfo(reqGuildId(req));
     const guildId = guildInfo.guildId;
@@ -1128,6 +1194,7 @@ function startApi(ctx) {
         name: def.name,
         description: def.description || "",
         category: def.category || null,
+        aliases: typeof ctx.commandAliases === "function" ? ctx.commandAliases(def, guildId) : (def.aliases || []),
         config: config.resolve(guildId, def.name, def),
       });
     }
@@ -1138,6 +1205,7 @@ function startApi(ctx) {
       guildName: guildInfo.guildName,
       permLevels: config.PERM_ORDER,
       permLabels: config.PERM_LABELS,
+      prefix: settings.get("prefix") || "$",
       channels: guildInfo.channels,
       roles: guildInfo.roles,
       commands,
@@ -1154,7 +1222,14 @@ function startApi(ctx) {
     if (!def || def._dynamic) return res.status(404).json({ error: "Unknown command" });
 
     const body = req.body || {};
-    if (body.reset === true) { config.reset(guildId, name); return res.json({ ok: true, config: config.resolve(guildId, name, def) }); }
+    if (body.reset === true) {
+      config.reset(guildId, name);
+      return res.json({
+        ok: true,
+        aliases: typeof ctx.commandAliases === "function" ? ctx.commandAliases(def, guildId) : (def.aliases || []),
+        config: config.resolve(guildId, name, def),
+      });
+    }
 
     const patch = {};
     if (typeof body.enabled === "boolean") patch.enabled = body.enabled;
@@ -1164,9 +1239,18 @@ function startApi(ctx) {
     if (Array.isArray(body.blockedChannels)) patch.blockedChannels = body.blockedChannels.filter(x => /^\d{17,20}$/.test(x));
     if (Array.isArray(body.allowedRoles))    patch.allowedRoles    = body.allowedRoles.filter(x => /^\d{17,20}$/.test(x));
     if (body.settings && typeof body.settings === "object") patch.settings = body.settings;
+    if (body.aliases !== undefined) {
+      const validated = validateCommandAliases(guildId, name, cleanCommandAliases(body.aliases));
+      if (validated.error) return res.status(400).json({ error: validated.error });
+      patch.settings = { ...(patch.settings || config.resolve(guildId, name, def).settings || {}), aliases: validated.aliases };
+    }
 
     config.set(guildId, name, patch);
-    res.json({ ok: true, config: config.resolve(guildId, name, def) });
+    res.json({
+      ok: true,
+      aliases: typeof ctx.commandAliases === "function" ? ctx.commandAliases(def, guildId) : [],
+      config: config.resolve(guildId, name, def),
+    });
   });
 
   // ─── Channel permission sync ─────────────────────────────────────────────
@@ -1333,6 +1417,7 @@ function startApi(ctx) {
       guildId: guildInfo.guildId,
       hasGuild: guildInfo.hasGuild,
       guildName: guildInfo.guildName,
+      prefix: settings.get("prefix") || "$",
       roles: guildInfo.roles,
       autoroles: g.autoroles,
       reactionRoles: g.reactionRoles,
@@ -1501,13 +1586,13 @@ function startApi(ctx) {
   // ─── Moderation Log ──────────────────────────────────────────────────────
   app.get("/api/modlog", requireAuth, async (req, res) => {
     const guildInfo = getGuildInfo(reqGuildId(req));
-    if (!guildInfo.guildId) return res.json({ entries: [] });
+    if (!guildInfo.guildId) return res.json({ entries: [], prefix: settings.get("prefix") || "$" });
     if (!userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner)) return res.status(403).json({ error: "You don't have access to this guild" });
     const limit = parseInt(req.query.limit, 10) || 100;
     try {
       const db = require("../db");
       const entries = await db.getModLog(guildInfo.guildId, Math.min(limit, 500));
-      res.json({ entries });
+      res.json({ entries, prefix: settings.get("prefix") || "$" });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -2146,6 +2231,74 @@ function startApi(ctx) {
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // ─── Alpha Experiments ────────────────────────────────────────────────
+  app.get("/api/alpha/codes", requireAuth, requireOwner, async (req, res) => {
+    try {
+      const db = require("../db");
+      const codes = await db.getAllAlphaCodes();
+      res.json({ codes });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.post("/api/alpha/generate", requireAuth, requireOwner, async (req, res) => {
+    try {
+      const crypto = require("crypto");
+      const code = crypto.randomBytes(12).toString("hex").toUpperCase();
+      const db = require("../db");
+      await db.createAlphaCode(code, req.user.sub);
+      res.json({ code });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.get("/api/alpha/users", requireAuth, async (req, res) => {
+    try {
+      const db = require("../db");
+      const users = await db.getAllAlphaUsers();
+      res.json({ users });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.post("/api/alpha/users/:userId/toggle-telemetry", requireAuth, requireOwner, async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const db = require("../db");
+      const user = await db.getAlphaUser(userId, req.body.guildId);
+      if (!user) return res.status(404).json({ error: "User not found" });
+      const newOpt = user.telemetry_opt_out === 1 ? 0 : 1;
+      await db.setAlphaUser(userId, req.body.guildId, {
+        activatedAt: user.activated_at,
+        codeUsed: user.code_used,
+        telemetryOptOut: newOpt === 1,
+      });
+      const data = require("../data");
+      data.setAlphaTelemetryOptOut(userId, req.body.guildId, newOpt === 1);
+      res.json({ ok: true, telemetryOptOut: newOpt === 1 });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.get("/api/alpha/telemetry", requireAuth, async (req, res) => {
+    try {
+      const db = require("../db");
+      const { guildId, userId, success, limit, offset } = req.query;
+      const entries = await db.getAlphaTelemetry({
+        guildId: guildId || null,
+        userId: userId || null,
+        success: success !== undefined ? (success === "true" || success === "1") : null,
+        limit: parseInt(limit, 10) || 50,
+        offset: parseInt(offset, 10) || 0,
+      });
+      res.json({ entries });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.delete("/api/alpha/telemetry", requireAuth, requireOwner, async (req, res) => {
+    try {
+      const db = require("../db");
+      await db.purgeAlphaTelemetry();
+      res.json({ ok: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
   });
 
   // ─── Serve built dashboard (SPA) ──────────────────────────────────────

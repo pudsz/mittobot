@@ -333,6 +333,35 @@ function init() {
     );
     CREATE INDEX IF NOT EXISTS embed_templates_guild ON embed_templates (guild_id);
 
+    CREATE TABLE IF NOT EXISTS alpha_codes (
+      code       TEXT PRIMARY KEY,
+      created_by TEXT NOT NULL,
+      created_at BIGINT NOT NULL,
+      used_by    TEXT,
+      used_at    BIGINT
+    );
+
+    CREATE TABLE IF NOT EXISTS alpha_users (
+      user_id           TEXT NOT NULL,
+      guild_id          TEXT NOT NULL,
+      activated_at      BIGINT NOT NULL,
+      code_used         TEXT,
+      telemetry_opt_out INTEGER DEFAULT 0,
+      PRIMARY KEY (user_id, guild_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS alpha_telemetry (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id     TEXT,
+      guild_id    TEXT,
+      tool_name   TEXT NOT NULL,
+      success     INTEGER DEFAULT 1,
+      error_msg   TEXT,
+      duration_ms INTEGER DEFAULT 0,
+      timestamp   BIGINT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS alpha_telemetry_ts ON alpha_telemetry (timestamp);
+
     CREATE TABLE IF NOT EXISTS ai_conversations (
       id         INTEGER PRIMARY KEY AUTOINCREMENT,
       scope      TEXT NOT NULL DEFAULT 'private',  -- 'global' (per-channel) | 'private' (per-user DM)
@@ -1418,7 +1447,7 @@ module.exports = {
   async upsertPrompt(scope, targetId, prompt) {
     const now = Date.now();
     const tid = scope === "default" ? "*" : (targetId || "*");
-    const trimmed = String(prompt || "").slice(0, 4000);
+    const trimmed = String(prompt || "").slice(0, 20000);
     const existing = get("SELECT 1 FROM ai_prompts WHERE scope = ? AND target_id = ?", [scope, tid]);
     if (existing) {
       db.prepare("UPDATE ai_prompts SET prompt = ?, updated_at = ? WHERE scope = ? AND target_id = ?")
@@ -1437,6 +1466,56 @@ module.exports = {
     db.prepare("DELETE FROM ai_prompts WHERE scope = 'guild' AND target_id = ?").run(guildId);
     db.prepare("DELETE FROM ai_prompts WHERE scope = 'channel' AND target_id = ?").run(guildId);
   },
+  // ── Alpha Experiments ─────────────────────────────────────────────────
+  async createAlphaCode(code, createdBy) {
+    db.prepare("INSERT INTO alpha_codes (code, created_by, created_at) VALUES (?, ?, ?)").run(code, createdBy, Date.now());
+  },
+  async getAlphaCode(code) {
+    return get("SELECT * FROM alpha_codes WHERE code = ?", [code]);
+  },
+  async useAlphaCode(code, userId) {
+    const info = db.prepare("UPDATE alpha_codes SET used_by = ?, used_at = ? WHERE code = ? AND used_by IS NULL").run(userId, Date.now(), code);
+    return info.changes > 0;
+  },
+  async getAllAlphaCodes() {
+    return query("SELECT * FROM alpha_codes ORDER BY created_at DESC");
+  },
+  async getAlphaUser(userId, guildId) {
+    return get("SELECT * FROM alpha_users WHERE user_id = ? AND guild_id = ?", [userId, guildId]);
+  },
+  async setAlphaUser(userId, guildId, { activatedAt, codeUsed, telemetryOptOut }) {
+    db.prepare(`
+      INSERT INTO alpha_users (user_id, guild_id, activated_at, code_used, telemetry_opt_out)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(user_id, guild_id) DO UPDATE SET
+        telemetry_opt_out = excluded.telemetry_opt_out
+    `).run(userId, guildId, activatedAt || Date.now(), codeUsed || null, telemetryOptOut ? 1 : 0);
+  },
+  async getAllAlphaUsers() {
+    return query("SELECT * FROM alpha_users ORDER BY activated_at DESC");
+  },
+  async addAlphaTelemetry({ userId, guildId, toolName, success, errorMsg, durationMs }) {
+    db.prepare(`
+      INSERT INTO alpha_telemetry (user_id, guild_id, tool_name, success, error_msg, duration_ms, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(userId || null, guildId || null, toolName, success ? 1 : 0, errorMsg || null, durationMs || 0, Date.now());
+  },
+  async getAlphaTelemetry(opts = {}) {
+    const { guildId = null, userId = null, success = null, limit = 50, offset = 0 } = opts;
+    const conds = [];
+    const params = [];
+    if (guildId) { conds.push("guild_id = ?"); params.push(guildId); }
+    if (userId) { conds.push("user_id = ?"); params.push(userId); }
+    if (success !== null) { conds.push("success = ?"); params.push(success ? 1 : 0); }
+    const where = conds.length ? "WHERE " + conds.join(" AND ") : "";
+    params.push(limit);
+    params.push(offset);
+    return query(`SELECT * FROM alpha_telemetry ${where} ORDER BY timestamp DESC LIMIT ? OFFSET ?`, params);
+  },
+  async purgeAlphaTelemetry() {
+    db.prepare("DELETE FROM alpha_telemetry").run();
+  },
+
   async resolvePrompt({ guildId = null, channelId = null } = {}) {
     // Returns { prompt, source } where source is 'channel' | 'guild' | 'default' | 'settings'.
     // Most-specific tier wins; falls back to settings.aiSystemPrompt if no DB override.

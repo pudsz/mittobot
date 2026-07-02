@@ -34,20 +34,20 @@ function LogRow({ entry, index, isExpanded, onToggle }) {
     <>
       <div className="mod-log-row visible" onClick={hasDetails ? onToggle : undefined} style={{ animationDelay: `${index * 25}ms`, ...(hasDetails ? { cursor: "pointer" } : {}) }}>
         <div className="mod-log-cell mod-log-action" style={{ color: meta.color }}>
-          <Icon style={{ width: 14, height: 14, flexShrink: 0 }} />
+          <Icon className="modlog-icon" />
           <span>{meta.label}</span>
         </div>
         <div className="mod-log-cell mod-log-users">
           <span className="mod-log-user-row">👤 <code>{entry.user_id?.slice(0, 10)}…</code></span>
-          <span className="mod-log-user-row" style={{ color: "var(--text-muted)", fontSize: 11 }}>by <code>{entry.mod_id?.slice(0, 10)}…</code></span>
+          <span className="mod-log-user-row modlog-muted-by">by <code>{entry.mod_id?.slice(0, 10)}…</code></span>
         </div>
         <div className="mod-log-cell mod-log-reason">
-          {entry.reason ? entry.reason.slice(0, 60) : <span className="muted" style={{ fontSize: 11 }}>No reason</span>}
+          {entry.reason ? entry.reason.slice(0, 60) : <span className="muted modlog-no-reason">No reason</span>}
           {entry.reason?.length > 60 && <span className="muted">…</span>}
         </div>
         <div className="mod-log-cell mod-log-time">{formatTimestamp(entry.timestamp)}</div>
         <div className="mod-log-cell mod-log-expand">
-          {hasDetails && (isExpanded ? <ChevronUp style={{ width: 14, height: 14 }} /> : <ChevronDown style={{ width: 14, height: 14 }} />)}
+          {hasDetails && (isExpanded ? <ChevronUp className="modlog-icon" /> : <ChevronDown className="modlog-icon" />)}
         </div>
       </div>
       {isExpanded && hasDetails && (
@@ -55,7 +55,7 @@ function LogRow({ entry, index, isExpanded, onToggle }) {
           {entry.reason && <div><strong>Reason:</strong> {entry.reason}</div>}
           {entry.details && <div><strong>Details:</strong> {(() => { try { return JSON.stringify(JSON.parse(entry.details), null, 2); } catch { return entry.details; } })()}</div>}
           {entry.proof && <div><strong>Proof:</strong> {(() => { try { return JSON.stringify(JSON.parse(entry.proof), null, 2); } catch { return entry.proof; } })()}</div>}
-          {entry.id && <div className="muted" style={{ fontSize: 10 }}>Entry #{entry.id}</div>}
+          {entry.id && <div className="muted modlog-entry-id">Entry #{entry.id}</div>}
         </div>
       )}
     </>
@@ -146,22 +146,22 @@ export default function ModerationLogTab({ guildId }) {
       </div>
 
       <Panel icon={ScrollText} title="Moderation Log">
-        <p className="muted" style={{ marginBottom: 14 }}>
+        <p className="muted modlog-panel-desc">
           Full audit trail of all moderation actions. Click any entry to expand details.
         </p>
 
         {/* Filters */}
-        <div className="row" style={{ marginBottom: 10, gap: 8 }}>
-          <div className="field" style={{ flex: 1, margin: 0, minWidth: 180 }}>
+        <div className="row modlog-filters-row">
+          <div className="field modlog-filter-field">
             <input placeholder="Search by ID or reason..." value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
-          <div className="field" style={{ flex: 0, margin: 0, minWidth: 110 }}>
+          <div className="field modlog-filter-action">
             <select value={actionFilter} onChange={(e) => setActionFilter(e.target.value)}>
               <option value="all">All actions</option>
               {uniqueActions.map((a) => <option key={a} value={a}>{ACTION_META[a]?.label || a}</option>)}
             </select>
           </div>
-          <div className="field" style={{ flex: 0, margin: 0, minWidth: 100 }}>
+          <div className="field modlog-filter-date">
             <select value={dateRange} onChange={(e) => setDateRange(e.target.value)}>
               <option value="all">All time</option>
               <option value="24h">Last 24h</option>
@@ -172,12 +172,12 @@ export default function ModerationLogTab({ guildId }) {
           </div>
         </div>
 
-        <div className="row" style={{ marginBottom: 14 }}>
-          <div className="field" style={{ flex: 1, margin: 0, minWidth: 180 }}>
+        <div className="row modlog-user-search-row">
+          <div className="field modlog-user-search-field">
             <div className="row">
               <input placeholder="User ID..." value={userFilter} onChange={(e) => setUserFilter(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") searchByUser(); }} />
-              <button className="btn secondary" onClick={searchByUser}><Search style={{ width: 14, height: 14 }} /> Find</button>
-              <button className="btn secondary" onClick={load}><RotateCw style={{ width: 14, height: 14 }} /> All</button>
+              <button className="btn secondary" onClick={searchByUser}><Search className="modlog-icon" /> Find</button>
+              <button className="btn secondary" onClick={load}><RotateCw className="modlog-icon" /> All</button>
             </div>
           </div>
         </div>
@@ -185,7 +185,7 @@ export default function ModerationLogTab({ guildId }) {
 
       <Panel>
         {filtered.length === 0 ? (
-          <div className="muted" style={{ textAlign: "center", padding: 40 }}>
+          <div className="muted modlog-empty">
             {loading ? "Loading..." : entries?.length === 0
               ? "No moderation actions logged yet. Actions are recorded when you use real moderation commands."
               : "No entries match the current filters."}
@@ -202,7 +202,7 @@ export default function ModerationLogTab({ guildId }) {
               />
             ))}
             {filtered.length > 300 && (
-              <div className="muted" style={{ textAlign: "center", padding: 12, fontSize: 12 }}>
+              <div className="muted modlog-truncated-note">
                 Showing 300 of {filtered.length} matching entries
               </div>
             )}

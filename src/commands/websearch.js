@@ -4,6 +4,10 @@ const safe = require("../safe");
 
 const BLURPLE = 0x5865f2;
 
+function usage(ctx, text) {
+  return `\`${ctx?.utils?.PREFIX || "$"}${text}\``;
+}
+
 // Shared search logic — calls DuckDuckGo HTML endpoint, parses results
 async function searchDuckDuckGo(query) {
   const res = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
@@ -36,7 +40,7 @@ async function searchDuckDuckGo(query) {
 
 async function prefixWebSearch(message, args, ctx) {
   const query = args.join(" ").trim();
-  if (!query) return message.reply({ embeds: [errorEmbed("Usage: $websearch <query>")] });
+  if (!query) return message.reply({ embeds: [errorEmbed(`Usage: ${usage(ctx, "websearch <query>")}`)] });
 
   const status = await message.reply({ embeds: [new EmbedBuilder().setColor(0xfee75c).setDescription(`🔍 Searching for: **${query.slice(0, 100)}**...`)] });
 
