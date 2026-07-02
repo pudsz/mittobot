@@ -23,6 +23,32 @@ The bot runs as **one Node.js process on one port** — API + dashboard fallback
   ```
   Document both in `.env.example` (see §12).
 
+### 0.1.1 Single-port serving — dashboard-v2 is the default UI
+
+**Current deployment decision: the bot AND the dashboard are both served on port
+`3432`** (no Vercel split for now — Vercel remains an optional later path, see
+DASHBOARD_SPEC §1).
+
+- `src/api/server.js` serves the dashboard build as static files on the same Express
+  app as the API. Path resolution order:
+  ```js
+  // Prefer the v2 build; fall back to legacy v1; warn if neither exists.
+  const candidates = [
+    path.resolve(__dirname, "../../dashboard-v2/dist"),   // ★ default
+    path.resolve(__dirname, "../../dashboard/dist"),      // legacy fallback
+  ];
+  const dashboardPath = candidates.find(p => fs.existsSync(p));
+  ```
+- SPA fallback stays as-is: `GET *` → `index.html` (excluding `/api/*` and `/login`).
+- Build step: `npm run build` at repo root builds `dashboard-v2` (update the root
+  `package.json` script: `"build:dashboard": "cd dashboard-v2 && npm ci && npm run build"`).
+- Same-origin means **no CORS config needed** (`DASHBOARD_ORIGIN` stays unset) and
+  `VITE_BOT_API_URL` stays empty at build time — the SPA calls relative `/api/...`.
+- Discord OAuth redirect: `DISCORD_REDIRECT_URI=https://<your-domain-or-ip>:3432/api/auth/discord/callback`,
+  and the callback's redirect target (`originList[0]`) defaults to the same origin.
+- Dev workflow unchanged: `npm start` runs the bot on :3432 and the v2 Vite dev server
+  on :5174 (proxying `/api` + `/login` to :3432).
+
 ### 0.2 Egg configuration
 
 - **Startup command**: `if [[ -d .git ]] && [[ {{AUTO_UPDATE}} == "1" ]]; then git pull; fi; npm install --omit=dev; node index.js`
