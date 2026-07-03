@@ -221,6 +221,13 @@ async function logModAction(guildId, userId, modId, action, reason, details, pro
   } catch (err) {
     console.error(`[mod] Failed to log ${action} for ${userId}:`, err.message);
   }
+  try {
+    require("../events").publish(guildId, {
+      type: "mod_action",
+      summary: `${action} · ${userId}${reason ? ` — ${reason}` : ""}`,
+      data: { userId, modId, action, reason: reason || null },
+    });
+  } catch { /* event bus is best-effort */ }
 }
 
 // Fire an autoexec trigger for a mod action, sharing common payload fields.

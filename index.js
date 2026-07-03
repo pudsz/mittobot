@@ -19,6 +19,7 @@ const safe = require("./src/safe");
 const roletracker = require("./src/roletracker");
 const femboyify = require("./src/femboyify");
 const scheduler = require("./src/scheduler");
+const events = require("./src/events");
 
 const commandMap = new Map();
 const slashMap = new Map();
@@ -510,6 +511,11 @@ client.on("messageReactionRemove", (reaction, user) => {
 
 // Welcome, leave, and autorole events
 client.on("guildMemberAdd", member => {
+  events.publish(member.guild.id, {
+    type: "member_join",
+    summary: `${member.user.tag} joined`,
+    data: { userId: member.id, tag: member.user.tag, memberCount: member.guild.memberCount },
+  });
   greet.onMemberAdd(member).catch(err => console.error("greet add:", err.message));
   roles.onMemberAdd(member).catch(err => console.error("autorole:", err.message));
   // Auto-exec: fire any rules triggered by the "join" event
@@ -522,6 +528,11 @@ client.on("guildMemberAdd", member => {
   }).catch(err => console.error("autoexec join:", err.message));
 });
 client.on("guildMemberRemove", member => {
+  events.publish(member.guild.id, {
+    type: "member_leave",
+    summary: `${member.user.tag} left`,
+    data: { userId: member.id, tag: member.user.tag, memberCount: member.guild.memberCount },
+  });
   greet.onMemberRemove(member).catch(err => console.error("greet remove:", err.message));
   // Auto-exec: fire any rules triggered by the "leave" event
   autoexec.executeTrigger(member.guild.id, "leave", {
@@ -582,39 +593,59 @@ process.on("unhandledRejection", error => {
   console.error("Unhandled promise rejection:", error);
 });
 
-// Graceful shutdown
+// Graceful shutdown (BOT_SPEC §0.4):
+// 1. stop accepting HTTP  2. flush pending persists  3. destroy the client
+// 4. close SQLite  5. exit — with a 10s hard-kill safety net.
+let shuttingDown = false;
 async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log(`\n[shutdown] ${signal} received — shutting down gracefully...`);
+
+  // Hard timeout: if any step hangs, force-exit after 10s so the process
+  // manager (Pterodactyl) doesn't SIGKILL mid-write.
+  const hardTimeout = setTimeout(() => {
+    console.error("[shutdown] Graceful shutdown timed out (10s) — forcing exit.");
+    process.exit(1);
+  }, 10_000);
+  hardTimeout.unref();
+
+  // 1. Stop accepting new HTTP requests.
   try {
-    // Stop timers
-    const automod = require("./src/automod");
-    automod.stopSpamCleanup();
-    // Destroy all voice sessions
+    if (ctx.httpServer) {
+      await new Promise((resolve) => ctx.httpServer.close(resolve));
+      console.log("[shutdown] HTTP server closed.");
+    }
+  } catch (err) { console.error("[shutdown] Error closing HTTP server:", err.message); }
+
+  // Stop background timers.
+  try {
+    require("./src/automod").stopSpamCleanup();
     if (voiceManager) voiceManager.destroy();
-    try {
-      const mod = require("./src/commands/mod");
-      if (typeof mod.stopProbationCleanup === "function") mod.stopProbationCleanup();
-    } catch { /* best-effort */ }
-    // Clear all schedule timers
-    try {
-      const sched = require("./src/scheduler");
-      if (typeof sched.reload === "function") {
-        // reload() clears timers and resets; we're shutting down so just need clear
-        // (no-op — timers are unref'd, so they won't block shutdown)
-      }
-    } catch { /* best-effort */ }
+    scheduler.stopMaintenance();
+    const mod = require("./src/commands/mod");
+    if (typeof mod.stopProbationCleanup === "function") mod.stopProbationCleanup();
   } catch { /* best-effort */ }
+
+  // 2. Flush any pending background persists (modules that expose flush()).
+  for (const m of [settings, data, config, automod, greet, roles, dangerzone, aiMemory, autoexec, roletracker, femboyify]) {
+    try { if (typeof m.flush === "function") await m.flush(); } catch { /* best-effort */ }
+  }
+
+  // 3. Destroy the Discord connection.
   try {
-    // Destroy Discord client
     await client.destroy();
     console.log("[shutdown] Discord client destroyed.");
   } catch (err) { console.error("[shutdown] Error destroying client:", err.message); }
+
+  // 4. Checkpoint + close SQLite.
   try {
-    // Close SQLite
-    const db = require("./src/db");
+    db.checkpoint();
     db.close();
     console.log("[shutdown] SQLite connection closed.");
   } catch (err) { console.error("[shutdown] Error closing DB:", err.message); }
+
+  clearTimeout(hardTimeout);
   console.log("[shutdown] Goodbye.");
   process.exit(0);
 }

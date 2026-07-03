@@ -311,6 +311,13 @@ function isExempt(message, cfg) {
 }
 
 async function logAction(guild, cfg, message, ruleName, action) {
+  try {
+    require("./events").publish(guild.id, {
+      type: "automod",
+      summary: `${ruleName} · ${action} · ${message.author?.tag || message.author?.id || "unknown"}`,
+      data: { rule: ruleName, action, userId: message.author?.id, channelId: message.channel?.id },
+    });
+  } catch { /* event bus is best-effort */ }
   if (!cfg.logChannelId) return;
   const ch = guild.channels.cache.get(cfg.logChannelId);
   if (!ch) return;
