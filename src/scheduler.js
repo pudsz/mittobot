@@ -224,9 +224,29 @@ async function disableSchedule(id, entry) {
 // ─── Public API ───────────────────────────────────────────────────────────
 
 let clientRef = null;
+let maintenanceTimer = null;
+
+// Hourly maintenance tick (BOT_SPEC §0.3): checkpoint the WAL so it doesn't grow
+// unbounded on long-running installs. Uses setInterval (unref'd) so it never
+// blocks process exit. Idempotent — safe to call from load()/reload().
+function startMaintenance() {
+  if (maintenanceTimer) return;
+  maintenanceTimer = setInterval(() => {
+    try { db.checkpoint(); } catch { /* best-effort */ }
+  }, 60 * 60_000);
+  maintenanceTimer.unref();
+}
+
+function stopMaintenance() {
+  if (maintenanceTimer) {
+    clearInterval(maintenanceTimer);
+    maintenanceTimer = null;
+  }
+}
 
 async function load(client) {
   clientRef = client;
+  startMaintenance();
   try {
     const rows = await db.getAllScheduledMessages();
     for (const row of rows) {
@@ -322,6 +342,8 @@ module.exports = {
   remove,
   getForGuild,
   count,
+  startMaintenance,
+  stopMaintenance,
   parseScheduleTime,
   buildScheduledAt,
   parseTime,

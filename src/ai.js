@@ -861,6 +861,17 @@ async function handleAiMessage(message, ctx) {
       chattyCooldowns.set(message.channel.id, Date.now());
     }
 
+    // Publish to the live-feed event bus (guild channels only; DMs have no guild)
+    if (message.guild) {
+      try {
+        require("./events").publish(message.guild.id, {
+          type: "ai_reply",
+          summary: `AI replied to ${message.author.tag}`,
+          data: { userId: message.author.id, channelId: message.channel.id, provider: activeProviderId },
+        });
+      } catch { /* event bus is best-effort */ }
+    }
+
     // Save conversation turn to persistent SQLite history using the active scope/key.
     // Global scope (guild channels) shares one thread per channel; private scope (DMs)
     // keeps one thread per user.

@@ -11,6 +11,28 @@ const db = new Database(dbPath);
 // Enable foreign key constraints
 db.pragma("foreign_keys = ON");
 
+// ── SQLite hardening (BOT_SPEC §0.3) ─────────────────────────────────────────
+// WAL improves concurrency (readers don't block the writer); a busy timeout
+// avoids SQLITE_BUSY under contention; NORMAL synchronous is safe under WAL and
+// much faster than FULL. Wrapped in try/catch so an exotic filesystem (e.g. a
+// network mount that rejects WAL) degrades gracefully to rollback-journal mode.
+try {
+  db.pragma("journal_mode = WAL");
+  db.pragma("busy_timeout = 5000");
+  db.pragma("synchronous = NORMAL");
+} catch (err) {
+  console.warn("[db] Could not apply WAL pragmas, using defaults:", err.message);
+}
+
+// Truncate the WAL file to bound its growth. Called hourly by the scheduler.
+function checkpoint() {
+  try {
+    db.pragma("wal_checkpoint(TRUNCATE)");
+  } catch (err) {
+    console.warn("[db] wal_checkpoint failed:", err.message);
+  }
+}
+
 // Helper to run queries with params
 function query(text, params = []) {
   return db.prepare(text).all(params);
@@ -1012,6 +1034,7 @@ module.exports = {
   safeJsonParse,
   init,
   close,
+  checkpoint,
 
   // ── Global settings ──────────────────────────────────────────────────────
   getGlobalSettings,

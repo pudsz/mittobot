@@ -19,6 +19,8 @@ const roles    = require("../roles");
 const { loadModule, MODULES_DIR, ensureModulesDir } = require("../commands/modules");
 const ai = require("../ai");
 const dangerzone = require("../dangerzone");
+const events = require("../events");
+const db = require("../db");
 
 // ─── This is the bot's PUBLIC API. The dashboard is hosted separately (e.g. on
 // Vercel) and is a pure client of these endpoints — it never touches the
@@ -131,7 +133,12 @@ function startApi(ctx) {
   // Check if the dashboard is built and can be served locally (same-origin).
   // This is checked early so we can relax the DASHBOARD_ORIGIN requirement:
   // same-origin requests don't need CORS at all.
-  const dashboardPath = path.resolve(__dirname, "../../dashboard/dist");
+  // Prefer the v2 build; fall back to legacy v1 (BOT_SPEC §0.1.1).
+  const dashboardCandidates = [
+    path.resolve(__dirname, "../../dashboard-v2/dist"),   // default
+    path.resolve(__dirname, "../../dashboard/dist"),      // legacy fallback
+  ];
+  const dashboardPath = dashboardCandidates.find(p => fs.existsSync(p)) || dashboardCandidates[1];
   const servingDashboard = fs.existsSync(dashboardPath);
 
   // CORS: restrict to the dashboard origin(s). DASHBOARD_ORIGIN may be a
@@ -616,6 +623,113 @@ function startApi(ctx) {
       activeAiConversations,
       commandsPerMin: cmdRate,
       activity: activity ? { name: activity.name, type: activity.type } : null,
+    });
+  });
+
+  // ─── Overview (BOT_SPEC §10 / DASHBOARD_SPEC §5.1) ──────────────────────
+  // Aggregated per-guild stats for the mission-control page + a needs-attention
+  // list. All counts are best-effort — a failing sub-query degrades to 0/[].
+  app.get("/api/overview", requireAuth, (req, res) => {
+    const guildId = reqGuildId(req);
+    if (!guildId) return res.status(400).json({ error: "guildId required" });
+    if (!userCanAccessGuild(req.user?.sub, guildId, req.user?.isOwner)) {
+      return res.status(403).json({ error: "No access to this guild" });
+    }
+    const guild = resolveGuild(guildId);
+    const now = Date.now();
+    const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+
+    const count = (sql, params) => {
+      try { return db.get(sql, params)?.n ?? 0; } catch { return 0; }
+    };
+
+    const members = guild?.memberCount ?? 0;
+    const modActions7d = count(
+      "SELECT COUNT(*) AS n FROM moderation_log WHERE guild_id = ? AND timestamp > ?",
+      [guildId, now - 7 * 24 * 60 * 60_000]);
+    const aiCallsToday = count(
+      "SELECT COUNT(*) AS n FROM ai_analytics WHERE guild_id = ? AND timestamp > ?",
+      [guildId, dayStart.getTime()]);
+    const activeWarnings = count("SELECT COUNT(*) AS n FROM warnings WHERE guild_id = ?", [guildId]);
+    const economyUsers = count("SELECT COUNT(*) AS n FROM economy_users WHERE guild_id = ?", [guildId]);
+    let ticketsOpen = 0;
+    try { ticketsOpen = db.get("SELECT COUNT(*) AS n FROM tickets WHERE guild_id = ? AND status = 'open'", [guildId])?.n ?? 0; } catch { /* tickets table not created yet (B6) */ }
+
+    // Needs-attention: cheap heuristics that deep-link to their fix page in the UI.
+    const attention = [];
+    try {
+      if (!settings.getAiApiKey(settings.get("aiProvider") || "groq")) {
+        attention.push({ level: "warn", text: "No AI provider key configured", link: "/ai/config" });
+      }
+    } catch { /* ignore */ }
+    if (guild && guild.members.me && !guild.members.me.permissions.has(PermissionFlagsBits.Administrator)) {
+      attention.push({ level: "info", text: "Bot lacks Administrator permission", link: "/commands" });
+    }
+
+    const featureToggles = {};
+    for (const c of features.listCategories()) featureToggles[c.id] = features.isEnabled(c.id);
+
+    res.json({
+      guildId,
+      guildName: guild?.name ?? null,
+      stats: { members, modActions7d, aiCallsToday, activeWarnings, economyUsers, ticketsOpen },
+      attention,
+      features: featureToggles,
+    });
+  });
+
+  // ─── Activity feed (ring buffer + recent moderation log) ─────────────────
+  app.get("/api/activity", requireAuth, (req, res) => {
+    const guildId = reqGuildId(req);
+    if (!guildId) return res.status(400).json({ error: "guildId required" });
+    if (!userCanAccessGuild(req.user?.sub, guildId, req.user?.isOwner)) {
+      return res.status(403).json({ error: "No access to this guild" });
+    }
+    const limit = Math.min(parseInt(req.query.limit, 10) || 50, events.RING_LIMIT);
+    res.json({ events: events.getRecent(guildId, limit) });
+  });
+
+  // ─── SSE live event stream (BOT_SPEC §10) ───────────────────────────────
+  // EventSource can't set an Authorization header, so the JWT is passed as a
+  // query param and validated exactly like a Bearer token. 15s heartbeat keeps
+  // proxies from closing an idle connection.
+  app.get("/api/events", (req, res) => {
+    const token = req.query.token;
+    if (!token || !JWT_SECRET) return res.status(401).json({ error: "Unauthorized" });
+    let user;
+    try { user = jwt.verify(token, JWT_SECRET); } catch { return res.status(401).json({ error: "Unauthorized" }); }
+
+    const guildId = req.query.guildId;
+    if (!guildId) return res.status(400).json({ error: "guildId required" });
+    if (!userCanAccessGuild(user.sub, guildId, user.isOwner)) {
+      return res.status(403).json({ error: "No access to this guild" });
+    }
+
+    // SSE is long-lived — disable the global 30s request timeout for this route.
+    req.setTimeout(0);
+    res.setTimeout(0);
+
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    res.write(`event: ready\ndata: ${JSON.stringify({ ok: true })}\n\n`);
+
+    const unsubscribe = events.subscribe((evt) => {
+      if (evt.guildId !== String(guildId)) return;
+      try { res.write(`event: activity\ndata: ${JSON.stringify(evt)}\n\n`); } catch { /* client gone */ }
+    });
+
+    const heartbeat = setInterval(() => {
+      try { res.write(`: ping\n\n`); } catch { /* client gone */ }
+    }, 15_000);
+    heartbeat.unref?.();
+
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      unsubscribe();
     });
   });
 
@@ -2371,13 +2485,16 @@ function startApi(ctx) {
   // --- Create HTTPS server ---
   const sslCreds = getSSLCredentials();
 
-  https.createServer(sslCreds, app).listen(PORT, "0.0.0.0", () => {
+  const server = https.createServer(sslCreds, app).listen(PORT, "0.0.0.0", () => {
     const schedCount = (() => { try { return require("../scheduler").count(); } catch { return 0; } })();
     console.log(`[api] Bot dashboard API on https://0.0.0.0:${PORT} (${schedCount} schedules loaded)`);
     if (servingDashboard) {
       console.log(`[api] Dashboard available at https://0.0.0.0:${PORT}/`);
     }
   });
+  // Expose for graceful shutdown (index.js closes it before destroying the client).
+  ctx.httpServer = server;
+  return server;
 }
 
 module.exports = { startApi };
