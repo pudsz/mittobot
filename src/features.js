@@ -21,7 +21,7 @@ const CATEGORIES = {
   leveling: {
     key:         "levelingEnabled",
     label:       "Leveling & XP",
-    description: "XP per message, level-up roles/rewards, leaderboard, rank cards. $rank, $leaderboard levels, $givexp, $setlevel.",
+    description: "XP per message, level-up roles/rewards, leaderboard, rank cards. $rank, $levels, $givexp, $setlevel.",
   },
 };
 

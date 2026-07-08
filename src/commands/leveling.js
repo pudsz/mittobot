@@ -1,6 +1,6 @@
 // ─── Leveling commands (BOT_SPEC §4.2) ──────────────────────────────────────
 // $rank [user] / /rank        — rank card: level, XP progress bar, rank, msgs
-// $leaderboard levels         — paginated top users (10/page)
+// $levels / /levels           — paginated top users (10/page)
 // $givexp <user> <amount>     — admin: add XP
 // $setlevel <user> <n>        — admin: set absolute level
 // $resetlevels                — owner: wipe the guild's leveling data (confirm)
@@ -117,19 +117,15 @@ module.exports = [
     },
   },
   {
-    name: "leaderboard",
+    name: "levels",
     description: "View the leveling leaderboard",
     category: CATEGORY,
-    // Subcommand-style: $leaderboard levels. Kept as a single command for
-    // simplicity; the economy $leaderboard already exists so we disambiguate
-    // via the "levels" arg.
-    prefix: async (m, a) => {
-      if ((a[0] || "").toLowerCase() !== "levels") {
-        return m.reply({ embeds: [errorEmbed("Usage: `$leaderboard levels`.")] });
-      }
-      await cmdLeaderboard(m, m.guild);
-    },
-    slash: new SlashCommandBuilder().setName("leaderboard").setDescription("View the leveling leaderboard"),
+    // Named "levels" (not "leaderboard") to avoid colliding with the economy
+    // command's slash name — Discord requires globally-unique slash command
+    // names, and slashMap is keyed by name so a duplicate would overwrite the
+    // economy handler too. Prefix: just $levels (no sub-arg needed).
+    prefix: async (m) => { await cmdLeaderboard(m, m.guild); },
+    slash: new SlashCommandBuilder().setName("levels").setDescription("View the leveling leaderboard"),
     execute: async (i) => { await cmdLeaderboard(i, i.guild); },
   },
   {
