@@ -121,7 +121,7 @@ export default function LoginPage() {
                 />
               </div>
               <Button type="submit" size="lg" className="w-full font-semibold" disabled={loading}>
-                {loading ? "Verifying..." : "Log in"}
+                {loading ? "loading furri art" : "Log in"}
               </Button>
               {hasDiscordOAuth && (
                 <Button
