@@ -1,11 +1,12 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import AutomodView from "@/pages/views/moderation/AutomodView";
+import AntiRaidView from "@/pages/views/moderation/AntiRaidView";
 import DangerZoneView from "@/pages/views/moderation/DangerzoneView";
 import ModLogView from "@/pages/views/moderation/ModLogView";
 import UserNotesView from "@/pages/views/moderation/UserNotesView";
 import AutoRulesView from "@/pages/views/moderation/AutoRulesView";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { ShieldBan, FolderOpen, Construction } from "lucide-react";
+import { FolderOpen, Construction } from "lucide-react";
 
 function PlaceholderView({ icon: Icon, title, description, features }: {
   icon: React.ComponentType<{ className?: string }>;
@@ -45,10 +46,6 @@ function PlaceholderView({ icon: Icon, title, description, features }: {
   );
 }
 
-function AntiRaidView() {
-  return <PlaceholderView icon={ShieldBan} title="Anti-raid Controls" description="Detect and block coordinated server raids before they cause damage."
-    features={["Join-rate threshold alerts — auto-lockdown when too many users join at once", "Minimum account-age gate to reject brand-new accounts", "Configurable raid action: kick, ban, or timeout new joins", "Alert channel selection for raid notifications", "Manual lockdown toggle with one-click unlock"]} />;
-}
 function CasesView() {
   return <PlaceholderView icon={FolderOpen} title="Moderation Cases" description="Browse, search, and manage all moderation cases in a structured database."
     features={["Full-text search across usernames, reasons, and action types", "Filter by action type: warn, mute, kick, ban", "Filter by moderator and date range", "Case detail panel with status workflow (open / investigating / resolved)", "CSV export for external review"]} />;
