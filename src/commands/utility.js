@@ -546,7 +546,9 @@ async function prefixAfk(message, args, ctx) {
   data.afkUsers[message.author.id] = { reason: args.join(" ") || "AFK", since: Date.now(), guildId: message.guild.id };
   data.saveAfk();
   await safe.delete(message, "afk command");
-  const c = await message.channel.send(`👋 ${message.author} I set your AFK: **${args.join(" ") || "AFK"}**`);
+  // Suppress mentions: the reason is user-controlled text. Without this, a user
+  // could set their AFK reason to @everyone / @here / @&<role> and mass-ping.
+  const c = await message.channel.send({ content: `👋 ${message.author} I set your AFK: **${args.join(" ") || "AFK"}**`, allowedMentions: { parse: [] } });
   setTimeout(() => safe.delete(c, "afk confirmation"), 5000);
 }
 
@@ -555,7 +557,7 @@ async function slashAfk(interaction, ctx) {
   const { data } = ctx;
   data.afkUsers[interaction.user.id] = { reason, since: Date.now(), guildId: interaction.guild.id };
   data.saveAfk();
-  await interaction.reply({ content: `👋 ${interaction.user} I set your AFK: **${reason}**`, flags: 0 });
+  await interaction.reply({ content: `👋 ${interaction.user} I set your AFK: **${reason}**`, flags: 0, allowedMentions: { parse: [] } });
 }
 
 // Exported for use in the messageCreate handler
@@ -572,7 +574,10 @@ async function handleAfkChecks(message, ctx) {
     const entry = data.afkUsers[userId]; if (!entry) continue;
     if (entry.guildId && entry.guildId !== message.guild.id) continue;
     const member = await safe.orNull(message.guild.members.fetch(userId), `afk check fetch member ${userId}`);
-    await message.channel.send(`💤 **${member?.displayName ?? user.username}** is AFK: ${entry.reason} — ${timeAgo(entry.since)}`);
+    // The AFK reason is user-controlled and broadcasts on EVERY mention of the
+    // AFK user — so one poisoned reason (@everyone) would re-ping the channel
+    // each time anyone pings them. Suppress all mention parsing here.
+    await message.channel.send({ content: `💤 **${member?.displayName ?? user.username}** is AFK: ${entry.reason} — ${timeAgo(entry.since)}`, allowedMentions: { parse: [] } });
   }
 }
 
