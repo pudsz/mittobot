@@ -32,6 +32,17 @@ function guildDefaults() {
     ignoredChannels: [],
     ignoredRoles: [],
     rules: JSON.parse(JSON.stringify(RULE_DEFAULTS)),
+    // Heat system (BOT_SPEC §3.2). Each rule violation adds heatValue; actions
+    // trigger at thresholds. Disabled by default — opt in per guild.
+    heat: {
+      enabled: false,
+      decayPerMinute: 5,
+      thresholds: [
+        { heat: 20, action: "warn" },
+        { heat: 40, action: "mute", duration: "10m" },
+        { heat: 80, action: "kick" },
+      ],
+    },
   };
 }
 
@@ -148,6 +159,7 @@ let spamCleanupTimer = null;
 
 function startSpamCleanup() {
   if (spamCleanupTimer) return;
+  startHeatCleanup();
   spamCleanupTimer = setInterval(() => {
     const cutoff = Date.now() - SPAM_MAX_WINDOW;
     for (const [key, timestamps] of spamTracker) {
@@ -174,6 +186,7 @@ function stopSpamCleanup() {
     clearInterval(spamCleanupTimer);
     spamCleanupTimer = null;
   }
+  stopHeatCleanup();
 }
 
 function trackSpam(guildId, userId, max, windowMs, now) {
@@ -182,6 +195,111 @@ function trackSpam(guildId, userId, max, windowMs, now) {
   arr.push(now);
   spamTracker.set(key, arr);
   return arr.length > max;
+}
+
+// ─── Heat system (BOT_SPEC §3.2) ────────────────────────────────────────────
+// Per-(guild,user) heat map. Decay is computed LAZILY on read (no timer ticking
+// down every user every minute) — each entry stores its last-updated timestamp,
+// and getHeat subtracts decayPerMinute * minutes-elapsed before returning.
+//
+// In-memory only (no table) — heat is transient. Bounded + periodic eviction so
+// a long-lived process can't leak.
+const heatMap = new Map(); // key `${guildId}:${userId}` -> { heat, updatedAt }
+const HEAT_MAP_MAX_SIZE = 5000;
+const HEAT_MAX_HEAT = 10_000; // sanity cap so a runaway can't overflow
+const HEAT_CLEANUP_INTERVAL = 5 * 60_000;
+
+// Lazily decay + return current heat for a (guild,user). Decays toward 0 based
+// on elapsed minutes since the last update. Never goes negative.
+function getHeat(guildId, userId, now = Date.now(), decayPerMinute = 5) {
+  const key = `${guildId}:${userId}`;
+  const entry = heatMap.get(key);
+  if (!entry) return 0;
+  const minutesElapsed = (now - entry.updatedAt) / 60_000;
+  const decayed = entry.heat - decayPerMinute * minutesElapsed;
+  const current = Math.max(0, decayed);
+  if (current === 0) {
+    heatMap.delete(key);
+    return 0;
+  }
+  // Update the stored value + timestamp so subsequent reads don't re-decay.
+  entry.heat = current;
+  entry.updatedAt = now;
+  return current;
+}
+
+// Add heat for a (guild,user) and return the post-add heat value. Saturates at
+// HEAT_MAX_HEAT. Touches updatedAt so decay restarts from now.
+function addHeat(guildId, userId, amount, now = Date.now(), decayPerMinute = 5) {
+  const key = `${guildId}:${userId}`;
+  const prior = getHeat(guildId, userId, now, decayPerMinute);
+  const next = Math.min(HEAT_MAX_HEAT, prior + Math.max(0, amount));
+  heatMap.set(key, { heat: next, updatedAt: now });
+  return next;
+}
+
+// Find the highest threshold the user's current heat has reached (descending
+// sort assumed; returns the first threshold whose heat <= current).
+function thresholdHit(currentHeat, thresholds) {
+  if (!Array.isArray(thresholds) || !thresholds.length) return null;
+  const sorted = [...thresholds].sort((a, b) => (b.heat || 0) - (a.heat || 0));
+  return sorted.find(t => currentHeat >= (t.heat || 0)) || null;
+}
+
+// Carry out a heat-threshold action on a member. Returns the action label or
+// null if the member can't be acted on. Durations parse via the same format the
+// real-mod commands use (s/m/h/d, capped at 28d).
+const { parseDuration } = require("./utils");
+async function enforceHeat(message, threshold, ruleName) {
+  const action = threshold.action || "warn";
+  const member = message.member;
+  const me = message.guild.members.me;
+  try {
+    if (action === "mute") {
+      if (!me.permissions.has(PermissionFlagsBits.ModerateMembers) || !member?.moderatable) return null;
+      const ms = threshold.duration ? (parseDuration(threshold.duration) || 10 * 60_000) : 10 * 60_000;
+      await safe.timeout(member, ms, `Automod heat: ${ruleName}`, `automod heat timeout: ${ruleName}`);
+      return "mute";
+    }
+    if (action === "kick") {
+      if (!me.permissions.has(PermissionFlagsBits.KickMembers) || !member?.kickable) return null;
+      await safe.kick(member, `Automod heat: ${ruleName}`, `automod heat kick: ${ruleName}`);
+      return "kick";
+    }
+    if (action === "ban") {
+      if (!me.permissions.has(PermissionFlagsBits.BanMembers) || !member?.bannable) return null;
+      await safe.ban(member, { reason: `Automod heat: ${ruleName}` }, `automod heat ban: ${ruleName}`);
+      return "ban";
+    }
+    // warn — delete handled by the calling rule's enforce; just log.
+    return "warn";
+  } catch { return null; }
+}
+
+// Periodic eviction of stale/zero heat entries. unref'd.
+let heatCleanupTimer = null;
+function startHeatCleanup() {
+  if (heatCleanupTimer) return;
+  heatCleanupTimer = setInterval(() => {
+    const now = Date.now();
+    // Drop entries that have decayed to ~0 (older than (heat/decayPerMinute) min).
+    // Simple heuristic: drop entries older than 2 hours — at decay 5/min, 600
+    // heat decays in 2h, well past any practical threshold.
+    const cutoff = now - 2 * 60 * 60_000;
+    for (const [key, entry] of heatMap) {
+      if (entry.updatedAt < cutoff) heatMap.delete(key);
+    }
+    if (heatMap.size > HEAT_MAP_MAX_SIZE) {
+      const entries = Array.from(heatMap.entries()).sort((a, b) => a[1].updatedAt - b[1].updatedAt);
+      const toRemove = entries.slice(0, heatMap.size - HEAT_MAP_MAX_SIZE);
+      for (const [key] of toRemove) heatMap.delete(key);
+    }
+  }, HEAT_CLEANUP_INTERVAL);
+  heatCleanupTimer.unref();
+}
+
+function stopHeatCleanup() {
+  if (heatCleanupTimer) { clearInterval(heatCleanupTimer); heatCleanupTimer = null; }
 }
 
 // ─── Detection helpers ───
@@ -401,42 +519,67 @@ async function checkMessage(message) {
   const now = Date.now();
   const R = cfg.rules;
 
+  // `fire` centralizes enforce + log + heat so every rule block is one line and
+  // heat accumulates identically across all of them. Returns true (acted).
+  // `heatValue` defaults to 10 (matches RULE_DEFAULTS expectations); pass 0 to
+  // skip heat for a rule that shouldn't add it.
+  const heat = cfg.heat || {};
+  const heatEnabled = heat.enabled === true;
+  const decayPerMinute = Math.max(0, heat.decayPerMinute ?? 5);
+  const fire = async (rule, ruleName, heatValue = 10) => {
+    const action = await enforce(message, rule, ruleName);
+    await logAction(message.guild, cfg, message, ruleName, action);
+    if (heatEnabled && heatValue > 0) {
+      try {
+        const h = addHeat(message.guild.id, message.author.id, heatValue, now, decayPerMinute);
+        const hit = thresholdHit(h, heat.thresholds);
+        if (hit) {
+          const heatAction = await enforceHeat(message, hit, ruleName);
+          if (heatAction) {
+            await logAction(message.guild, cfg, message, `Heat (${ruleName} → ${heatAction} @ ${hit.heat})`, heatAction);
+          }
+        }
+      } catch (err) { console.error("[automod] heat error:", err.message); }
+    }
+    return true;
+  };
+
   // Order matters: cheap text checks first, spam (stateful) last.
   if (R.invites.enabled && hasInvite(content)) {
-    const a = await enforce(message, R.invites, "Invite link"); await logAction(message.guild, cfg, message, "Invite link", a); return true;
+    return await fire(R.invites, "Invite link");
   }
   if (R.bannedWords.enabled && hasBannedWord(content, R.bannedWords.words)) {
-    const a = await enforce(message, R.bannedWords, "Banned word"); await logAction(message.guild, cfg, message, "Banned word", a); return true;
+    return await fire(R.bannedWords, "Banned word");
   }
   if (R.massMention.enabled && message.mentions.users.size > (R.massMention.maxMentions || 5)) {
-    const a = await enforce(message, R.massMention, "Mass mention"); await logAction(message.guild, cfg, message, "Mass mention", a); return true;
+    return await fire(R.massMention, "Mass mention");
   }
   if (R.caps.enabled && content.length >= (R.caps.minLength || 10) && capsRatio(content) >= (R.caps.percent || 70)) {
-    const a = await enforce(message, R.caps, "Excessive caps"); await logAction(message.guild, cfg, message, "Excessive caps", a); return true;
+    return await fire(R.caps, "Excessive caps");
   }
 
   // ── Extended automod checks (with configurable actions) ──
   const exCfg = getExtendedConfig(message.guild.id);
   if (exCfg.link_blacklist?.length && hasBlacklistedLink(content, exCfg.link_blacklist, exCfg.link_whitelist)) {
-    const a = await enforce(message, { action: exCfg.link_action || "delete" }, "Blacklisted link"); await logAction(message.guild, cfg, message, "Blacklisted link", a); return true;
+    return await fire({ action: exCfg.link_action || "delete" }, "Blacklisted link");
   }
   if (exCfg.repeated_text && hasRepeatedText(content, exCfg.repeated_text_count || 3)) {
-    const a = await enforce(message, { action: exCfg.repeated_text_action || "delete" }, "Repeated text"); await logAction(message.guild, cfg, message, "Repeated text", a); return true;
+    return await fire({ action: exCfg.repeated_text_action || "delete" }, "Repeated text");
   }
   if (exCfg.emoji_spam && emojiCount(content) > (exCfg.emoji_max || 5)) {
-    const a = await enforce(message, { action: exCfg.emoji_action || "delete" }, "Emoji spam"); await logAction(message.guild, cfg, message, "Emoji spam", a); return true;
+    return await fire({ action: exCfg.emoji_action || "delete" }, "Emoji spam");
   }
   if (exCfg.blocked_emojis_enabled && hasBlockedMessageEmoji(content, exCfg.blocked_emojis)) {
-    const a = await enforce(message, { action: exCfg.blocked_emojis_action || "delete" }, "Blocked emoji"); await logAction(message.guild, cfg, message, "Blocked emoji", a); return true;
+    return await fire({ action: exCfg.blocked_emojis_action || "delete" }, "Blocked emoji");
   }
   if (exCfg.zalgo_enabled && hasZalgo(content)) {
-    const a = await enforce(message, { action: exCfg.zalgo_action || "delete" }, "Zalgo/unicode abuse"); await logAction(message.guild, cfg, message, "Zalgo/unicode abuse", a); return true;
+    return await fire({ action: exCfg.zalgo_action || "delete" }, "Zalgo/unicode abuse");
   }
 
   if (R.spam.enabled) {
     const tripped = trackSpam(message.guild.id, message.author.id, R.spam.maxMessages || 5, (R.spam.perSeconds || 5) * 1000, now);
     if (tripped) {
-      const a = await enforce(message, R.spam, "Spam"); await logAction(message.guild, cfg, message, "Spam", a); return true;
+      return await fire(R.spam, "Spam");
     }
   }
   return false;
@@ -477,5 +620,7 @@ module.exports = {
   getExtendedConfig, setExtendedConfig,
   startSpamCleanup, stopSpamCleanup,
   RULE_DEFAULTS, AUTOMOD_FILE,
-  _test: { hasBlockedMessageEmoji, hasBlockedReactionEmoji, normalizeEmojiToken },
+  // Heat system (BOT_SPEC §3.2)
+  getHeat, addHeat, thresholdHit, enforceHeat, stopHeatCleanup,
+  _test: { hasBlockedMessageEmoji, hasBlockedReactionEmoji, normalizeEmojiToken, getHeat, addHeat, thresholdHit },
 };
