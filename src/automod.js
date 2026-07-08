@@ -143,6 +143,12 @@ function setConfig(guildId, patch) {
     next.rules = { ...cur.rules };
     for (const [k, v] of Object.entries(patch.rules)) next.rules[k] = { ...cur.rules[k], ...v };
   }
+  // Deep-merge heat so a partial patch (e.g. just toggling `enabled`) doesn't
+  // wipe decayPerMinute / thresholds.
+  if (patch.heat && typeof patch.heat === "object") {
+    next.heat = { ...cur.heat, ...patch.heat };
+    if (Array.isArray(patch.heat.thresholds)) next.heat.thresholds = patch.heat.thresholds;
+  }
   store[guildId] = next;
   db.setAutomodConfig(guildId, next).catch(e => console.error("persist automod:", e.message));
   return next;

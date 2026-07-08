@@ -1356,6 +1356,24 @@ function startApi(ctx) {
     if (Array.isArray(body.ignoredChannels)) patch.ignoredChannels = body.ignoredChannels.filter(x => /^\d{17,20}$/.test(x));
     if (Array.isArray(body.ignoredRoles))    patch.ignoredRoles    = body.ignoredRoles.filter(x => /^\d{17,20}$/.test(x));
     if (body.rules && typeof body.rules === "object") patch.rules = body.rules;
+    // Heat config (BOT_SPEC §3.2). Deep-merged by setConfig so partial patches
+    // are safe; here we validate + clamp the shape.
+    if (body.heat && typeof body.heat === "object") {
+      const heat = {};
+      if (typeof body.heat.enabled === "boolean") heat.enabled = body.heat.enabled;
+      if (typeof body.heat.decayPerMinute === "number") heat.decayPerMinute = Math.min(Math.max(body.heat.decayPerMinute, 0), 100);
+      if (Array.isArray(body.heat.thresholds)) {
+        heat.thresholds = body.heat.thresholds
+          .filter(t => t && typeof t === "object" && typeof t.heat === "number")
+          .map(t => ({
+            heat: Math.min(Math.max(t.heat, 1), 10_000),
+            action: ["warn", "mute", "kick", "ban"].includes(t.action) ? t.action : "warn",
+            ...(typeof t.duration === "string" ? { duration: t.duration.slice(0, 8) } : {}),
+          }))
+          .slice(0, 10);
+      }
+      patch.heat = heat;
+    }
     const next = automod.setConfig(guildId, patch);
     res.json({ ok: true, config: next });
   });
