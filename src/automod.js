@@ -82,6 +82,20 @@ async function load() {
         blocked_reaction_action: row.blocked_reaction_action || "delete",
         zalgo_enabled: row.zalgo_enabled === 1,
         zalgo_action: row.zalgo_action || "delete",
+        // §3.1 new rule types
+        regex_enabled: row.regex_enabled === 1,
+        regex_patterns: db.safeJsonParse(row.regex_patterns, []),
+        regex_action: row.regex_action || "delete",
+        attachments_enabled: row.attachments_enabled === 1,
+        attachments_blocked_exts: db.safeJsonParse(row.attachments_blocked_exts, []),
+        attachments_max_size_mb: row.attachments_max_size_mb || 0,
+        attachments_action: row.attachments_action || "delete",
+        newlines_enabled: row.newlines_enabled === 1,
+        newlines_max: row.newlines_max || 10,
+        newlines_action: row.newlines_action || "delete",
+        mentions_roles_enabled: row.mentions_roles_enabled === 1,
+        mentions_roles_max: row.mentions_roles_max || 3,
+        mentions_roles_action: row.mentions_roles_action || "delete",
       };
     }
   } catch (e) {
@@ -111,6 +125,20 @@ function getExtendedConfig(guildId) {
     blocked_reaction_action: "delete",
     zalgo_enabled: false,
     zalgo_action: "delete",
+    // §3.1 new rule types
+    regex_enabled: false,
+    regex_patterns: [],
+    regex_action: "delete",
+    attachments_enabled: false,
+    attachments_blocked_exts: [],
+    attachments_max_size_mb: 0,
+    attachments_action: "delete",
+    newlines_enabled: false,
+    newlines_max: 10,
+    newlines_action: "delete",
+    mentions_roles_enabled: false,
+    mentions_roles_max: 3,
+    mentions_roles_action: "delete",
   };
 }
 
@@ -425,6 +453,45 @@ function hasZalgo(content) {
   return matches.length > content.length * 0.2;
 }
 
+// ── §3.1 new rule detection helpers ─────────────────────────────────────────
+// regex: compile-once with try/catch, cap at 10 patterns, only test against
+// the first 2k chars (BOT_SPEC's "5 ms per-message regex budget" guard — a
+// catastrophic-backtracking pattern can't blow up on a huge message).
+const REGEX_TEST_CAP = 2000;
+const REGEX_MAX_PATTERNS = 10;
+const regexCache = new Map(); // pattern string → RegExp | null (null = invalid)
+const REGEX_CACHE_MAX = 200;
+
+function compileRegex(pattern) {
+  if (typeof pattern !== "string" || !pattern.trim()) return null;
+  if (regexCache.has(pattern)) return regexCache.get(pattern);
+  let re = null;
+  try { re = new RegExp(pattern, "i"); } catch { re = null; }
+  if (regexCache.size > REGEX_CACHE_MAX) {
+    const first = regexCache.keys().next().value;
+    if (first) regexCache.delete(first);
+  }
+  regexCache.set(pattern, re);
+  return re;
+}
+
+function matchesRegex(content, patterns) {
+  if (!Array.isArray(patterns) || !patterns.length) return false;
+  const sample = String(content || "").slice(0, REGEX_TEST_CAP);
+  for (const p of patterns.slice(0, REGEX_MAX_PATTERNS)) {
+    const re = compileRegex(p);
+    if (re && re.test(sample)) return true;
+  }
+  return false;
+}
+
+// newlines: count line breaks (LF + CRLF count as one each).
+function countNewlines(content) {
+  const c = String(content || "");
+  if (!c) return 0;
+  return (c.match(/\n/g) || []).length;
+}
+
 // Member is exempt if owner, has ManageMessages, or matches ignored role/channel.
 function isExempt(message, cfg) {
   if (OWNER_IDS.has(message.author.id)) return true;
@@ -584,6 +651,32 @@ async function checkMessage(message) {
     return await fire({ action: exCfg.zalgo_action || "delete" }, "Zalgo/unicode abuse");
   }
 
+  // ── §3.1 new rule types ──
+  // regex: content-based, capped at 10 patterns × first 2k chars (5ms budget).
+  if (exCfg.regex_enabled && exCfg.regex_patterns?.length && matchesRegex(content, exCfg.regex_patterns)) {
+    return await fire({ action: exCfg.regex_action || "delete" }, "Regex match");
+  }
+  // newlines: wall-of-text guard.
+  if (exCfg.newlines_enabled && countNewlines(content) > (exCfg.newlines_max || 10)) {
+    return await fire({ action: exCfg.newlines_action || "delete" }, "Newline spam");
+  }
+  // attachments + mentions_roles need the message object (not in testRules).
+  if (exCfg.attachments_enabled && message.attachments?.size > 0) {
+    const blocked = exCfg.attachments_blocked_exts || [];
+    const maxMb = exCfg.attachments_max_size_mb || 0;
+    let tripped = false;
+    for (const [, att] of message.attachments) {
+      const name = (att.name || "").toLowerCase();
+      const ext = name.slice(name.lastIndexOf(".") + 1);
+      if (blocked.length && blocked.includes(ext)) { tripped = true; break; }
+      if (maxMb > 0 && att.size > maxMb * 1024 * 1024) { tripped = true; break; }
+    }
+    if (tripped) return await fire({ action: exCfg.attachments_action || "delete" }, "Blocked attachment");
+  }
+  if (exCfg.mentions_roles_enabled && message.mentions.roles.size > (exCfg.mentions_roles_max || 3)) {
+    return await fire({ action: exCfg.mentions_roles_action || "delete" }, "Mass role mention");
+  }
+
   if (R.spam.enabled) {
     const tripped = trackSpam(message.guild.id, message.author.id, R.spam.maxMessages || 5, (R.spam.perSeconds || 5) * 1000, now);
     if (tripped) {
@@ -620,7 +713,18 @@ function testRules(guildId, content, { mentionCount = 0 } = {}) {
   if (exCfg.blocked_emojis_enabled) check("Blocked emoji", hasBlockedMessageEmoji(text, exCfg.blocked_emojis), exCfg.blocked_emojis_action);
   if (exCfg.zalgo_enabled) check("Zalgo/unicode abuse", hasZalgo(text), exCfg.zalgo_action);
 
-  return { hits, enabled: cfg.enabled, spamNote: R.spam?.enabled ? "Spam is stateful and not tested in dry-run mode." : null };
+  // §3.1 new content-based rules (attachments + mentions_roles need the message
+  // object and can't be tested from a string — noted below).
+  if (exCfg.regex_enabled && exCfg.regex_patterns?.length) check("Regex match", matchesRegex(text, exCfg.regex_patterns), exCfg.regex_action);
+  if (exCfg.newlines_enabled) check("Newline spam", countNewlines(text) > (exCfg.newlines_max || 10), exCfg.newlines_action);
+
+  const contentOnlyNotes = [];
+  if (exCfg.attachments_enabled) contentOnlyNotes.push("Attachments rule is not tested in dry-run mode (needs a real message with attachments).");
+  if (exCfg.mentions_roles_enabled) contentOnlyNotes.push("Mass role mention rule is not tested in dry-run mode (needs a real message with role mentions).");
+  const spamNote = R.spam?.enabled ? "Spam is stateful and not tested in dry-run mode." : null;
+  const notes = [spamNote, ...contentOnlyNotes].filter(Boolean);
+
+  return { hits, enabled: cfg.enabled, notes };
 }
 
 async function checkReaction(reaction, user) {
@@ -661,5 +765,7 @@ module.exports = {
   RULE_DEFAULTS, AUTOMOD_FILE,
   // Heat system (BOT_SPEC §3.2)
   getHeat, addHeat, thresholdHit, enforceHeat, stopHeatCleanup,
-  _test: { hasBlockedMessageEmoji, hasBlockedReactionEmoji, normalizeEmojiToken, getHeat, addHeat, thresholdHit, testRules },
+  // §3.1 new rule detection
+  matchesRegex, countNewlines,
+  _test: { hasBlockedMessageEmoji, hasBlockedReactionEmoji, normalizeEmojiToken, getHeat, addHeat, thresholdHit, testRules, matchesRegex, countNewlines },
 };

@@ -73,7 +73,7 @@ export default function AutomodView() {
   // Test mode state (BOT_SPEC §3.4)
   const [testInput, setTestInput] = useState("");
   const [testMentions, setTestMentions] = useState(0);
-  const [testResult, setTestResult] = useState<{ hits: { rule: string; action: string }[]; enabled: boolean; spamNote: string | null } | null>(null);
+  const [testResult, setTestResult] = useState<{ hits: { rule: string; action: string }[]; enabled: boolean; notes: string[] } | null>(null);
 
   const testMutation = useMutation({
     mutationFn: (body: { content: string; mentionCount: number }) => post(guildPath("/api/automod/test", guildId), body),
@@ -297,7 +297,11 @@ export default function AutomodView() {
                   </div>
                 </>
               )}
-              {testResult.spamNote && <p className="text-[10px] text-muted-foreground/60">{testResult.spamNote}</p>}
+              {testResult.notes?.length > 0 && (
+                <div className="space-y-1 pt-1">
+                  {testResult.notes.map((n, i) => <p key={i} className="text-[10px] text-muted-foreground/60">{n}</p>)}
+                </div>
+              )}
             </div>
           )}
         </CardContent>

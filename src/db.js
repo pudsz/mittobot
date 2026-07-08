@@ -173,7 +173,20 @@ function init() {
       blocked_reaction_emojis TEXT DEFAULT '[]',
       blocked_reaction_action TEXT DEFAULT 'delete',
       zalgo_enabled  INTEGER DEFAULT 0,
-      zalgo_action   TEXT DEFAULT 'delete'
+      zalgo_action   TEXT DEFAULT 'delete',
+      regex_enabled     INTEGER DEFAULT 0,
+      regex_patterns    TEXT DEFAULT '[]',
+      regex_action      TEXT DEFAULT 'delete',
+      attachments_enabled        INTEGER DEFAULT 0,
+      attachments_blocked_exts   TEXT DEFAULT '[]',
+      attachments_max_size_mb    REAL DEFAULT 0,
+      attachments_action         TEXT DEFAULT 'delete',
+      newlines_enabled INTEGER DEFAULT 0,
+      newlines_max     INTEGER DEFAULT 10,
+      newlines_action  TEXT DEFAULT 'delete',
+      mentions_roles_enabled INTEGER DEFAULT 0,
+      mentions_roles_max    INTEGER DEFAULT 3,
+      mentions_roles_action TEXT DEFAULT 'delete'
     );
 
     CREATE TABLE IF NOT EXISTS reaction_logs (
@@ -423,6 +436,20 @@ function init() {
   try { db.exec("ALTER TABLE automod_extended ADD COLUMN blocked_reaction_emojis TEXT DEFAULT '[]'"); } catch { /* column already exists */ }
   try { db.exec("ALTER TABLE automod_extended ADD COLUMN blocked_reaction_action TEXT DEFAULT 'delete'"); } catch { /* column already exists */ }
   try { db.exec("ALTER TABLE automod_extended ADD COLUMN zalgo_action TEXT DEFAULT 'delete'"); } catch { /* column already exists */ }
+  // §3.1 new rule types
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN regex_enabled INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN regex_patterns TEXT DEFAULT '[]'"); } catch {}
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN regex_action TEXT DEFAULT 'delete'"); } catch {}
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN attachments_enabled INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN attachments_blocked_exts TEXT DEFAULT '[]'"); } catch {}
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN attachments_max_size_mb REAL DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN attachments_action TEXT DEFAULT 'delete'"); } catch {}
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN newlines_enabled INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN newlines_max INTEGER DEFAULT 10"); } catch {}
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN newlines_action TEXT DEFAULT 'delete'"); } catch {}
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN mentions_roles_enabled INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN mentions_roles_max INTEGER DEFAULT 3"); } catch {}
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN mentions_roles_action TEXT DEFAULT 'delete'"); } catch {}
   // (typo column retained for back-compat; safe to ignore)
   // Normalize legacy rows: guild_id='dm' sentinel rows become proper private DMs (guild_id=NULL).
   try { db.exec("UPDATE ai_conversations SET scope='private', guild_id=NULL, channel_id=NULL WHERE guild_id='dm'"); } catch {}
@@ -696,9 +723,22 @@ async function setExtendedAutomod(guildId, cfg) {
       blocked_reaction_emojis,
       blocked_reaction_action,
       zalgo_enabled,
-      zalgo_action
+      zalgo_action,
+      regex_enabled,
+      regex_patterns,
+      regex_action,
+      attachments_enabled,
+      attachments_blocked_exts,
+      attachments_max_size_mb,
+      attachments_action,
+      newlines_enabled,
+      newlines_max,
+      newlines_action,
+      mentions_roles_enabled,
+      mentions_roles_max,
+      mentions_roles_action
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(guild_id) DO UPDATE SET
       link_blacklist = excluded.link_blacklist,
       link_whitelist = excluded.link_whitelist,
@@ -716,7 +756,20 @@ async function setExtendedAutomod(guildId, cfg) {
       blocked_reaction_emojis = excluded.blocked_reaction_emojis,
       blocked_reaction_action = excluded.blocked_reaction_action,
       zalgo_enabled = excluded.zalgo_enabled,
-      zalgo_action = excluded.zalgo_action
+      zalgo_action = excluded.zalgo_action,
+      regex_enabled = excluded.regex_enabled,
+      regex_patterns = excluded.regex_patterns,
+      regex_action = excluded.regex_action,
+      attachments_enabled = excluded.attachments_enabled,
+      attachments_blocked_exts = excluded.attachments_blocked_exts,
+      attachments_max_size_mb = excluded.attachments_max_size_mb,
+      attachments_action = excluded.attachments_action,
+      newlines_enabled = excluded.newlines_enabled,
+      newlines_max = excluded.newlines_max,
+      newlines_action = excluded.newlines_action,
+      mentions_roles_enabled = excluded.mentions_roles_enabled,
+      mentions_roles_max = excluded.mentions_roles_max,
+      mentions_roles_action = excluded.mentions_roles_action
   `).run(
     guildId,
     JSON.stringify(cfg.link_blacklist || []),
@@ -735,7 +788,20 @@ async function setExtendedAutomod(guildId, cfg) {
     JSON.stringify(cfg.blocked_reaction_emojis || []),
     cfg.blocked_reaction_action || "delete",
     cfg.zalgo_enabled ? 1 : 0,
-    cfg.zalgo_action || "delete"
+    cfg.zalgo_action || "delete",
+    cfg.regex_enabled ? 1 : 0,
+    JSON.stringify((cfg.regex_patterns || []).slice(0, 10)),
+    cfg.regex_action || "delete",
+    cfg.attachments_enabled ? 1 : 0,
+    JSON.stringify((cfg.attachments_blocked_exts || []).slice(0, 50)),
+    cfg.attachments_max_size_mb || 0,
+    cfg.attachments_action || "delete",
+    cfg.newlines_enabled ? 1 : 0,
+    cfg.newlines_max || 10,
+    cfg.newlines_action || "delete",
+    cfg.mentions_roles_enabled ? 1 : 0,
+    cfg.mentions_roles_max || 3,
+    cfg.mentions_roles_action || "delete"
   );
 }
 
