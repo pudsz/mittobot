@@ -5,8 +5,25 @@ const path = require("path");
 
 const MODULES_DIR = path.join(__dirname, "..", "..", "modules");
 
+// Module names must be alphanumeric + underscore/hyphen, 1–32 chars. This is
+// the same shape the dashboard's POST /api/modules enforces (NAME_RE). It
+// rejects path separators (/ \), dots (so ".." and ".env" can't traverse or
+// hit hidden files), and anything else that could let `name` escape
+// MODULES_DIR via path.join — which would turn `modules delete ../../index`
+// into arbitrary file deletion (fs.unlinkSync) or `modules reload X` into
+// arbitrary require()/RCE. Owner-gated, but a compromised owner account or a
+// typo shouldn't be able to nuke the repo.
+const NAME_RE = /^[a-zA-Z0-9_-]{1,32}$/;
+
 function ensureModulesDir() {
   if (!fs.existsSync(MODULES_DIR)) fs.mkdirSync(MODULES_DIR, { recursive: true });
+}
+
+// Reject names that could traverse out of MODULES_DIR. Returns the cleaned
+// name or null if invalid.
+function safeName(raw) {
+  const name = String(raw || "").trim().toLowerCase();
+  return NAME_RE.test(name) ? name : null;
 }
 
 // Extract code from a Discord code block (```js ... ``` or ``` ... ```)
@@ -16,14 +33,27 @@ function extractCode(content) {
 }
 
 function loadModule(name, commandMap) {
-  const filePath = path.join(MODULES_DIR, `${name}.js`);
+  // Validate the name before touching the filesystem — a traversal payload
+  // here would make require() load an arbitrary file. This guards reload,
+  // the dashboard's POST /api/modules/:name/reload, and the index.js bootstrap.
+  const safe = safeName(name);
+  if (!safe) return null;
+  const filePath = path.join(MODULES_DIR, `${safe}.js`);
   if (!fs.existsSync(filePath)) return null;
+  // Belt-and-suspenders: confirm the resolved path is still inside MODULES_DIR
+  // (defends against any future bypass of NAME_RE, e.g. URL-encoded separators).
+  const resolved = path.resolve(filePath);
+  const dirResolved = path.resolve(MODULES_DIR) + path.sep;
+  if (!resolved.startsWith(dirResolved)) {
+    console.error(`[modules] refused to load "${name}" — resolved path escapes MODULES_DIR`);
+    return null;
+  }
   // Bust require cache so reload works
   delete require.cache[require.resolve(filePath)];
   const mod = require(filePath);
   // Mark as dynamic so $help can list them
   mod._dynamic = true;
-  commandMap.set(mod.name ?? name, mod);
+  commandMap.set(mod.name ?? safe, mod);
   return mod;
 }
 
@@ -57,37 +87,43 @@ async function handleModules(message, args, ctx) {
   // ── delete
   if (sub === "delete" || sub === "remove") {
     if (!name) return message.reply({ embeds: [errorEmbed(`Usage: ${usage(ctx, "modules", "delete <name>")}`)] });
-    const filePath = path.join(MODULES_DIR, `${name}.js`);
-    if (!fs.existsSync(filePath)) return message.reply({ embeds: [errorEmbed(`No module named \`${name}\` found.`)] });
+    const safe = safeName(name);
+    if (!safe) return message.reply({ embeds: [errorEmbed(`Invalid module name. Use only letters, numbers, \`_\`, and \`-\` (1–32 chars).`)] });
+    const filePath = path.join(MODULES_DIR, `${safe}.js`);
+    if (!fs.existsSync(filePath)) return message.reply({ embeds: [errorEmbed(`No module named \`${safe}\` found.`)] });
     fs.unlinkSync(filePath);
     delete require.cache[require.resolve(filePath)];
-    commandMap.delete(name);
-    return message.reply({ embeds: [successEmbed(`Module \`${name}\` deleted and unloaded.`)] });
+    commandMap.delete(safe);
+    return message.reply({ embeds: [successEmbed(`Module \`${safe}\` deleted and unloaded.`)] });
   }
 
   // ── reload
   if (sub === "reload") {
     if (!name) return message.reply({ embeds: [errorEmbed(`Usage: ${usage(ctx, "modules", "reload <name>")}`)] });
-    const mod = loadModule(name, commandMap);
-    if (!mod) return message.reply({ embeds: [errorEmbed(`No module file found for \`${name}\`.`)] });
-    return message.reply({ embeds: [successEmbed(`Module \`${name}\` reloaded.`)] });
+    const safe = safeName(name);
+    if (!safe) return message.reply({ embeds: [errorEmbed(`Invalid module name. Use only letters, numbers, \`_\`, and \`-\` (1–32 chars).`)] });
+    const mod = loadModule(safe, commandMap);
+    if (!mod) return message.reply({ embeds: [errorEmbed(`No module file found for \`${safe}\`.`)] });
+    return message.reply({ embeds: [successEmbed(`Module \`${safe}\` reloaded.`)] });
   }
 
   // ── create
   if (sub === "create") {
     if (!name) return message.reply({ embeds: [errorEmbed(`Usage: ${usage(ctx, "modules", "create <name>")} with a JS code block`)] });
+    const safe = safeName(name);
+    if (!safe) return message.reply({ embeds: [errorEmbed(`Invalid module name. Use only letters, numbers, \`_\`, and \`-\` (1–32 chars).`)] });
     const code = extractCode(message.content);
     if (!code) {
       return message.reply({ embeds: [errorEmbed(
         `Attach a JS code block after the command.\nExample:\n\`\`\`\n${prefix(ctx)}modules create hello\n\\\`\\\`\\\`js\nmodule.exports = {\n  name: 'hello',\n  prefix: async (message) => { await message.reply('Hello!'); }\n}\n\\\`\\\`\\\`\n\`\`\``
       )] });
     }
-    const filePath = path.join(MODULES_DIR, `${name}.js`);
+    const filePath = path.join(MODULES_DIR, `${safe}.js`);
     try {
       fs.writeFileSync(filePath, code, "utf8");
-      const mod = loadModule(name, commandMap);
+      const mod = loadModule(safe, commandMap);
       if (!mod) throw new Error("Module loaded as null — check your code.");
-      return message.reply({ embeds: [successEmbed(`Module \`${name}\` created and loaded as ${usage(ctx, mod.name ?? name)}.`)] });
+      return message.reply({ embeds: [successEmbed(`Module \`${safe}\` created and loaded as ${usage(ctx, mod.name ?? safe)}.`)] });
     } catch (err) {
       // Clean up bad file
       if (fs.existsSync(filePath)) { try { fs.unlinkSync(filePath); } catch {} }
