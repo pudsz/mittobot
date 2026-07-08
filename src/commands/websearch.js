@@ -19,16 +19,19 @@ async function searchDuckDuckGo(query) {
   if (!res.ok) return null;
   const text = await res.text();
   const results = [];
-  const sections = text.split('class="result__body"');
+  const sections = text.split(/result__body/);
   for (let i = 1; i < Math.min(sections.length, 8); i++) {
     const sec = sections[i];
-    const titleMatch = sec.match(/<a class="result__url"[^>]*>([\s\S]*?)<\/a>/i);
-    const linkMatch = sec.match(/href="([^"]+)"/i);
-    const snippetMatch = sec.match(/<a class="result__snippet"[^>]*>([\s\S]*?)<\/a>/i);
-    if (linkMatch) {
+    const titleMatch = sec.match(/<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i);
+    const snippetMatch = sec.match(/<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/i);
+    if (titleMatch) {
+      let url = titleMatch[1];
+      if (url.startsWith("//")) url = "https:" + url;
+      const uddgMatch = url.match(/uddg=([^&]+)/);
+      if (uddgMatch) url = decodeURIComponent(uddgMatch[1]);
       results.push({
-        title: titleMatch ? titleMatch[1].replace(/<[^>]*>/g, '').trim() : "Link",
-        url: linkMatch[1],
+        title: titleMatch[2].replace(/<[^>]*>/g, '').trim(),
+        url,
         snippet: snippetMatch ? snippetMatch[1].replace(/<[^>]*>/g, '').trim() : "",
       });
     }

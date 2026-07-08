@@ -2,6 +2,8 @@ const settings = require("./settings");
 const { getProvider, listProviders } = require("./ai/providers");
 const groqProvider = require("./ai/providers/groq");
 const { processMessageImages, buildContentParts } = require("./ai/images");
+const { getPersonality, DEFAULT_PERSONALITY } = require("./ai/personalities");
+const { extractMemoriesAsync } = require("./ai/memory-extractor");
 const db = require("./db");
 
 const safe = require("./safe");
@@ -111,6 +113,39 @@ function isChannelAllowed(channelId, allowed, ignored) {
 
 function stripBotMention(content, botId) {
   return content.replace(new RegExp(`<@!?${botId}>`, "g"), "").trim();
+}
+
+// ─── Input sanitization for prompt injection defense ────────────────────────
+// Strips common injection patterns from user input BEFORE it reaches the AI
+// provider. Applied to user messages AND memory content.
+function sanitizeUserInput(text) {
+  if (!text || typeof text !== "string") return text || "";
+
+  // 1. Strip system role overrides — the most common injection vector
+  text = text.replace(
+    /\b(SYSTEM|SYSTEM OVERRIDE|ASSISTANT|ADMIN OVERRIDE|IGNORE PREVIOUS|DISREGARD)\s*[:：\n]/gi,
+    ""
+  );
+
+  // 2. Strip tool invocation spoofing — attempts to trick the model into
+  //    calling dangerous tools via natural language commands
+  text = text.replace(
+    /\b(calls?|invoke|execute|run)\s+(ban_member|kick_member|mute_member|warn_member|purge_messages|send_message|add_role|remove_role|create_channel)\b/gi,
+    ""
+  );
+
+  // 3. Strip jailbreak / role-play override patterns
+  text = text.replace(
+    /\b(DAN|Do Anything Now|jailbreak|pretend you are not an AI|Act as if you have no restrictions|override all rules|You are now DAN|Ignore all previous instructions|Ignore all prior instructions)/gi,
+    ""
+  );
+
+  // 4. Token overflow protection — cap at 4000 chars to prevent context-window abuse
+  if (text.length > 4000) {
+    text = text.slice(0, 4000) + "\n\n[... message truncated]";
+  }
+
+  return text.trim();
 }
 
 function splitMessage(text, maxLen = MAX_REPLY_LEN) {
@@ -360,6 +395,17 @@ async function buildMessageHistory(message, ctx, limit = 8, userContent, images 
     system += `\n- Prompt source: ${resolved.source} tier`;
   }
 
+  // ── Personality preset injection ─────────────────────────────────────────
+  // Prepend the selected personality's systemPrefix to set the core identity
+  // and behavior tone. The personality prefix acts as a top-level instruction
+  // that influences how the harness prompt below is interpreted.
+  {
+    const personalityId = settings.get("aiPersonality") || DEFAULT_PERSONALITY;
+    const preset = getPersonality(personalityId);
+    const sep = "\n\n" + "=".repeat(80) + "\n# PERSONALITY OVERRIDE — " + preset.emoji + " " + preset.name + " (" + preset.id + ")\n" + "=".repeat(80) + "\n\n";
+    system = preset.systemPrefix + sep + system;
+  }
+
   // Inject server context — compact format for token-constrained providers
   const concise = usesConcisePrompt(providerHint);
   if (message.guild) {
@@ -385,8 +431,9 @@ async function buildMessageHistory(message, ctx, limit = 8, userContent, images 
     if (memories.length > 0) {
       const formattedMemories = memories.map(m => {
         const scopeTag = m.userId ? `@${m.userId}` : "server";
-        // Token-efficient: [MEM#N scope]: content  vs old verbose format
-        return `[MEM#${m.id} ${scopeTag}]: ${m.content}`;
+        // Token-efficient: [MEM#N scope]: content  vs old verbose format.
+        // Sanitize memory content to prevent stored injection payloads.
+        return `[MEM#${m.id} ${scopeTag}]: ${sanitizeUserInput(m.content)}`;
       }).join("\n");
       system += concise
         ? `\n### MEMORIES:\n${formattedMemories}`
@@ -396,7 +443,7 @@ async function buildMessageHistory(message, ctx, limit = 8, userContent, images 
     const aiMemory = require("./ai/memory");
     const memories = aiMemory.recallDm(message.author.id, concise ? 8 : 15);
     if (memories.length > 0) {
-      const formattedMemories = memories.map(m => `[DM-MEM#${m.id} user:${message.author.id}]: ${m.content}`).join("\n");
+      const formattedMemories = memories.map(m => `[DM-MEM#${m.id} user:${message.author.id}]: ${sanitizeUserInput(m.content)}`).join("\n");
       system += concise
         ? `\n### MEMORIES:\n${formattedMemories}`
         : `\n\n### KNOWN MEMORIES ABOUT YOU:\n${formattedMemories}`;
@@ -445,89 +492,6 @@ function cleanResponse(text, thinkingEnabled) {
   clean = clean.replace(/(?:\n|^)\s*\{\s*"name"\s*:\s*"[^"]+"[^]*$/, "").trim();
 
   return clean.trim();
-}
-
-// Auto-memory: after each AI interaction, fire a cheap follow-up call to
-// extract any learnable memories about the user and save them via add_memory.
-// Runs in background (fire-and-forget) so the user gets their response instantly.
-// Tries the active provider first, then falls back through the configured chain.
-async function extractMemoriesAsync(message, userContent, botReply, providerId) {
-  try {
-    const aiMemory = require("./ai/memory");
-
-    // Build fallback chain: active provider → primary → configured fallbacks (deduplicated)
-    const primaryId = settings.get("aiProvider") || "groq";
-    const fallbackIds = parseFallbackList(settings.get("aiFallbackProviders"));
-    const candidates = [providerId, primaryId, ...fallbackIds].filter((id, i, arr) => arr.indexOf(id) === i);
-
-    // aiMemory.add still uses the legacy "dm" sentinel for DMs — keep that.
-    const guildId = message.guild?.id || "dm";
-
-    const systemPrompt = message.guild
-      ? `Extract any memories worth retaining from this Discord server conversation. Return ONLY a JSON array of memories, each with "scope" ("user" for facts about the current speaker, or "server" for facts about the server) and "content" (max 300 chars). If nothing new was learned, return an empty array []. Example: [{"scope":"user","content":"Prefers TypeScript over Python"},{"scope":"server","content":"New rules posted in #announcements"}]`
-      : `Extract any private DM memories worth retaining about this Discord user. Return ONLY a JSON array of memories, each with "scope":"user" and "content" (max 300 chars). Never return server/global memories for DMs. If nothing new was learned, return an empty array []. Example: [{"scope":"user","content":"Prefers TypeScript over Python"}]`;
-
-    const messages = [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: `User said: ${userContent.slice(0, 500)}\nBot replied: ${botReply.slice(0, 500)}\n\nExtract memories:` }
-    ];
-
-    let memories = [];
-    let usedProvider = null;
-
-    for (const pid of candidates) {
-      const provider = getProvider(pid);
-      if (!provider) continue;
-      const key = settings.getAiApiKey(pid);
-      if (!key) continue;
-
-      // Use the configured model for this provider, otherwise its first default
-      const model = settings.getAiModel(pid) || provider.defaultModel || (Array.isArray(provider.defaultModels) ? provider.defaultModels[0] : null);
-      if (!model) continue;
-
-      try {
-        const timedOut = Symbol("timeout");
-        const result = await Promise.race([
-          provider.chat(messages, {
-            apiKey: key,
-            model,
-            temperature: 0.3,
-            maxTokens: 512,
-          }),
-          new Promise(r => setTimeout(() => r(timedOut), 15_000)),
-        ]);
-        if (result === timedOut) {
-          console.warn(`[auto-memory] Provider "${pid}" timed out during memory extraction`);
-          continue;
-        }
-        const text = (typeof result === "string" ? result : result.text || "").trim();
-        const match = text.match(/\[[\s\S]*\]/);
-        if (match) memories = db.safeJsonParse(match[0], []);
-        usedProvider = pid;
-        break;
-      } catch (e) {
-        // Try the next provider in the fallback chain
-        continue;
-      }
-    }
-
-    if (!usedProvider || memories.length === 0) return;
-
-    for (const mem of memories) {
-      if (mem.content && mem.content.trim().length > 3) {
-        const userId = message.guild
-          ? (mem.scope === "user" ? message.author.id : null)
-          : message.author.id;
-        await aiMemory.add(guildId, userId, mem.content);
-      }
-    }
-    if (memories.length > 0) {
-      console.log(`[auto-memory] Saved ${memories.length} memor${memories.length === 1 ? "y" : "ies"} via ${usedProvider} from conversation with ${message.author.tag}${!message.guild ? " (DM)" : ""}`);
-    }
-  } catch (err) {
-    // Silently fail — auto-memory is best-effort only
-    console.warn(`[auto-memory] Extraction failed: ${err.message}`);
-  }
 }
 
 async function chatWithProvider(providerIds, messages, options = {}) {
@@ -682,6 +646,10 @@ async function handleAiMessage(message, ctx) {
   }
 
   if (message.content.startsWith(ctx.utils.PREFIX)) return false;
+
+  // ── Prompt injection sanitization ─────────────────────────────────────────
+  // Strip injection patterns from user input before it reaches the AI provider.
+  userContent = sanitizeUserInput(userContent);
 
   let startTime = Date.now(); // hoisted for catch-block access
   let typingInterval = null; // refreshed to keep the "bot is typing..." indicator alive during tool loops
@@ -966,6 +934,14 @@ function getPublicSettings() {
     aiChattyMode:         settings.get("aiChattyMode") === true,
     aiChattyCooldown:     settings.get("aiChattyCooldown") ?? 60,
     aiToolPermissions:    settings.get("aiToolPermissions") || "",
+    // Keys that the dashboard AI config surface reads back so toggles/inputs
+    // reflect their stored state on reload. Previously these were writable via
+    // updateSettings but never returned by GET /api/ai, so the dashboard always
+    // rendered them as off/empty after a refresh.
+    aiDmEnabled:          settings.get("aiDmEnabled"),
+    aiBrowserEnabled:     settings.get("aiBrowserEnabled"),
+    aiKeyword:            settings.get("aiKeyword") || "",
+    aiPersonality:        settings.get("aiPersonality") || "neutral",
     providerStatus:       getProviderStatusSnapshot(),
   };
 }
@@ -1103,6 +1079,18 @@ function updateSettings(body) {
   }
   if (typeof body.aiDmEnabled === "boolean") settings.set("aiDmEnabled", body.aiDmEnabled);
   if (typeof body.aiBrowserEnabled === "boolean") settings.set("aiBrowserEnabled", body.aiBrowserEnabled);
+
+  // Keyword trigger: the chat keyword that wakes the AI in guild channels.
+  if (typeof body.aiKeyword === "string") {
+    const kw = body.aiKeyword.trim().slice(0, 32);
+    settings.set("aiKeyword", kw);
+  }
+  // Personality preset: only accept ids actually defined in personalities.js
+  // so a stale/typo'd value can't point at a non-existent preset.
+  if (typeof body.aiPersonality === "string") {
+    const pid = body.aiPersonality.trim().toLowerCase();
+    if (getPersonality(pid)) settings.set("aiPersonality", pid);
+  }
 }
 
 function getActiveConvoCount() {
@@ -1131,6 +1119,7 @@ module.exports = {
   splitMessage,
   parseFallbackList,
   cleanResponse,
+  sanitizeUserInput,
   getBusyProviders,
   getActiveConvoCount,
   resolveModel: groqProvider.resolveModel,

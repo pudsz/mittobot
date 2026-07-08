@@ -66,7 +66,7 @@ async function setBalance(guildId, userId, balance, bank) {
 async function daily(guildId, userId) {
   const cfg = await getConfig(guildId);
   return db.withTransaction(() => {
-    const row = db.get("SELECT * FROM economy_users WHERE guild_id = ? AND user_id = ?", guildId, userId);
+    const row = db.get("SELECT * FROM economy_users WHERE guild_id = ? AND user_id = ?", [guildId, userId]);
     const now = Date.now();
     if (row && (now - row.last_daily) < cfg.dailyCooldown) {
       const remaining = cfg.dailyCooldown - (now - row.last_daily);
@@ -95,7 +95,7 @@ async function daily(guildId, userId) {
 async function work(guildId, userId) {
   const cfg = await getConfig(guildId);
   return db.withTransaction(() => {
-    const row = db.get("SELECT * FROM economy_users WHERE guild_id = ? AND user_id = ?", guildId, userId);
+    const row = db.get("SELECT * FROM economy_users WHERE guild_id = ? AND user_id = ?", [guildId, userId]);
     const now = Date.now();
     if (row && (now - row.last_work) < cfg.workCooldown) {
       const remaining = cfg.workCooldown - (now - row.last_work);
@@ -134,7 +134,7 @@ async function gamble(guildId, userId, amount) {
   const cfg = await getConfig(guildId);
   if (amount < 1) return { success: false, reason: "You must bet at least 1 coin.", net: 0 };
   return db.withTransaction(() => {
-    const row = db.get("SELECT balance, bank FROM economy_users WHERE guild_id = ? AND user_id = ?", guildId, userId);
+    const row = db.get("SELECT balance, bank FROM economy_users WHERE guild_id = ? AND user_id = ?", [guildId, userId]);
     if (!row || row.balance < amount) return { success: false, reason: "Insufficient balance.", net: 0 };
 
     const won = Math.random() < cfg.gambleOdds;

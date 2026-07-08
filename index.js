@@ -12,6 +12,8 @@ const automod = require("./src/automod");
 const greet = require("./src/greet");
 const roles = require("./src/roles");
 const dangerzone = require("./src/dangerzone");
+const theme = require("./src/theme");
+const ui = require("./src/ui");
 const { loadModule, MODULES_DIR, ensureModulesDir } = require("./src/commands/modules");
 const aiMemory = require("./src/ai/memory");
 const autoexec = require("./src/autoexec");
@@ -90,6 +92,8 @@ const COMMAND_FILES = [
   "./src/commands/schedule",
   "./src/commands/backup",
   "./src/commands/websearch",
+  "./src/commands/theme",
+  "./src/commands/voice",
 ];
 for (const file of COMMAND_FILES) {
   const defs = require(file);
@@ -159,20 +163,22 @@ function checkAccess(def, command, { member, userId, channelId }) {
   });
 }
 
-function denyMessage(reason, remain) {
+function denyMessage(guildId, reason, remain) {
+  const tone = require("./src/tone");
   switch (reason) {
     case "disabled":
-      return "That command is disabled here.";
     case "category":
-      return "That command category is currently disabled.";
     case "channel":
-      return "That command can't be used in this channel.";
-    case "permission":
-      return settings.get("noPermMsg");
     case "cooldown":
-      return `⏳ Slow down — try again in **${remain}s**.`;
+      return tone.t(guildId, `deny.${reason}`, { remain });
+    case "permission": {
+      // A customized global noPermMsg overrides the tone pack.
+      const msg = settings.get("noPermMsg");
+      if (msg && msg !== settings.DEFAULTS.noPermMsg) return msg;
+      return tone.t(guildId, "deny.permission");
+    }
     default:
-      return "You can't use that command right now.";
+      return tone.t(guildId, "deny.default");
   }
 }
 
@@ -278,7 +284,7 @@ client.on("messageCreate", async message => {
 
   if (!access.ok) {
     if (["permission", "channel", "cooldown"].includes(access.reason)) {
-      safe.reply(message, { embeds: [utils.errorEmbed(denyMessage(access.reason, access.remain))] }, "access denied message");
+      safe.reply(message, { embeds: [utils.errorEmbed(denyMessage(message.guild.id, access.reason, access.remain), message)] }, "access denied message");
     }
     return;
   }
@@ -290,12 +296,14 @@ client.on("messageCreate", async message => {
     await handler.prefix(message, args, ctx);
   } catch (err) {
     console.error(`Error executing command ${command}:`, err);
-    safe.reply(message, { embeds: [utils.errorEmbed("An unexpected error occurred.")] }, "command error");
+    safe.reply(message, { embeds: [theme.say(message, "error", "error.generic")] }, "command error");
   }
 });
 
 client.on("interactionCreate", async interaction => {
   try {
+    // ui.js central dispatch — pagination, confirm dialogs, registered panels.
+    if (interaction.customId && await ui.dispatch(interaction)) return;
     // Help system: category select menu
     if (interaction.isStringSelectMenu() && interaction.customId === "help:select") {
       return await handleHelpSelect(interaction);
@@ -387,7 +395,7 @@ client.on("interactionCreate", async interaction => {
       });
       if (!access.ok) {
         return interaction.reply({
-          embeds: [utils.errorEmbed(denyMessage(access.reason, access.remain))],
+          embeds: [utils.errorEmbed(denyMessage(interaction.guildId, access.reason, access.remain), interaction)],
           flags: MessageFlags.Ephemeral,
         });
       }
@@ -403,7 +411,7 @@ client.on("interactionCreate", async interaction => {
       return;
     }
     console.error(`Interaction error (${interaction.customId ?? interaction.commandName}):`, err);
-    const reply = { embeds: [utils.errorEmbed("An unexpected error occurred.")], flags: 64 }; // 64 = Ephemeral
+    const reply = { embeds: [theme.say(interaction, "error", "error.generic")], flags: 64 }; // 64 = Ephemeral
     try {
       interaction.replied || interaction.deferred
         ? await interaction.followUp(reply)
@@ -634,6 +642,7 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
       greet.load(),
       roles.load(),
       dangerzone.load(),
+      theme.load(),
       aiMemory.load(),
       autoexec.load(),
       roletracker.load(),

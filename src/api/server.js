@@ -39,6 +39,7 @@ const AI_SETTING_KEYS = new Set([
   "nvidiaApiKey", "nvidiaModel", "nvidiaBaseUrl",
   "deepseekApiKey", "deepseekModel",
   "togetherApiKey", "togetherModel",
+  "requestyApiKey", "requestyModel",
   "aiSystemPrompt", "aiAllowedChannels", "aiIgnoredChannels",
   "aiTemperature", "aiMaxTokens", "aiTopP", "aiContextLimit",
   "aiToolsEnabled", "aiMemoryEnabled", "aiThinkingEnabled",
@@ -131,7 +132,7 @@ function startApi(ctx) {
   // Check if the dashboard is built and can be served locally (same-origin).
   // This is checked early so we can relax the DASHBOARD_ORIGIN requirement:
   // same-origin requests don't need CORS at all.
-  const dashboardPath = path.resolve(__dirname, "../../dashboard/dist");
+  const dashboardPath = path.resolve(__dirname, "../../dashboard-v2/dist");
   const servingDashboard = fs.existsSync(dashboardPath);
 
   // CORS: restrict to the dashboard origin(s). DASHBOARD_ORIGIN may be a
@@ -1406,6 +1407,55 @@ function startApi(ctx) {
     res.json({ ok: true, config: next });
   });
 
+  // ─── Theme (per-guild colors / footer / tone pack) ───────────────────────
+  app.get("/api/theme", requireAuth, (req, res) => {
+    const themeMod = require("../theme");
+    const tone = require("../tone");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (guildInfo.guildId && !userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner)) {
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    }
+    res.json({
+      guildId: guildInfo.guildId,
+      hasGuild: guildInfo.hasGuild,
+      guildName: guildInfo.guildName,
+      config: themeMod.getTheme(guildInfo.guildId),
+      packs: tone.listPacks(),
+      emojiStyles: themeMod.EMOJI_STYLES,
+    });
+  });
+
+  app.post("/api/theme", requireAuth, (req, res) => {
+    const themeMod = require("../theme");
+    const tone = require("../tone");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    const guildId = guildInfo.guildId;
+    if (!guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    if (!userCanAccessGuild(req.user.sub, guildId, req.user.isOwner)) return res.status(403).json({ error: "You don't have access to this guild" });
+    const b = req.body || {};
+    if (b.reset === true) {
+      return res.json({ ok: true, config: themeMod.resetTheme(guildId) });
+    }
+    const patch = {};
+    if (typeof b.tone === "string" && tone.PACKS[b.tone]) patch.tone = b.tone;
+    if (typeof b.emojiStyle === "string" && themeMod.EMOJI_STYLES.includes(b.emojiStyle)) patch.emojiStyle = b.emojiStyle;
+    if (b.colors && typeof b.colors === "object") {
+      patch.colors = {};
+      for (const kind of themeMod.COLOR_KINDS) {
+        const v = b.colors[kind];
+        if (typeof v === "number" && v >= 0 && v <= 0xffffff) patch.colors[kind] = v;
+        else if (typeof v === "string" && /^#?[0-9a-f]{6}$/i.test(v)) patch.colors[kind] = parseInt(v.replace("#", ""), 16);
+      }
+    }
+    if (b.footer && typeof b.footer === "object") {
+      patch.footer = {
+        enabled: !!b.footer.enabled,
+        text: b.footer.text ? String(b.footer.text).slice(0, 200) : null,
+      };
+    }
+    res.json({ ok: true, config: themeMod.setTheme(guildId, patch) });
+  });
+
   // ─── Roles (autorole + reaction-role viewer) ─────────────────────────────
   app.get("/api/roles", requireAuth, (req, res) => {
     const guildInfo = getGuildInfo(reqGuildId(req));
@@ -1515,7 +1565,17 @@ function startApi(ctx) {
     const { store } = req.params;
     if (!DATA_STORES.includes(store)) return res.status(400).json({ error: "Unknown store" });
     try { await ctx.data.load(); } catch (err) { return res.status(500).json({ error: err.message }); }
-    res.json({ store, data: ctx.data[store] ?? {} });
+    const full = ctx.data[store] ?? {};
+    // Scope guild-keyed stores to the selected guild when ?guildId= is present,
+    // so the dashboard only sees this guild's data. stickies (channel-keyed)
+    // and afkUsers (user-keyed, with an inner guildId field) aren't guild-keyed
+    // at the top level, so they're returned whole.
+    const guildId = reqGuildId(req);
+    let scoped = full;
+    if (guildId && (store === "warnings" || store === "reactionlogs" || store === "customRoles")) {
+      scoped = full[guildId] ?? {};
+    }
+    res.json({ store, data: scoped });
   });
 
   // ─── Dangerzone — Trap Channel Config ─────────────────────────────────────
@@ -2302,8 +2362,7 @@ function startApi(ctx) {
   });
 
   // ─── Serve built dashboard (SPA) ──────────────────────────────────────
-  // In production (Docker / Pterodactyl), the Vite build output sits at
-  // dashboard/dist/ relative to the project root.  The Express server serves
+  // The Vite build output sits at dashboard/dist/. The Express server serves
   // the static files AND handles SPA fallback so the entire application
   // (bot API + dashboard UI) runs on a single port.
   // Note: dashboardPath & servingDashboard are already resolved above.
@@ -2337,47 +2396,36 @@ function startApi(ctx) {
     res.status(500).json({ error: "Internal server error" });
   });
 
-  // ── SSL / HTTPS ──────────────────────────────────────────────────────
-  // Self-signed cert generation (uses openssl, falls back to Node crypto).
-  // Required when the upstream proxy forwards SSL-wrapped traffic instead of
-  // terminating it (common in Pterodactyl environments without a reverse proxy).
-  function getSSLCredentials() {
-    const certPath = process.env.SSL_CERT_PATH;
-    const keyPath  = process.env.SSL_KEY_PATH;
+  // ── HTTP / HTTPS ────────────────────────────────────────────────────
+  // Default: plain HTTP on PORT. The recommended production setup is to put a
+  // reverse proxy (Caddy/nginx) in front of the bot to terminate TLS — in that
+  // case the bot stays on plain HTTP. Real HTTPS is opt-in: set both
+  // SSL_CERT_PATH and SSL_KEY_PATH to serve TLS directly (no self-signed cert,
+  // which browsers reject and which breaks reverse-proxy chaining).
+  const certPath = process.env.SSL_CERT_PATH;
+  const keyPath  = process.env.SSL_KEY_PATH;
+  const useHttps = Boolean(certPath && keyPath && fs.existsSync(certPath) && fs.existsSync(keyPath));
 
-    if (certPath && keyPath && fs.existsSync(certPath) && fs.existsSync(keyPath)) {
-      console.log("[api] Using SSL certificate from:", certPath);
-      return { cert: fs.readFileSync(certPath, "utf8"), key: fs.readFileSync(keyPath, "utf8") };
-    }
-
-    // Generate a self-signed cert via openssl
-    const tmpKey  = path.join(os.tmpdir(), "server.key");
-    const tmpCert = path.join(os.tmpdir(), "server.crt");
-
-    try {
-      const { execSync } = require("child_process");
-      execSync(
-        `openssl req -x509 -newkey rsa:2048 -keyout "${tmpKey}" -out "${tmpCert}" -days 3650 -nodes -subj "/CN=${os.hostname()}" 2>/dev/null`,
-        { stdio: "pipe", timeout: 10_000 }
-      );
-      console.log("[api] Generated self-signed SSL certificate (10yr expiry)");
-      return { cert: fs.readFileSync(tmpCert, "utf8"), key: fs.readFileSync(tmpKey, "utf8") };
-    } catch (err) {
-      console.error("[api] openssl is required for SSL cert generation but was not found:", err.message);
-      console.error("[api] Install openssl or set SSL_CERT_PATH and SSL_KEY_PATH env vars.");
-      throw new Error("openssl required for SSL certificate generation");
-    }
-  }
-  // --- Create HTTPS server ---
-  const sslCreds = getSSLCredentials();
-
-  https.createServer(sslCreds, app).listen(PORT, "0.0.0.0", () => {
+  const onListening = () => {
     const schedCount = (() => { try { return require("../scheduler").count(); } catch { return 0; } })();
-    console.log(`[api] Bot dashboard API on https://0.0.0.0:${PORT} (${schedCount} schedules loaded)`);
+    const scheme = useHttps ? "https" : "http";
+    console.log(`[api] Bot dashboard API on ${scheme}://0.0.0.0:${PORT} (${schedCount} schedules loaded)`);
     if (servingDashboard) {
-      console.log(`[api] Dashboard available at https://0.0.0.0:${PORT}/`);
+      console.log(`[api] Dashboard available at ${scheme}://0.0.0.0:${PORT}/`);
     }
-  });
+  };
+
+  if (useHttps) {
+    console.log("[api] Using SSL certificate from:", certPath);
+    https
+      .createServer({ cert: fs.readFileSync(certPath, "utf8"), key: fs.readFileSync(keyPath, "utf8") }, app)
+      .listen(PORT, "0.0.0.0", onListening);
+  } else {
+    if (certPath || keyPath) {
+      console.warn("[api] SSL_CERT_PATH/SSL_KEY_PATH set but one is missing or unreadable — serving HTTP instead.");
+    }
+    app.listen(PORT, "0.0.0.0", onListening);
+  }
 }
 
 module.exports = { startApi };

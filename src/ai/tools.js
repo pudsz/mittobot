@@ -44,107 +44,6 @@ async function checkToolAccess(toolName, member) {
       return member.permissions.has(PermissionFlagsBits.Administrator);
     case "owner":
       return OWNER_IDS.has(member.id);
-    case "search_members": {
-      if (!guild) return "Error: this tool requires a server context.";
-      
-      if (!args.query || typeof args.query !== "string") return `Error: Search query is required.`;
-      const sq = validation.sanitizeString(args.query, 100).toLowerCase();
-      const limit = Math.min(Math.max(args.limit || 10, 1), 25);
-      const members = guild.members.cache.filter(m => {
-        const name = (m.displayName || m.user.username || "").toLowerCase();
-        const uname = (m.user.username || "").toLowerCase();
-        return name.includes(sq) || uname.includes(sq);
-      }).first(limit);
-      if (members.length === 0) return "No members found matching that query.";
-      return JSON.stringify(members.map(m => ({
-        id: m.id,
-        username: m.user.username,
-        displayName: m.displayName,
-        isBot: m.user.bot,
-        topRoles: m.roles.cache.filter(r => r.id !== guild.id).sort((a, b) => b.position - a.position).slice(0, 3).map(r => r.name),
-        joinedAt: m.joinedAt?.toISOString(),
-      })), null, 2);
-    }
-
-    case "get_role_members": {
-      if (!guild) return "Error: this tool requires a server context.";
-      
-      if (!validation.isValidRoleId(args.roleId)) return `Error: Invalid role ID format.`;
-      const role = guild.roles.cache.get(args.roleId);
-      if (!role) return "Error: Role not found.";
-      const limit = Math.min(Math.max(args.limit || 20, 1), 100);
-      const members = [...role.members.values()].slice(0, limit);
-      return JSON.stringify({
-        roleName: role.name,
-        roleId: role.id,
-        color: role.hexColor,
-        totalMembers: role.members.size,
-        showing: members.length,
-        members: members.map(m => ({
-          id: m.id,
-          username: m.user.username,
-          displayName: m.displayName,
-          isBot: m.user.bot,
-          joinedAt: m.joinedAt?.toISOString(),
-        })),
-      }, null, 2);
-    }
-
-    case "get_user_avatar": {
-      if (!validation.isValidUserId(args.userId)) return `Error: Invalid user ID format.`;
-      const sizes = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
-      const size = sizes.includes(args.size) ? args.size : 256;
-      let member = null;
-      let user = null;
-      if (guild) member = await safe.orNull(guild.members.fetch(args.userId), "tool: fetch avatar member");
-      if (member) user = member.user;
-      else user = await safe.orNull(message.client.users.fetch(args.userId), "tool: fetch avatar user");
-      if (!user) return "Error: User not found.";
-      const avatarUrl = user.displayAvatarURL({ size, forceStatic: false });
-      return JSON.stringify({
-        username: user.username,
-        id: user.id,
-        avatarUrl: avatarUrl,
-        size: size,
-        isAnimated: user.avatar?.startsWith("a_") || false,
-        defaultAvatarUrl: user.defaultAvatarURL,
-      }, null, 2);
-    }
-
-    case "get_user_presence": {
-      if (!validation.isValidUserId(args.userId)) return `Error: Invalid user ID format.`;
-      if (!guild) return "Error: this tool requires a server context.";
-      const member = await safe.orNull(guild.members.fetch(args.userId), "tool: fetch presence member");
-      if (!member) return "Error: User not found in this guild.";
-      const presence = member.presence;
-      if (!presence) {
-        return JSON.stringify({
-          userId: args.userId,
-          username: member.user.username,
-          displayName: member.displayName,
-          status: "offline",
-          activities: [],
-          customStatus: null,
-          clientStatus: null,
-        }, null, 2);
-      }
-      const customStatus = presence.activities.find(a => a.type === 4)?.state || null;
-      return JSON.stringify({
-        userId: args.userId,
-        username: member.user.username,
-        displayName: member.displayName,
-        status: presence.status,
-        activities: presence.activities.filter(a => a.type !== 4).map(a => ({
-          name: a.name,
-          type: ["playing", "streaming", "listening", "watching", "custom", "competing"][a.type] || "unknown",
-          details: a.details || null,
-          state: a.state || null,
-        })),
-        customStatus: customStatus,
-        clientStatus: presence.clientStatus || null,
-      }, null, 2);
-    }
-
     default: return false;
   }
 }
@@ -244,17 +143,6 @@ const TOOL_SCHEMAS = [
         userId: { type: "string", description: "Optional Discord user ID if the memory is about a specific member." }
       },
       required: ["content"]
-    }
-  },
-  {
-    name: "forget_memory",
-    description: "Delete/forget a saved memory by its ID.",
-    parameters: {
-      type: "object",
-      properties: {
-        memoryId: { type: "integer", description: "The ID of the memory to delete." }
-      },
-      required: ["memoryId"]
     }
   },
   {
@@ -687,15 +575,18 @@ async function searchWeb(query) {
     if (!res.ok) return `Search failed: HTTP ${res.status}`;
     const text = await res.text();
     const results = [];
-    const sections = text.split('class="result__body"');
+    const sections = text.split(/result__body/);
     for (let i = 1; i < Math.min(sections.length, 6); i++) {
       const sec = sections[i];
-      const titleMatch = sec.match(/<a class="result__url"[^>]*>([\s\S]*?)<\/a>/i);
-      const linkMatch = sec.match(/href="([^"]+)"/i);
-      const snippetMatch = sec.match(/<a class="result__snippet"[^>]*>([\s\S]*?)<\/a>/i);
-      if (linkMatch) {
-        const title = titleMatch ? titleMatch[1].replace(/<[^>]*>/g, '').trim() : "Link";
-        const link = linkMatch[1];
+      const titleMatch = sec.match(/<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i);
+      const snippetMatch = sec.match(/<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/i);
+      if (titleMatch) {
+        const title = titleMatch[2].replace(/<[^>]*>/g, '').trim();
+        let link = titleMatch[1];
+        // Decode DuckDuckGo redirect URLs
+        if (link.startsWith("//")) link = "https:" + link;
+        const uddgMatch = link.match(/uddg=([^&]+)/);
+        if (uddgMatch) link = decodeURIComponent(uddgMatch[1]);
         const snippet = snippetMatch ? snippetMatch[1].replace(/<[^>]*>/g, '').trim() : "";
         results.push(`- **${title}** (${link})\n  ${snippet}`);
       }
@@ -786,7 +677,7 @@ async function executeTool(name, args, ctx, message) {
 
   // DM guard: block guild-only tools in direct messages. Memory tools are safe
   // in DMs, but they are scoped to the DM user only, never to a shared server bucket.
-  const DM_SAFE_TOOLS = new Set(["search_web", "scrape_web_page", "browse_page", "add_memory", "forget_memory", "get_user_avatar"]);
+  const DM_SAFE_TOOLS = new Set(["search_web", "scrape_web_page", "browse_page", "add_memory", "get_user_avatar"]);
   if (!guild && !DM_SAFE_TOOLS.has(name)) {
     return `Error: the "${name}" tool requires a server context and is not available in direct messages.`;
   }
@@ -928,6 +819,7 @@ async function executeTool(name, args, ctx, message) {
     }
 
     case "add_memory": {
+      if (!await checkToolAccess("add_memory", message.member)) return "Permission denied: You need moderator permissions to add AI memories via tools.";
       if (!args.content || typeof args.content !== "string") return `Error: Memory content is required and must be a string.`;
       const sanitizedContent = validation.sanitizeString(args.content, 500);
       if (!sanitizedContent.trim()) return `Error: Memory content is empty after sanitization.`;
@@ -942,18 +834,6 @@ async function executeTool(name, args, ctx, message) {
       return `Successfully saved memory: [Memory #${mem.id}] ${scopeLabel}: ${sanitizedContent}`;
     }
 
-    case "forget_memory": {
-      if (!Number.isInteger(args.memoryId) || args.memoryId < 1) return `Error: memoryId must be a positive integer.`;
-      const forgetGuildId = guild ? guild.id : "dm";
-      const memsForGuild = guild
-        ? aiMemory.forGuild(forgetGuildId)
-        : aiMemory.forUser("dm", message.author.id);
-      const target = memsForGuild.find(m => m.id === args.memoryId);
-      if (!target) return `Error: memory #${args.memoryId} not found.`;
-      const deleted = await aiMemory.forget(args.memoryId);
-      return deleted ? `Successfully deleted memory #${args.memoryId}.` : `Error: memory #${args.memoryId} not found.`;
-    }
-
     case "search_web": {
       if (!args.query || typeof args.query !== "string") return `Error: Search query is required and must be a string.`;
       const sanitizedQuery = validation.sanitizeString(args.query, 500);
@@ -965,6 +845,105 @@ async function executeTool(name, args, ctx, message) {
       if (!args.url || typeof args.url !== "string") return `Error: URL is required and must be a string.`;
       if (!validation.isValidUrl(args.url)) return `Error: Invalid URL format.`;
       return scrapeWebPage(args.url);
+    }
+
+    case "search_members": {
+      if (!guild) return "Error: this tool requires a server context.";
+      if (!args.query || typeof args.query !== "string") return "Error: Search query is required.";
+      const sq = validation.sanitizeString(args.query, 100).toLowerCase();
+      const limit = Math.min(Math.max(args.limit || 10, 1), 25);
+      const members = guild.members.cache.filter(m => {
+        const name = (m.displayName || m.user.username || "").toLowerCase();
+        const uname = (m.user.username || "").toLowerCase();
+        return name.includes(sq) || uname.includes(sq);
+      }).first(limit);
+      if (members.length === 0) return "No members found matching that query.";
+      return JSON.stringify(members.map(m => ({
+        id: m.id,
+        username: m.user.username,
+        displayName: m.displayName,
+        isBot: m.user.bot,
+        topRoles: m.roles.cache.filter(r => r.id !== guild.id).sort((a, b) => b.position - a.position).slice(0, 3).map(r => r.name),
+        joinedAt: m.joinedAt?.toISOString(),
+      })), null, 2);
+    }
+
+    case "get_role_members": {
+      if (!guild) return "Error: this tool requires a server context.";
+      if (!validation.isValidRoleId(args.roleId)) return "Error: Invalid role ID format.";
+      const role = guild.roles.cache.get(args.roleId);
+      if (!role) return "Error: Role not found.";
+      const limit = Math.min(Math.max(args.limit || 20, 1), 100);
+      const members = [...role.members.values()].slice(0, limit);
+      return JSON.stringify({
+        roleName: role.name,
+        roleId: role.id,
+        color: role.hexColor,
+        totalMembers: role.members.size,
+        showing: members.length,
+        members: members.map(m => ({
+          id: m.id,
+          username: m.user.username,
+          displayName: m.displayName,
+          isBot: m.user.bot,
+          joinedAt: m.joinedAt?.toISOString(),
+        })),
+      }, null, 2);
+    }
+
+    case "get_user_avatar": {
+      if (!validation.isValidUserId(args.userId)) return "Error: Invalid user ID format.";
+      const sizes = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
+      const size = sizes.includes(args.size) ? args.size : 256;
+      let member = null;
+      let user = null;
+      if (guild) member = await safe.orNull(guild.members.fetch(args.userId), "tool: fetch avatar member");
+      if (member) user = member.user;
+      else user = await safe.orNull(client.users.fetch(args.userId), "tool: fetch avatar user");
+      if (!user) return "Error: User not found.";
+      const avatarUrl = user.displayAvatarURL({ size, forceStatic: false });
+      return JSON.stringify({
+        username: user.username,
+        id: user.id,
+        avatarUrl: avatarUrl,
+        size: size,
+        isAnimated: user.avatar?.startsWith("a_") || false,
+        defaultAvatarUrl: user.defaultAvatarURL,
+      }, null, 2);
+    }
+
+    case "get_user_presence": {
+      if (!validation.isValidUserId(args.userId)) return "Error: Invalid user ID format.";
+      if (!guild) return "Error: this tool requires a server context.";
+      const member = await safe.orNull(guild.members.fetch(args.userId), "tool: fetch presence member");
+      if (!member) return "Error: User not found in this guild.";
+      const presence = member.presence;
+      if (!presence) {
+        return JSON.stringify({
+          userId: args.userId,
+          username: member.user.username,
+          displayName: member.displayName,
+          status: "offline",
+          activities: [],
+          customStatus: null,
+          clientStatus: null,
+        }, null, 2);
+      }
+      const customStatus = presence.activities.find(a => a.type === 4)?.state || null;
+      return JSON.stringify({
+        userId: args.userId,
+        username: member.user.username,
+        displayName: member.displayName,
+        status: presence.status,
+        activities: presence.activities.filter(a => a.type !== 4).map(a => ({
+          name: a.name,
+          type: ["playing", "streaming", "listening", "watching", "custom", "competing"][a.type] || "unknown",
+          details: a.details || null,
+          state: a.state || null,
+        })),
+        customStatus: customStatus,
+        clientStatus: presence.clientStatus || null,
+      }, null, 2);
     }
 
     case "list_channels": {
@@ -1193,6 +1172,7 @@ async function executeTool(name, args, ctx, message) {
     case "browse_page": {
       if (!args.url || typeof args.url !== "string") return `Error: URL is required and must be a string.`;
       if (!validation.isValidUrl(args.url)) return `Error: Invalid URL format.`;
+      if (settings.get("aiBrowserEnabled") === false) return "Error: browser tool is disabled by server admin.";
       return browsePage(args.url);
     }
 

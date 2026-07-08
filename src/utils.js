@@ -35,9 +35,13 @@ function canCreateCustomRole(member) {
   return false;
 }
 
-const successEmbed = (msg) => new EmbedBuilder().setColor(0x00c776).setDescription(`✅ ${msg}`);
-const errorEmbed   = (msg) => new EmbedBuilder().setColor(0xed4245).setDescription(`❌ ${msg}`);
-const noPermEmbed  = ()    => new EmbedBuilder().setColor(0xed4245).setDescription(`❌ ${settings.get("noPermMsg")}`);
+// Embed factories route through the theme module so guilds get their own
+// colors/footer/tone. `src` (optional) is a Message/Interaction/guildId; when
+// omitted the default theme renders, identical to the old hardcoded output.
+// theme.js is lazy-required to avoid a utils↔theme cycle.
+const successEmbed = (msg, src = null) => require("./theme").success(src, msg);
+const errorEmbed   = (msg, src = null) => require("./theme").error(src, msg);
+const noPermEmbed  = (src = null)      => require("./theme").noPerm(src);
 
 function parseDuration(str) {
   const match = str?.match(/^(\d+)(s|m|h|d)$/i);

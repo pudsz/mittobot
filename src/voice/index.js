@@ -10,6 +10,8 @@ class VoiceManager {
     this.client = client;
     /** @type {Map<string, Map<string, VoiceSession>>} guildId → channelId → session */
     this.sessions = new Map();
+    /** @type {Set<string>} guildId:channelId keys with a start() in flight */
+    this._pendingSessions = new Set();
   }
 
   /**
@@ -32,7 +34,10 @@ class VoiceManager {
       // Check if this is the designated AI voice channel
       if (voiceChannelId && newState.channelId !== voiceChannelId) return;
 
-      // Check: is there already an active session in this channel?
+      // Check: is there already an active session (or one being created) in this channel?
+      const pendingKey = `${guildId}:${newState.channelId}`;
+      if (this._pendingSessions.has(pendingKey)) return;
+
       const guildSessions = this.sessions.get(guildId);
       if (guildSessions?.has(newState.channelId)) {
         // Another user is in this session — ignore (1:1 enforcement)
@@ -81,7 +86,11 @@ class VoiceManager {
    * Create a new voice session.
    * Called when user joins a designated AI voice channel.
    */
-  _createSession(guildId, channelId, userId, guild, voiceChannel) {
+  async _createSession(guildId, channelId, userId, guild, voiceChannel) {
+    const pendingKey = `${guildId}:${channelId}`;
+    if (this._pendingSessions.has(pendingKey)) return null;
+    this._pendingSessions.add(pendingKey);
+
     if (!this.sessions.has(guildId)) {
       this.sessions.set(guildId, new Map());
     }
@@ -114,10 +123,16 @@ class VoiceManager {
       this._destroySession(guildId, channelId);
     });
 
-    session.start().catch(err => {
+    try {
+      await session.start();
+    } catch (err) {
       console.error("[voice] Failed to start session:", err.message);
       this._destroySession(guildId, channelId);
-    });
+      return null;
+    } finally {
+      this._pendingSessions.delete(pendingKey);
+    }
+    return session;
   }
 
   /**
@@ -155,6 +170,48 @@ class VoiceManager {
   }
 
   /**
+   * Join a specific voice channel (invoked by the /join command).
+   * @param {string} guildId
+   * @param {string} channelId - Voice channel to join
+   * @param {string} userId - The user who issued the command
+   * @param {object} guild - Discord guild object
+   * @param {object} voiceChannel - The resolved voice channel object
+   * @returns {Promise<{ok: boolean, error?: string}>}
+   */
+  async joinChannel(guildId, channelId, userId, guild, voiceChannel) {
+    // Check for existing session in this channel
+    const guildSessions = this.sessions.get(guildId);
+    if (guildSessions?.has(channelId)) {
+      return { ok: false, error: "I'm already in that voice channel." };
+    }
+    const pendingKey = `${guildId}:${channelId}`;
+    if (this._pendingSessions.has(pendingKey)) {
+      return { ok: false, error: "Already connecting to that channel, please wait." };
+    }
+
+    const session = await this._createSession(guildId, channelId, userId, guild, voiceChannel);
+    if (!session) {
+      return { ok: false, error: "Failed to start voice session. Check the logs for details." };
+    }
+    return { ok: true };
+  }
+
+  /**
+   * Leave a voice channel (invoked by the /leave command).
+   * @param {string} guildId
+   * @param {string} channelId - Voice channel to leave
+   * @returns {Promise<{ok: boolean, error?: string}>}
+   */
+  async leaveChannel(guildId, channelId) {
+    const guildSessions = this.sessions.get(guildId);
+    if (!guildSessions?.has(channelId)) {
+      return { ok: false, error: "I'm not in that voice channel." };
+    }
+    this._destroySession(guildId, channelId);
+    return { ok: true };
+  }
+
+  /**
    * Get all active sessions (for status/dashboard).
    */
   getActiveSessions() {
@@ -184,6 +241,7 @@ class VoiceManager {
       }
     }
     this.sessions.clear();
+    this._pendingSessions.clear();
     console.log("[voice] All sessions destroyed");
   }
 }

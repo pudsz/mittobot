@@ -1,6 +1,11 @@
-const { EmbedBuilder, SlashCommandBuilder, ChannelType, MessageFlags } = require("discord.js");
+const {
+  EmbedBuilder, SlashCommandBuilder, ChannelType, MessageFlags,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder,
+  ChannelSelectMenuBuilder, RoleSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle,
+} = require("discord.js");
 const { errorEmbed, successEmbed, parseDuration, formatDuration, resolveUserId } = require("../utils");
 const dangerzone = require("../dangerzone");
+const ui = require("../ui");
 
 // ─── Helpers ───
 function parseChannelId(arg) {
@@ -82,12 +87,175 @@ function usageEmbed(prefix) {
     .setFooter({ text: "Exempt: server owners, ManageGuild holders, and configured roles" });
 }
 
+// ─── Interactive panel ───
+function patchChannel(guildId, channelId, patch) {
+  const cur = dangerzone.getChannelConfig(guildId, channelId) || {};
+  dangerzone.addChannel(guildId, channelId, { ...cur, ...patch });
+}
+
+function dzListView(session) {
+  const guild = session.state.guild;
+  const entries = dangerzone.listChannels(guild.id);
+  const lines = entries.map(([id, cfg]) =>
+    `<#${id}> — ${actionEmoji(cfg.action)} ${cfg.action}${cfg.action === "timeout" ? ` (${formatDuration(cfg.timeoutMs || 300_000)})` : ""}`
+  );
+  const embed = new EmbedBuilder()
+    .setColor(0xed4245)
+    .setTitle("⚠️ Dangerzones")
+    .setDescription(
+      (lines.length ? lines.join("\n") : "No dangerzone channels configured yet.") +
+      "\n\nPick a channel below to add it as a dangerzone or edit its settings."
+    )
+    .setFooter({ text: "Exempt: server owners, ManageGuild holders, and configured roles" });
+  const addSelect = new ChannelSelectMenuBuilder()
+    .setCustomId("dz:chan")
+    .setPlaceholder("Add or edit a dangerzone channel…")
+    .setChannelTypes(ChannelType.GuildText)
+    .setMinValues(1).setMaxValues(1);
+  return { embeds: [embed], components: [new ActionRowBuilder().addComponents(addSelect)] };
+}
+
+function dzEditView(session) {
+  const guild = session.state.guild;
+  const channelId = session.state.channelId;
+  const cfg = dangerzone.getChannelConfig(guild.id, channelId);
+  if (!cfg) return dzListView(session);
+  const embed = channelInfoEmbed(guild, channelId, cfg);
+  const actionSelect = new StringSelectMenuBuilder()
+    .setCustomId("dz:action")
+    .setPlaceholder("Punishment…")
+    .addOptions(
+      { label: "Kick", value: "kick", emoji: "👢", default: cfg.action === "kick" },
+      { label: "Ban", value: "ban", emoji: "🔨", default: cfg.action === "ban" },
+      { label: "Timeout", value: "timeout", emoji: "🔇", default: cfg.action === "timeout" },
+    );
+  const logSelect = new ChannelSelectMenuBuilder()
+    .setCustomId("dz:log")
+    .setPlaceholder("Log channel (empty = no logging)")
+    .setChannelTypes(ChannelType.GuildText)
+    .setMinValues(0).setMaxValues(1)
+    .setDefaultChannels(cfg.logChannelId ? [cfg.logChannelId] : []);
+  const exemptSelect = new RoleSelectMenuBuilder()
+    .setCustomId("dz:exempt")
+    .setPlaceholder("Exempt roles")
+    .setMinValues(0).setMaxValues(25)
+    .setDefaultRoles((cfg.exemptRoles || []).slice(0, 25));
+  const buttons = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("dz:duration").setLabel("Timeout Duration").setEmoji("⏱️")
+      .setStyle(ButtonStyle.Secondary).setDisabled(cfg.action !== "timeout"),
+    new ButtonBuilder().setCustomId("dz:reason").setLabel("Reason").setEmoji("📝").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("dz:remove").setLabel("Remove").setEmoji("🗑️").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("dz:back").setLabel("Back").setEmoji("↩️").setStyle(ButtonStyle.Secondary),
+  );
+  return {
+    embeds: [embed],
+    components: [
+      new ActionRowBuilder().addComponents(actionSelect),
+      new ActionRowBuilder().addComponents(logSelect),
+      new ActionRowBuilder().addComponents(exemptSelect),
+      buttons,
+    ],
+  };
+}
+
+ui.registerPanel("dz", {
+  level: "admin",
+  render(session) {
+    return session.state.view === "edit" ? dzEditView(session) : dzListView(session);
+  },
+  handlers: {
+    async chan(interaction, session, { repaint }) {
+      const guild = session.state.guild;
+      const channelId = interaction.values[0];
+      if (!dangerzone.getChannelConfig(guild.id, channelId)) {
+        dangerzone.addChannel(guild.id, channelId, {}); // defaults: kick
+      }
+      session.state.channelId = channelId;
+      session.state.view = "edit";
+      await repaint();
+    },
+    async action(interaction, session, { repaint }) {
+      patchChannel(session.guildId, session.state.channelId, { action: interaction.values[0] });
+      await repaint();
+    },
+    async log(interaction, session, { repaint }) {
+      patchChannel(session.guildId, session.state.channelId, { logChannelId: interaction.values[0] || null });
+      await repaint();
+    },
+    async exempt(interaction, session, { repaint }) {
+      patchChannel(session.guildId, session.state.channelId, { exemptRoles: interaction.values });
+      await repaint();
+    },
+    async duration(interaction, session) {
+      const cfg = dangerzone.getChannelConfig(session.guildId, session.state.channelId) || {};
+      const modal = new ModalBuilder().setCustomId("dz_modal:duration").setTitle("Timeout Duration")
+        .addComponents(new ActionRowBuilder().addComponents(
+          new TextInputBuilder().setCustomId("dur").setLabel("Duration (30s, 5m, 2h, 1d — max 28d)")
+            .setStyle(TextInputStyle.Short).setValue(formatDuration(cfg.timeoutMs || 300_000))
+            .setMaxLength(6).setRequired(true),
+        ));
+      await interaction.showModal(modal);
+    },
+    async reason(interaction, session) {
+      const cfg = dangerzone.getChannelConfig(session.guildId, session.state.channelId) || {};
+      const modal = new ModalBuilder().setCustomId("dz_modal:reason").setTitle("Punishment Reason")
+        .addComponents(new ActionRowBuilder().addComponents(
+          new TextInputBuilder().setCustomId("text").setLabel("Reason shown in audit log & logs")
+            .setStyle(TextInputStyle.Paragraph).setValue(cfg.reason || "").setMaxLength(400).setRequired(true),
+        ));
+      await interaction.showModal(modal);
+    },
+    async remove(interaction, session) {
+      const channelId = session.state.channelId;
+      await ui.confirm(interaction, {
+        embed: errorEmbed(`Remove the dangerzone from <#${channelId}>? Messages there will no longer trigger punishments.`, session.guildId),
+        ownerId: interaction.user.id,
+        confirmLabel: "Remove dangerzone",
+        ephemeral: true,
+        onConfirm: async (i) => {
+          dangerzone.removeChannel(session.guildId, channelId);
+          session.state.view = "list";
+          await i.update({ embeds: [successEmbed(`Dangerzone removed from <#${channelId}>.`, session.guildId)], components: [] });
+          try { await session.message?.edit(dzListView(session)); } catch { /* panel gone */ }
+        },
+      });
+    },
+    async back(interaction, session, { repaint }) {
+      session.state.view = "list";
+      await repaint();
+    },
+  },
+  modals: {
+    async duration(interaction, session, { repaint }) {
+      const ms = parseDuration(interaction.fields.getTextInputValue("dur").trim());
+      if (!ms) return ui.ephemeralNote(interaction, "Invalid duration. Use `30s`, `5m`, `2h`, `1d` (max 28d).");
+      patchChannel(session.guildId, session.state.channelId, { timeoutMs: ms });
+      await repaint();
+    },
+    async reason(interaction, session, { repaint }) {
+      patchChannel(session.guildId, session.state.channelId, { reason: interaction.fields.getTextInputValue("text").trim() });
+      await repaint();
+    },
+  },
+});
+
+async function openDangerzonePanel(source, guild, userId) {
+  await ui.openPanel(source, "dz", {
+    ownerId: userId,
+    state: { guild, view: "list" },
+    ephemeral: true,
+  });
+}
+
 // ─── Prefix handler ───
 async function handleDangerzone(message, args, ctx) {
   const sub = args[0]?.toLowerCase();
   const prefix = ctx.utils.PREFIX;
 
-  if (!sub || sub === "help") {
+  if (!sub) {
+    return openDangerzonePanel(message, message.guild, message.author.id);
+  }
+  if (sub === "help") {
     return message.reply({ embeds: [usageEmbed(prefix)] });
   }
 
@@ -236,6 +404,9 @@ async function handleDangerzone(message, args, ctx) {
 
 // ─── Slash command handler ───
 async function slashDangerzone(interaction, ctx) {
+  if (interaction.options.getSubcommand() === "panel") {
+    return openDangerzonePanel(interaction, interaction.guild, interaction.user.id);
+  }
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const sub = interaction.options.getSubcommand();
 
@@ -362,7 +533,10 @@ function buildSlash() {
       .setName("reason")
       .setDescription("Set the punishment reason for a dangerzone")
       .addChannelOption(o => o.setName("channel").setDescription("The dangerzone channel").setRequired(true).addChannelTypes(ChannelType.GuildText))
-      .addStringOption(o => o.setName("reason").setDescription("The reason text").setRequired(true)));
+      .addStringOption(o => o.setName("reason").setDescription("The reason text").setRequired(true)))
+    .addSubcommand(s => s
+      .setName("panel")
+      .setDescription("Open the interactive dangerzone panel"));
 }
 
 module.exports = [

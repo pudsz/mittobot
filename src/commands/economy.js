@@ -2,19 +2,19 @@
 // All prefixes: $balance, $daily, $work, $pay, $leaderboard, $gamble, $rob
 // Slash equivalents use subcommand group: /economy balance|daily|work|pay|leaderboard|gamble|rob
 
-const { EmbedBuilder, SlashCommandBuilder } = require("discord.js");
+const { SlashCommandBuilder } = require("discord.js");
 const economy = require("../economy");
+const theme = require("../theme");
 
 const CATEGORY = "fun";
 const COIN_EMOJI = "🪙";
-const BLURPLE = 0x5865f2;
 
-function coinEmbed(desc) {
-  return new EmbedBuilder().setColor(BLURPLE).setDescription(`${COIN_EMOJI} ${desc}`);
+function coinEmbed(guildId, desc) {
+  return theme.embed(guildId, "info", `${COIN_EMOJI} ${desc}`);
 }
 
-function errEmbed(desc) {
-  return new EmbedBuilder().setColor(0xed4245).setDescription(`❌ ${desc}`);
+function errEmbed(guildId, desc) {
+  return theme.error(guildId, desc);
 }
 
 function usage(ctx, text) {
@@ -32,7 +32,7 @@ async function cmdBalance(messageOrInteraction, target, guildId) {
   const userId = target?.id || target?.user?.id || messageOrInteraction.author?.id || messageOrInteraction.user?.id;
   const userTag = target?.tag || target?.user?.tag || messageOrInteraction.author?.tag || messageOrInteraction.user?.tag;
   const bal = await economy.getBalance(guildId, userId);
-  return coinEmbed(
+  return coinEmbed(guildId,
     `**${userTag}**'s wallet\\n` +
     `💵 Wallet: **${formatCoins(bal.balance)}** coins\\n` +
     `🏦 Bank: **${formatCoins(bal.bank)}** coins\\n` +
@@ -44,9 +44,9 @@ async function cmdBalance(messageOrInteraction, target, guildId) {
 async function cmdDaily(guildId, userId, userTag) {
   const result = await economy.daily(guildId, userId);
   if (!result.success) {
-    return errEmbed(`You already claimed your daily! Come back in **${result.cooldown}**.`);
+    return errEmbed(guildId, `You already claimed your daily! Come back in **${result.cooldown}**.`);
   }
-  return coinEmbed(
+  return coinEmbed(guildId,
     `**${userTag}** claimed their daily reward!\\n` +
     `+${formatCoins(result.amount)} coins added to your wallet.\\n` +
     `Come back in 24h for another reward!`
@@ -69,26 +69,26 @@ const WORK_JOBS = [
 async function cmdWork(guildId, userId, userTag) {
   const result = await economy.work(guildId, userId);
   if (!result.success) {
-    return errEmbed(`You're exhausted! Rest for **${result.cooldown}** before working again.`);
+    return errEmbed(guildId, `You're exhausted! Rest for **${result.cooldown}** before working again.`);
   }
   const job = WORK_JOBS[Math.floor(Math.random() * WORK_JOBS.length)];
-  return coinEmbed(`${job} **${formatCoins(result.amount)}** coins!`);
+  return coinEmbed(guildId, `${job} **${formatCoins(result.amount)}** coins!`);
 }
 
 // ─── Pay ───────────────────────────────────────────────────────────────
 async function cmdPay(guild, guildId, fromId, fromTag, toId, toTag, amount) {
   // Verify target is in the guild before transferring
   const targetMember = await guild.members.fetch(toId).catch(() => null);
-  if (!targetMember) return errEmbed("That user is not in this server.");
+  if (!targetMember) return errEmbed(guildId, "That user is not in this server.");
   const result = await economy.pay(guildId, fromId, toId, amount);
-  if (!result.success) return errEmbed(result.reason);
-  return coinEmbed(`**${fromTag}** paid **${formatCoins(amount)}** coins to **${toTag}**!`);
+  if (!result.success) return errEmbed(guildId, result.reason);
+  return coinEmbed(guildId, `**${fromTag}** paid **${formatCoins(amount)}** coins to **${toTag}**!`);
 }
 
 // ─── Leaderboard ───────────────────────────────────────────────────────
 async function cmdLeaderboard(guild, guildId) {
   const lb = await economy.leaderboard(guildId, 10);
-  if (!lb.length) return coinEmbed("No one has earned any coins yet. Be the first!");
+  if (!lb.length) return coinEmbed(guildId, "No one has earned any coins yet. Be the first!");
   // Resolve all member display names in parallel to avoid sequential API calls
   const members = await Promise.all(lb.slice(0, 10).map(row =>
     guild.members.fetch(row.user_id).catch(() => null)
@@ -99,20 +99,20 @@ async function cmdLeaderboard(guild, guildId) {
     const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
     return `${medal} **${name.replace(/\*/g, "\\*")}** — ${formatCoins(row.total)} coins`;
   });
-  return coinEmbed(`**💰 Richest Members**\\n\\n${lines.join("\\n")}`);
+  return coinEmbed(guildId, `**💰 Richest Members**\\n\\n${lines.join("\\n")}`);
 }
 
 // ─── Gamble ────────────────────────────────────────────────────────────
 async function cmdGamble(guildId, userId, userTag, amount) {
   const result = await economy.gamble(guildId, userId, amount);
-  if (!result.success) return errEmbed(result.reason);
+  if (!result.success) return errEmbed(guildId, result.reason);
   if (result.won) {
-    return coinEmbed(
+    return coinEmbed(guildId,
       `🎰 **${userTag}** gambled **${formatCoins(amount)}** and **WON**!\\n` +
       `+${formatCoins(result.net)} coins! New balance: **${formatCoins(result.newBalance)}**`
     );
   } else {
-    return coinEmbed(
+    return coinEmbed(guildId,
       `🎰 **${userTag}** gambled **${formatCoins(amount)}** and lost...\\n` +
       `${formatCoins(result.net)} coins. New balance: **${formatCoins(result.newBalance)}**`
     );
@@ -122,8 +122,8 @@ async function cmdGamble(guildId, userId, userTag, amount) {
 // ─── Rob ───────────────────────────────────────────────────────────────
 async function cmdRob(guildId, robberId, robberTag, victimId, victimTag) {
   const result = await economy.rob(guildId, robberId, victimId);
-  if (!result.success) return errEmbed(result.reason);
-  return coinEmbed(`🔫 **${robberTag}** robbed **${victimTag}** and got away with **${formatCoins(result.amount)}** coins!`);
+  if (!result.success) return errEmbed(guildId, result.reason);
+  return coinEmbed(guildId, `🔫 **${robberTag}** robbed **${victimTag}** and got away with **${formatCoins(result.amount)}** coins!`);
 }
 
 // ─── Command defs ──────────────────────────────────────────────────────
@@ -161,9 +161,9 @@ module.exports = [
     name: "pay", description: "Transfer coins to another user", category: CATEGORY,
     prefix: async (m, a, ctx) => {
       const target = m.mentions.users.first();
-      if (!target) return m.reply({ embeds: [errEmbed(`Usage: ${usage(ctx, "pay @user amount")}`)] });
+      if (!target) return m.reply({ embeds: [errEmbed(m.guild.id, `Usage: ${usage(ctx, "pay @user amount")}`)] });
       const amount = parseInt(a[1], 10);
-      if (!amount || amount < 1) return m.reply({ embeds: [errEmbed("Invalid amount.")] });
+      if (!amount || amount < 1) return m.reply({ embeds: [errEmbed(m.guild.id, "Invalid amount.")] });
       return m.reply({ embeds: [await cmdPay(m.guild, m.guild.id, m.author.id, m.author.tag, target.id, target.tag, amount)] });
     },
     slash: new SlashCommandBuilder().setName("pay").setDescription("Transfer coins to another user")
@@ -188,7 +188,7 @@ module.exports = [
     name: "gamble", description: "Gamble your coins for a chance to double them", category: CATEGORY,
     prefix: async (m, a, ctx) => {
       const amount = parseInt(a[0], 10);
-      if (!amount || amount < 1) return m.reply({ embeds: [errEmbed(`Usage: ${usage(ctx, "gamble amount")}`)] });
+      if (!amount || amount < 1) return m.reply({ embeds: [errEmbed(m.guild.id, `Usage: ${usage(ctx, "gamble amount")}`)] });
       return m.reply({ embeds: [await cmdGamble(m.guild.id, m.author.id, m.author.tag, amount)] });
     },
     slash: new SlashCommandBuilder().setName("gamble").setDescription("Gamble your coins for a chance to double them")
@@ -203,7 +203,7 @@ module.exports = [
     name: "rob", description: "Attempt to rob another user", category: CATEGORY,
     prefix: async (m, a, ctx) => {
       const target = m.mentions.users.first();
-      if (!target) return m.reply({ embeds: [errEmbed(`Usage: ${usage(ctx, "rob @user")}`)] });
+      if (!target) return m.reply({ embeds: [errEmbed(m.guild.id, `Usage: ${usage(ctx, "rob @user")}`)] });
       return m.reply({ embeds: [await cmdRob(m.guild.id, m.author.id, m.author.tag, target.id, target.tag)] });
     },
     slash: new SlashCommandBuilder().setName("rob").setDescription("Attempt to rob another user")

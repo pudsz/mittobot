@@ -54,6 +54,7 @@ const CODECARDS = [
   { label: "Claude", color: "#d97757" },
   { label: "Gemini", color: "#4285f4" },
   { label: "NVIDIA", color: "#76b900" },
+  { label: "Requesty", color: "#a855f7" },
 ];
 
 export default function LandingPage({ onGetStarted }) {

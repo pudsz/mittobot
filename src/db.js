@@ -200,6 +200,11 @@ function init() {
       channels TEXT DEFAULT '{}'
     );
 
+    CREATE TABLE IF NOT EXISTS theme_config (
+      guild_id TEXT PRIMARY KEY,
+      config   TEXT NOT NULL DEFAULT '{}'
+    );
+
     CREATE TABLE IF NOT EXISTS ai_memories (
       id         INTEGER PRIMARY KEY AUTOINCREMENT,
       guild_id   TEXT,
@@ -960,6 +965,20 @@ async function setDangerzoneConfig(guildId, cfg) {
   `).run(guildId, JSON.stringify(cfg.channels || {}));
 }
 
+// ── Theme ────────────────────────────────────────────────────────────────
+async function getAllThemeConfigs() {
+  return query("SELECT * FROM theme_config");
+}
+
+async function setThemeConfig(guildId, cfg) {
+  db.prepare(`
+    INSERT INTO theme_config (guild_id, config)
+    VALUES (?, ?)
+    ON CONFLICT(guild_id) DO UPDATE SET
+      config = excluded.config
+  `).run(guildId, JSON.stringify(cfg || {}));
+}
+
 // ── Femboyified Users ────────────────────────────────────────────────────
 async function getAllFemboyifiedUsers() {
   return query("SELECT * FROM femboyified_users");
@@ -1074,6 +1093,10 @@ module.exports = {
   // ── Dangerzone ───────────────────────────────────────────────────────────
   getAllDangerzoneConfigs,
   setDangerzoneConfig,
+
+  // ── Theme ─────────────────────────────────────────────────────────────────
+  getAllThemeConfigs,
+  setThemeConfig,
 
   // ── Femboyified Users ────────────────────────────────────────────────────
   getAllFemboyifiedUsers,
