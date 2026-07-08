@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import AutomodView from "@/pages/views/moderation/AutomodView";
+import AutomodV2View from "@/pages/views/moderation/AutomodV2View";
 import AntiRaidView from "@/pages/views/moderation/AntiRaidView";
 import DangerZoneView from "@/pages/views/moderation/DangerzoneView";
 import ModLogView from "@/pages/views/moderation/ModLogView";
@@ -57,6 +58,7 @@ export default function ModerationHub() {
       <Routes>
         <Route index element={<Navigate to="automod" replace />} />
         <Route path="automod" element={<AutomodView />} />
+        <Route path="automodv2" element={<AutomodV2View />} />
         <Route path="antiraid" element={<AntiRaidView />} />
         <Route path="dangerzone" element={<DangerZoneView />} />
         <Route path="cases" element={<CasesView />} />

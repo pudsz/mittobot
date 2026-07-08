@@ -58,6 +58,7 @@ export default function AppShell() {
       label: "Moderation",
       items: [
         { label: "Automod", path: `/g/${guildId}/moderation/automod`, icon: ShieldAlert },
+        { label: "Automod v2", path: `/g/${guildId}/moderation/automodv2`, icon: Sparkles },
         { label: "Anti-raid", path: `/g/${guildId}/moderation/antiraid`, icon: ShieldBan },
         { label: "Dangerzone", path: `/g/${guildId}/moderation/dangerzone`, icon: Flame },
         { label: "Cases", path: `/g/${guildId}/moderation/cases`, icon: FolderOpen },

@@ -1374,6 +1374,45 @@ function startApi(ctx) {
       }
       patch.heat = heat;
     }
+    // Extended-automod block (merged into the unified config). setConfig routes
+    // this to the extended store (automod_extended table), so it's persisted
+    // separately from the base row and partial patches don't wipe siblings.
+    if (body.extended && typeof body.extended === "object") {
+      const e = body.extended;
+      const ext = {};
+      if (Array.isArray(e.link_blacklist)) ext.link_blacklist = e.link_blacklist.filter(x => typeof x === "string").map(s => s.slice(0, 200)).slice(0, 100);
+      if (Array.isArray(e.link_whitelist)) ext.link_whitelist = e.link_whitelist.filter(x => typeof x === "string").map(s => s.slice(0, 200)).slice(0, 100);
+      if (typeof e.link_action === "string" && ["delete", "warn", "mute"].includes(e.link_action)) ext.link_action = e.link_action;
+      if (typeof e.repeated_text === "boolean") ext.repeated_text = e.repeated_text;
+      if (typeof e.repeated_text_count === "number") ext.repeated_text_count = Math.min(Math.max(e.repeated_text_count, 2), 20);
+      if (typeof e.repeated_text_action === "string" && ["delete", "warn", "mute"].includes(e.repeated_text_action)) ext.repeated_text_action = e.repeated_text_action;
+      if (typeof e.emoji_spam === "boolean") ext.emoji_spam = e.emoji_spam;
+      if (typeof e.emoji_max === "number") ext.emoji_max = Math.min(Math.max(e.emoji_max, 1), 100);
+      if (typeof e.emoji_action === "string" && ["delete", "warn", "mute"].includes(e.emoji_action)) ext.emoji_action = e.emoji_action;
+      if (typeof e.blocked_emojis_enabled === "boolean") ext.blocked_emojis_enabled = e.blocked_emojis_enabled;
+      if (Array.isArray(e.blocked_emojis)) ext.blocked_emojis = e.blocked_emojis.filter(x => typeof x === "string").slice(0, 100);
+      if (typeof e.blocked_emojis_action === "string" && ["delete", "warn", "mute"].includes(e.blocked_emojis_action)) ext.blocked_emojis_action = e.blocked_emojis_action;
+      if (typeof e.blocked_reaction_emojis_enabled === "boolean") ext.blocked_reaction_emojis_enabled = e.blocked_reaction_emojis_enabled;
+      if (Array.isArray(e.blocked_reaction_emojis)) ext.blocked_reaction_emojis = e.blocked_reaction_emojis.filter(x => typeof x === "string").slice(0, 100);
+      if (typeof e.blocked_reaction_action === "string" && ["delete", "warn", "mute", "kick", "ban"].includes(e.blocked_reaction_action)) ext.blocked_reaction_action = e.blocked_reaction_action;
+      if (typeof e.zalgo_enabled === "boolean") ext.zalgo_enabled = e.zalgo_enabled;
+      if (typeof e.zalgo_action === "string" && ["delete", "warn", "mute"].includes(e.zalgo_action)) ext.zalgo_action = e.zalgo_action;
+      // §3.1 new rule types
+      if (typeof e.regex_enabled === "boolean") ext.regex_enabled = e.regex_enabled;
+      if (Array.isArray(e.regex_patterns)) ext.regex_patterns = e.regex_patterns.filter(x => typeof x === "string" && x.length <= 200).slice(0, 10);
+      if (typeof e.regex_action === "string" && ["delete", "warn", "mute"].includes(e.regex_action)) ext.regex_action = e.regex_action;
+      if (typeof e.attachments_enabled === "boolean") ext.attachments_enabled = e.attachments_enabled;
+      if (Array.isArray(e.attachments_blocked_exts)) ext.attachments_blocked_exts = e.attachments_blocked_exts.filter(x => typeof x === "string").map(s => s.replace(/[^a-z0-9]/gi, "").slice(0, 10)).slice(0, 50);
+      if (typeof e.attachments_max_size_mb === "number") ext.attachments_max_size_mb = Math.min(Math.max(e.attachments_max_size_mb, 0), 100);
+      if (typeof e.attachments_action === "string" && ["delete", "warn", "mute"].includes(e.attachments_action)) ext.attachments_action = e.attachments_action;
+      if (typeof e.newlines_enabled === "boolean") ext.newlines_enabled = e.newlines_enabled;
+      if (typeof e.newlines_max === "number") ext.newlines_max = Math.min(Math.max(e.newlines_max, 1), 500);
+      if (typeof e.newlines_action === "string" && ["delete", "warn", "mute"].includes(e.newlines_action)) ext.newlines_action = e.newlines_action;
+      if (typeof e.mentions_roles_enabled === "boolean") ext.mentions_roles_enabled = e.mentions_roles_enabled;
+      if (typeof e.mentions_roles_max === "number") ext.mentions_roles_max = Math.min(Math.max(e.mentions_roles_max, 1), 50);
+      if (typeof e.mentions_roles_action === "string" && ["delete", "warn", "mute"].includes(e.mentions_roles_action)) ext.mentions_roles_action = e.mentions_roles_action;
+      patch.extended = ext;
+    }
     const next = automod.setConfig(guildId, patch);
     res.json({ ok: true, config: next });
   });

@@ -153,32 +153,49 @@ function setExtendedConfig(guildId, patch) {
 }
 
 // Deep-merge stored config over defaults so new rule fields appear automatically.
+// Returns a UNIFIED config: base automod fields + `extended` (the full
+// extended-automod config nested under one key) + `heat`. This lets the v2
+// dashboard view read/write everything through a single endpoint while legacy
+// consumers that only read the base fields keep working unchanged.
 function getConfig(guildId) {
   const base = guildDefaults();
   const saved = store[guildId];
-  if (!saved) return base;
+  if (!saved) return { ...base, extended: getExtendedConfig(guildId) };
   const merged = { ...base, ...saved, rules: { ...base.rules } };
   for (const key of Object.keys(base.rules)) {
     merged.rules[key] = { ...base.rules[key], ...(saved.rules?.[key] || {}) };
   }
+  merged.extended = getExtendedConfig(guildId);
   return merged;
 }
 
 function setConfig(guildId, patch) {
   const cur = getConfig(guildId);
-  const next = { ...cur, ...patch };
-  if (patch.rules) {
+  // `extended` is routed to the extended store (separate table) so legacy
+  // callers that don't send it are unaffected. Strip it before persisting base.
+  const { extended, ...basePatch } = patch;
+  const next = { ...cur, ...basePatch };
+  if (basePatch.rules) {
     next.rules = { ...cur.rules };
-    for (const [k, v] of Object.entries(patch.rules)) next.rules[k] = { ...cur.rules[k], ...v };
+    for (const [k, v] of Object.entries(basePatch.rules)) next.rules[k] = { ...cur.rules[k], ...v };
   }
   // Deep-merge heat so a partial patch (e.g. just toggling `enabled`) doesn't
   // wipe decayPerMinute / thresholds.
-  if (patch.heat && typeof patch.heat === "object") {
-    next.heat = { ...cur.heat, ...patch.heat };
-    if (Array.isArray(patch.heat.thresholds)) next.heat.thresholds = patch.heat.thresholds;
+  if (basePatch.heat && typeof basePatch.heat === "object") {
+    next.heat = { ...cur.heat, ...basePatch.heat };
+    if (Array.isArray(basePatch.heat.thresholds)) next.heat.thresholds = basePatch.heat.thresholds;
   }
-  store[guildId] = next;
-  db.setAutomodConfig(guildId, next).catch(e => console.error("persist automod:", e.message));
+  // Route the extended block to the extended store (persisted to
+  // automod_extended, not the base automod_config row).
+  let extendedResult = cur.extended;
+  if (extended && typeof extended === "object") {
+    extendedResult = setExtendedConfig(guildId, extended);
+  }
+  // Don't persist the nested `extended` into the base config row.
+  const { extended: _drop, ...toPersist } = next;
+  store[guildId] = toPersist;
+  db.setAutomodConfig(guildId, toPersist).catch(e => console.error("persist automod:", e.message));
+  next.extended = extendedResult;
   return next;
 }
 
