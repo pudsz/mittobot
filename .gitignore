@@ -13,6 +13,13 @@ dashboard/node_modules/
 dashboard/dist/
 dashboard/.env
 dashboard/.env.local
+
+# Dashboard v2 (TypeScript rewrite) build/deps/artifacts
+dashboard-v2/node_modules/
+dashboard-v2/dist/
+dashboard-v2/test-results/
+dashboard-v2/.env
+dashboard-v2/.env.local
 Freebuff2API/
 .aider*
 .agents/

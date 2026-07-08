@@ -30,7 +30,7 @@ export class ApiError extends Error {
   }
 }
 
-type Method = "GET" | "POST" | "PUT" | "DELETE";
+type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export async function api<T = any>(method: Method, path: string, body?: unknown): Promise<T> {
   const opts: RequestInit = { method, headers: {} as Record<string, string> };
@@ -56,6 +56,7 @@ export async function api<T = any>(method: Method, path: string, body?: unknown)
 export const get = <T = any>(path: string) => api<T>("GET", path);
 export const post = <T = any>(path: string, body?: unknown) => api<T>("POST", path, body);
 export const put = <T = any>(path: string, body?: unknown) => api<T>("PUT", path, body);
+export const patch = <T = any>(path: string, body?: unknown) => api<T>("PATCH", path, body);
 export const del = <T = any>(path: string) => api<T>("DELETE", path);
 
 /** Append ?guildId= to an endpoint when a guild is selected. */
