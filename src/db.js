@@ -205,6 +205,11 @@ function init() {
       config   TEXT NOT NULL DEFAULT '{}'
     );
 
+    CREATE TABLE IF NOT EXISTS antiraid_config (
+      guild_id TEXT PRIMARY KEY,
+      config   TEXT NOT NULL DEFAULT '{}'
+    );
+
     CREATE TABLE IF NOT EXISTS ai_memories (
       id         INTEGER PRIMARY KEY AUTOINCREMENT,
       guild_id   TEXT,
@@ -979,6 +984,20 @@ async function setThemeConfig(guildId, cfg) {
   `).run(guildId, JSON.stringify(cfg || {}));
 }
 
+// ── Anti-raid ──────────────────────────────────────────────────────────────
+async function getAllAntiraidConfigs() {
+  return query("SELECT * FROM antiraid_config");
+}
+
+async function setAntiraidConfig(guildId, cfg) {
+  db.prepare(`
+    INSERT INTO antiraid_config (guild_id, config)
+    VALUES (?, ?)
+    ON CONFLICT(guild_id) DO UPDATE SET
+      config = excluded.config
+  `).run(guildId, JSON.stringify(cfg || {}));
+}
+
 // ── Femboyified Users ────────────────────────────────────────────────────
 async function getAllFemboyifiedUsers() {
   return query("SELECT * FROM femboyified_users");
@@ -1097,6 +1116,10 @@ module.exports = {
   // ── Theme ─────────────────────────────────────────────────────────────────
   getAllThemeConfigs,
   setThemeConfig,
+
+  // ── Anti-raid ────────────────────────────────────────────────────────────
+  getAllAntiraidConfigs,
+  setAntiraidConfig,
 
   // ── Femboyified Users ────────────────────────────────────────────────────
   getAllFemboyifiedUsers,

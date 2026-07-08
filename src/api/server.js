@@ -1456,6 +1456,58 @@ function startApi(ctx) {
     res.json({ ok: true, config: themeMod.setTheme(guildId, patch) });
   });
 
+  // ─── Anti-raid ───────────────────────────────────────────────────────────
+  app.get("/api/antiraid", requireAuth, (req, res) => {
+    const antiraidMod = require("../antiraid");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (guildInfo.guildId && !userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner)) {
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    }
+    res.json({
+      guildId: guildInfo.guildId,
+      hasGuild: guildInfo.hasGuild,
+      guildName: guildInfo.guildName,
+      config: antiraidMod.getConfig(guildInfo.guildId),
+      locked: guildInfo.guildId ? antiraidMod.isLocked(guildInfo.guildId) : false,
+    });
+  });
+
+  app.post("/api/antiraid", requireAuth, (req, res) => {
+    const antiraidMod = require("../antiraid");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    const guildId = guildInfo.guildId;
+    if (!guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    if (!userCanAccessGuild(req.user.sub, guildId, req.user.isOwner)) return res.status(403).json({ error: "You don't have access to this guild" });
+    const b = req.body || {};
+    if (b.reset === true) {
+      return res.json({ ok: true, config: antiraidMod.resetConfig(guildId) });
+    }
+    if (b.unlock === true) {
+      antiraidMod.manualUnlock(guildId).catch(err => console.error("[api] antiraid unlock:", err.message));
+      return res.json({ ok: true, locked: false });
+    }
+    const patch = {};
+    if (typeof b.enabled === "boolean") patch.enabled = b.enabled;
+    if (b.joinRate && typeof b.joinRate === "object") {
+      patch.joinRate = {
+        maxJoins: Math.min(Math.max(parseInt(b.joinRate.maxJoins, 10) || 10, 2), 100),
+        windowSeconds: Math.min(Math.max(parseInt(b.joinRate.windowSeconds, 10) || 10, 3), 600),
+      };
+    }
+    if (b.accountAge && typeof b.accountAge === "object") {
+      patch.accountAge = {
+        minAccountAgeHours: Math.min(Math.max(parseInt(b.accountAge.minAccountAgeHours, 10) || 0, 0), 720),
+        gateAction: ["kick", "quarantine", "notify"].includes(b.accountAge.gateAction) ? b.accountAge.gateAction : "notify",
+      };
+    }
+    if (typeof b.raidAction === "string" && ["lockdown", "kick_new", "quarantine", "notify"].includes(b.raidAction)) patch.raidAction = b.raidAction;
+    if (typeof b.alertChannelId === "string") patch.alertChannelId = b.alertChannelId.trim() || null;
+    if (typeof b.quarantineRoleId === "string") patch.quarantineRoleId = b.quarantineRoleId.trim() || null;
+    if (typeof b.cooldownMinutes === "number") patch.cooldownMinutes = Math.min(Math.max(b.cooldownMinutes, 1), 1440);
+    if (Array.isArray(b.exemptRoles)) patch.exemptRoles = b.exemptRoles.filter(r => typeof r === "string").slice(0, 25);
+    res.json({ ok: true, config: antiraidMod.setConfig(guildId, patch) });
+  });
+
   // ─── Roles (autorole + reaction-role viewer) ─────────────────────────────
   app.get("/api/roles", requireAuth, (req, res) => {
     const guildInfo = getGuildInfo(reqGuildId(req));

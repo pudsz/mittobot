@@ -12,6 +12,7 @@ const automod = require("./src/automod");
 const greet = require("./src/greet");
 const roles = require("./src/roles");
 const dangerzone = require("./src/dangerzone");
+const antiraid = require("./src/antiraid");
 const theme = require("./src/theme");
 const ui = require("./src/ui");
 const { loadModule, MODULES_DIR, ensureModulesDir } = require("./src/commands/modules");
@@ -518,6 +519,9 @@ client.on("messageReactionRemove", (reaction, user) => {
 
 // Welcome, leave, and autorole events
 client.on("guildMemberAdd", member => {
+  // Anti-raid runs FIRST — before greet/autoroles — so a raiding wave or a
+  // too-new account is stopped before it gets roles or a welcome message.
+  antiraid.onMemberAdd(member).catch(err => console.error("antiraid add:", err.message));
   greet.onMemberAdd(member).catch(err => console.error("greet add:", err.message));
   roles.onMemberAdd(member).catch(err => console.error("autorole:", err.message));
   // Auto-exec: fire any rules triggered by the "join" event
@@ -642,6 +646,7 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
       greet.load(),
       roles.load(),
       dangerzone.load(),
+      antiraid.load(),
       theme.load(),
       aiMemory.load(),
       autoexec.load(),
@@ -653,6 +658,9 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
     // Initialize VoiceManager after client is ready
     voiceManager = new VoiceManager(client);
     console.log("[voice] VoiceManager initialized");
+    // Give antiraid the live client so it can lock/unlock channels and look
+    // up guilds from guildMemberAdd / the periodic unlock sweep.
+    antiraid.setClient(client);
     settings.hydrateAiKeysFromEnv();
     // Start probation cleanup timer
     try {
