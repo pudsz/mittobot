@@ -59,6 +59,7 @@ const DEFAULTS = {
   funEnabled:         true,
   infoEnabled:        true,
   fakeModEnabled:     true,
+  levelingEnabled:    false,
   maintenanceMode:    false,
   maintenanceMessage: "🔧 The bot is currently under maintenance. Please try again later.",
 };

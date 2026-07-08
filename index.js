@@ -22,6 +22,7 @@ const safe = require("./src/safe");
 const roletracker = require("./src/roletracker");
 const femboyify = require("./src/femboyify");
 const scheduler = require("./src/scheduler");
+const leveling = require("./src/leveling");
 
 const commandMap = new Map();
 const slashMap = new Map();
@@ -95,6 +96,7 @@ const COMMAND_FILES = [
   "./src/commands/websearch",
   "./src/commands/theme",
   "./src/commands/voice",
+  "./src/commands/leveling",
 ];
 for (const file of COMMAND_FILES) {
   const defs = require(file);
@@ -264,6 +266,13 @@ client.on("messageCreate", async message => {
   }
 
   await handleAfkChecks(message, ctx);
+
+  // Leveling XP — fire-and-forget so it never blocks the command pipeline.
+  // Awards XP for every non-bot message (including commands); the per-user
+  // cooldown + channel multipliers are enforced inside leveling.onMessage.
+  if (features.isEnabled("leveling")) {
+    leveling.onMessage(message).catch(err => console.error("[leveling] onMessage:", err.message));
+  }
 
   await handleAiMessage(message, ctx);
 
@@ -652,6 +661,7 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
       autoexec.load(),
       roletracker.load(),
       femboyify.load(),
+      leveling.load(),
     ]);
     // Load scheduled messages after settings are ready
     await scheduler.load(client).catch(err => console.error("[scheduler] Load error:", err.message));
@@ -661,6 +671,10 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
     // Give antiraid the live client so it can lock/unlock channels and look
     // up guilds from guildMemberAdd / the periodic unlock sweep.
     antiraid.setClient(client);
+    // Voice XP tick — awards voiceXpPerMinute to members in active voice
+    // channels (≥2 humans, not muted) every 60s. unref'd so it never blocks
+    // shutdown. No-op for guilds without voice XP configured.
+    setInterval(() => { leveling.voiceXpTick(client).catch(() => {}); }, 60_000).unref();
     settings.hydrateAiKeysFromEnv();
     // Start probation cleanup timer
     try {

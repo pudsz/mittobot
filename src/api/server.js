@@ -1611,6 +1611,99 @@ function startApi(ctx) {
     res.json({ ok: true, config: antiraidMod.setConfig(guildId, patch) });
   });
 
+  // ─── Leveling & XP (BOT_SPEC §4) ───────────────────────────────────────────
+  app.get("/api/leveling", requireAuth, (req, res) => {
+    const levelingMod = require("../leveling");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (guildInfo.guildId && !userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner)) {
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    }
+    res.json({
+      guildId: guildInfo.guildId,
+      hasGuild: guildInfo.hasGuild,
+      guildName: guildInfo.guildName,
+      channels: guildInfo.channels,
+      roles: guildInfo.roles,
+      config: levelingMod.getConfig(guildInfo.guildId),
+      leaderboard: guildInfo.guildId ? levelingMod.getLeaderboard(guildInfo.guildId, 100) : [],
+    });
+  });
+
+  app.post("/api/leveling", requireAuth, (req, res) => {
+    const levelingMod = require("../leveling");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    const guildId = guildInfo.guildId;
+    if (!guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    if (!userCanAccessGuild(req.user.sub, guildId, req.user.isOwner)) return res.status(403).json({ error: "You don't have access to this guild" });
+    const b = req.body || {};
+    if (b.reset === true) {
+      return res.json({ ok: true, config: levelingMod.resetConfig(guildId) });
+    }
+    const patch = {};
+    if (typeof b.enabled === "boolean") patch.enabled = b.enabled;
+    if (typeof b.minXp === "number") patch.minXp = Math.min(Math.max(b.minXp, 0), 1000);
+    if (typeof b.maxXp === "number") patch.maxXp = Math.min(Math.max(b.maxXp, 0), 1000);
+    if (typeof b.xpCooldownSeconds === "number") patch.xpCooldownSeconds = Math.min(Math.max(b.xpCooldownSeconds, 0), 3600);
+    if (typeof b.levelUpMessage === "string") patch.levelUpMessage = b.levelUpMessage.slice(0, 500);
+    if (typeof b.levelUpDestination === "string") patch.levelUpDestination = b.levelUpDestination.slice(0, 100);
+    if (b.channelMultipliers && typeof b.channelMultipliers === "object") {
+      const cm = {};
+      for (const [k, v] of Object.entries(b.channelMultipliers)) if (/^\d{17,20}$/.test(k) && typeof v === "number") cm[k] = Math.min(Math.max(v, 0), 100);
+      patch.channelMultipliers = cm;
+    }
+    if (b.roleMultipliers && typeof b.roleMultipliers === "object") {
+      const rm = {};
+      for (const [k, v] of Object.entries(b.roleMultipliers)) if (/^\d{17,20}$/.test(k) && typeof v === "number") rm[k] = Math.min(Math.max(v, 0), 100);
+      patch.roleMultipliers = rm;
+    }
+    if (Array.isArray(b.roleRewards)) {
+      patch.roleRewards = b.roleRewards
+        .filter(r => r && typeof r === "object" && typeof r.level === "number" && /^\d{17,20}$/.test(r.roleId || ""))
+        .map(r => ({ level: Math.min(Math.max(r.level, 0), 1000), roleId: r.roleId, removePrior: !!r.removePrior }))
+        .slice(0, 50);
+    }
+    if (typeof b.stackRewards === "boolean") patch.stackRewards = b.stackRewards;
+    if (Array.isArray(b.ignoredChannels)) patch.ignoredChannels = b.ignoredChannels.filter(x => /^\d{17,20}$/.test(x));
+    if (Array.isArray(b.ignoredRoles)) patch.ignoredRoles = b.ignoredRoles.filter(x => /^\d{17,20}$/.test(x));
+    if (typeof b.voiceXpPerMinute === "number") patch.voiceXpPerMinute = Math.min(Math.max(b.voiceXpPerMinute, 0), 100);
+    res.json({ ok: true, config: levelingMod.setConfig(guildId, patch) });
+  });
+
+  // Admin: adjust a user's XP/level. Owner-only (matches $givexp/$setlevel perms
+  // being admin — but the API is a privileged write surface so require owner).
+  app.post("/api/leveling/user", requireOwner, (req, res) => {
+    const levelingMod = require("../leveling");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    const guildId = guildInfo.guildId;
+    if (!guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    const b = req.body || {};
+    if (!/^\d{17,20}$/.test(b.userId || "")) return res.status(400).json({ error: "userId required" });
+    if (typeof b.action !== "string" || !["give", "setLevel"].includes(b.action)) return res.status(400).json({ error: "action must be give or setLevel" });
+    const amount = parseInt(b.amount, 10);
+    if (Number.isNaN(amount)) return res.status(400).json({ error: "amount required" });
+    let data;
+    if (b.action === "give") {
+      data = levelingMod.giveXp(guildId, b.userId, Math.max(-1_000_000, Math.min(1_000_000, amount)));
+    } else {
+      if (amount < 0 || amount > 1000) return res.status(400).json({ error: "level must be 0–1000" });
+      data = levelingMod.setLevel(guildId, b.userId, amount);
+    }
+    res.json({ ok: true, user: data });
+  });
+
+  app.post("/api/leveling/reset", requireOwner, async (req, res) => {
+    const levelingMod = require("../leveling");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    const guildId = guildInfo.guildId;
+    if (!guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    try {
+      await levelingMod.resetGuild(guildId);
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ─── Roles (autorole + reaction-role viewer) ─────────────────────────────
   app.get("/api/roles", requireAuth, (req, res) => {
     const guildInfo = getGuildInfo(reqGuildId(req));

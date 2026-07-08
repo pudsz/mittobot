@@ -231,6 +231,23 @@ function init() {
       PRIMARY KEY (guild_id, rule, day)
     );
 
+    CREATE TABLE IF NOT EXISTS leveling_users (
+      guild_id     TEXT,
+      user_id      TEXT,
+      xp           INTEGER DEFAULT 0,
+      level        INTEGER DEFAULT 0,
+      last_xp_at   INTEGER DEFAULT 0,
+      messages     INTEGER DEFAULT 0,
+      voice_minutes INTEGER DEFAULT 0,
+      PRIMARY KEY (guild_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS leveling_xp ON leveling_users (guild_id, xp DESC);
+
+    CREATE TABLE IF NOT EXISTS leveling_config (
+      guild_id TEXT PRIMARY KEY,
+      config   TEXT NOT NULL DEFAULT '{}'
+    );
+
     CREATE TABLE IF NOT EXISTS ai_memories (
       id         INTEGER PRIMARY KEY AUTOINCREMENT,
       guild_id   TEXT,
@@ -1104,6 +1121,74 @@ async function clearAutomodStats(guildId) {
   db.prepare("DELETE FROM automod_stats WHERE guild_id = ?").run(guildId);
 }
 
+// ── Leveling (BOT_SPEC §4) ────────────────────────────────────────────────
+async function getAllLevelingConfigs() {
+  return query("SELECT * FROM leveling_config");
+}
+
+async function setLevelingConfig(guildId, cfg) {
+  db.prepare(`
+    INSERT INTO leveling_config (guild_id, config)
+    VALUES (?, ?)
+    ON CONFLICT(guild_id) DO UPDATE SET
+      config = excluded.config
+  `).run(guildId, JSON.stringify(cfg || {}));
+}
+
+function getLevelingUser(guildId, userId) {
+  return get("SELECT * FROM leveling_users WHERE guild_id = ? AND user_id = ?", [guildId, userId]);
+}
+
+// Atomic XP + message increment in one statement. Returns the new row.
+function addLevelingXp(guildId, userId, xpGain, level, now) {
+  db.prepare(`
+    INSERT INTO leveling_users (guild_id, user_id, xp, level, last_xp_at, messages, voice_minutes)
+    VALUES (?, ?, ?, ?, ?, 1, 0)
+    ON CONFLICT(guild_id, user_id) DO UPDATE SET
+      xp = xp + ?,
+      level = ?,
+      last_xp_at = ?,
+      messages = messages + 1
+  `).run(guildId, userId, xpGain, level, now, xpGain, level, now);
+  return getLevelingUser(guildId, userId);
+}
+
+// Set absolute xp + level (for $setlevel / $givexp). Recomputes messages=0
+// is wrong — keep messages. Use for admin overrides.
+function setLevelingUser(guildId, userId, xp, level) {
+  db.prepare(`
+    INSERT INTO leveling_users (guild_id, user_id, xp, level, last_xp_at, messages, voice_minutes)
+    VALUES (?, ?, ?, ?, 0, 0, 0)
+    ON CONFLICT(guild_id, user_id) DO UPDATE SET
+      xp = ?,
+      level = ?
+  `).run(guildId, userId, xp, level, xp, level);
+  return getLevelingUser(guildId, userId);
+}
+
+function addLevelingVoiceMinutes(guildId, userId, minutes) {
+  db.prepare(`
+    INSERT INTO leveling_users (guild_id, user_id, xp, level, last_xp_at, messages, voice_minutes)
+    VALUES (?, ?, 0, 0, 0, 0, ?)
+    ON CONFLICT(guild_id, user_id) DO UPDATE SET
+      voice_minutes = voice_minutes + ?
+  `).run(guildId, userId, minutes, minutes);
+}
+
+async function getLevelingLeaderboard(guildId, limit = 100) {
+  return query("SELECT user_id, xp, level, messages, voice_minutes FROM leveling_users WHERE guild_id = ? ORDER BY xp DESC LIMIT ?", [guildId, Math.min(Math.max(limit, 1), 1000)]);
+}
+
+// Rank = 1 + count of users with more xp. Returns 0 if the user has no row.
+function getLevelingRank(guildId, userId) {
+  const row = get("SELECT (SELECT COUNT(*) + 1 FROM leveling_users u2 WHERE u2.guild_id = u1.guild_id AND u2.xp > u1.xp) AS rank FROM leveling_users u1 WHERE u1.guild_id = ? AND u1.user_id = ?", [guildId, userId]);
+  return row ? row.rank : 0;
+}
+
+async function resetLevelingGuild(guildId) {
+  db.prepare("DELETE FROM leveling_users WHERE guild_id = ?").run(guildId);
+}
+
 // ── Femboyified Users ────────────────────────────────────────────────────
 async function getAllFemboyifiedUsers() {
   return query("SELECT * FROM femboyified_users");
@@ -1231,6 +1316,17 @@ module.exports = {
   incrementAutomodStat,
   getAutomodStats,
   clearAutomodStats,
+
+  // ── Leveling (BOT_SPEC §4) ────────────────────────────────────────────────
+  getAllLevelingConfigs,
+  setLevelingConfig,
+  getLevelingUser,
+  addLevelingXp,
+  setLevelingUser,
+  addLevelingVoiceMinutes,
+  getLevelingLeaderboard,
+  getLevelingRank,
+  resetLevelingGuild,
 
   // ── Femboyified Users ────────────────────────────────────────────────────
   getAllFemboyifiedUsers,

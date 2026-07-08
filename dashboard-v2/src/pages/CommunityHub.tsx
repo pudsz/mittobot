@@ -5,9 +5,10 @@ import MembersView from "@/pages/views/community/MembersView";
 import ChannelsView from "@/pages/views/community/ChannelsView";
 import ScheduleView from "@/pages/views/community/ScheduleView";
 import BackupsView from "@/pages/views/community/BackupsView";
+import LevelsView from "@/pages/views/community/LevelsView";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-  BarChart2, Ticket, Gift,
+  Ticket, Gift,
   Star, MessageCircle, Calendar, Link2, Share2, Construction
 } from "lucide-react";
 
@@ -49,10 +50,6 @@ function PlaceholderView({ icon: Icon, title, description, features }: {
   );
 }
 
-function LevelsView() {
-  return <PlaceholderView icon={BarChart2} title="Leveling System" description="Keep chatters active with a levels system."
-    features={["XP rate knobs and channel multiplier configurations", "Reward roles ladder creator", "Leaderboard list view", "XP adjustments for individual users"]} />;
-}
 function TicketsView() {
   return <PlaceholderView icon={Ticket} title="Tickets Support" description="Build and handle customer support tickets."
     features={["Custom ticket panel designer", "Staff support roles setting", "Active ticket lists", "HTML-formatted transcript viewer for archives"]} />;
