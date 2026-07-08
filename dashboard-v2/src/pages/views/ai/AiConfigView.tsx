@@ -123,7 +123,7 @@ export default function AiConfigView() {
             {provider === "custom" && (
               <>
                 <div><label className="text-xs text-muted-foreground">Base URL</label>
-                  <Input className="mt-1 font-mono text-xs" value={current("customBaseUrl")} onChange={e => set("customBaseUrl", e.target.value)} placeholder="https://api.example.com/v1" />
+                  <Input className="mt-1 font-mono text-xs" value={current("customBaseUrl")} onChange={e => set("customBaseUrl", e.target.value)} placeholder="https://api.example.com/" />
                 </div>
                 <div><label className="text-xs text-muted-foreground">API Type</label>
                   <select className="w-full mt-1 bg-background-alt/50 border border-border/40 rounded-lg p-2 text-xs font-mono" value={current("customApiType")} onChange={e => set("customApiType", e.target.value)}>
@@ -171,8 +171,8 @@ export default function AiConfigView() {
               ["aiMemoryEnabled", "Memory", "Persist user/server memories"],
               ["aiThinkingEnabled", "Thinking", "It does what it says"],
               ["aiBrowserEnabled", "Web Browsing", "Web search"],
-              ["aiChattyMode", "Chatty Mode", "auto respond to messages without a trigger"],
-              ["aiDmEnabled", "DM Support", "Respond to direct messages"],
+              ["aiChattyMode", "Skip mentions", "auto respond to messages without a trigger"],
+              ["aiDmEnabled", "Direct messages", "Respond to direct messages"],
             ].map(([key, label, desc]) => (
               <div key={key} className="flex items-start gap-3 p-3 rounded-lg bg-background-alt/30 border border-border/20">
                 <Switch checked={current(key) === "true"} onCheckedChange={v => set(key, v)} />
@@ -205,7 +205,7 @@ export default function AiConfigView() {
             <div><label className="text-xs text-muted-foreground">Keyword Trigger</label>
               <Input className="mt-1 font-mono text-xs" value={current("aiKeyword")} onChange={e => set("aiKeyword", e.target.value)} placeholder="mitto" />
             </div>
-            <div><label className="text-xs text-muted-foreground">Chatty Cooldown (seconds)</label>
+            <div><label className="text-xs text-muted-foreground">Skip mentions Cooldown (seconds)</label>
               <Input className="mt-1 font-mono text-xs" value={current("aiChattyCooldown")} onChange={e => set("aiChattyCooldown", e.target.value)} placeholder="60" />
             </div>
             <div><label className="text-xs text-muted-foreground">Personality</label>

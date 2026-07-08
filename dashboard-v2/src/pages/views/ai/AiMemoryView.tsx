@@ -53,7 +53,7 @@ export default function AiMemoryView() {
         <Button size="sm" variant="outline" onClick={async () => {
           if (!await confirm({
             title: "Wipe all AI memories?",
-            description: "This permanently deletes every server-wide and per-user memory for this guild. The bot will forget everything it has learned. Cannot be undone.",
+            description: "This permanently deletes every server-wide and per-user memory for this guild. Cannot be undone.",
             confirmLabel: "Wipe all memories",
           })) return;
           clearMutation.mutate();
