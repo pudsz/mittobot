@@ -31,3 +31,12 @@ DEEPSEEK.md
 dashboard-overhaul-spec.md
 CLAUDE.md
 dashboard-dist.tar.gz
+
+# Repo hygiene — root clutter & local-only specs (never commit)
+acli
+*.zip
+Screenshot_*.png
+OVERHAUL_PLAN.md
+ai-improvement-spec.md
+ai-memory-analysis-spec.md
+ai-system-hardening-spec.md
