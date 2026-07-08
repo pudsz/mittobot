@@ -210,6 +210,14 @@ function init() {
       config   TEXT NOT NULL DEFAULT '{}'
     );
 
+    CREATE TABLE IF NOT EXISTS automod_stats (
+      guild_id TEXT,
+      rule     TEXT,
+      day      TEXT,
+      count    INTEGER DEFAULT 0,
+      PRIMARY KEY (guild_id, rule, day)
+    );
+
     CREATE TABLE IF NOT EXISTS ai_memories (
       id         INTEGER PRIMARY KEY AUTOINCREMENT,
       guild_id   TEXT,
@@ -998,6 +1006,38 @@ async function setAntiraidConfig(guildId, cfg) {
   `).run(guildId, JSON.stringify(cfg || {}));
 }
 
+// ── Automod trigger stats (BOT_SPEC §3.4) ──────────────────────────────────
+// Per-(guild, rule, day) counter. `day` is YYYY-MM-DD UTC. Upserted on each
+// violation so the hot path is a single INSERT...ON CONFLICT (sync, fast).
+function dayStr(d = new Date()) {
+  return d.toISOString().slice(0, 10);
+}
+
+function incrementAutomodStat(guildId, rule) {
+  if (!guildId || !rule) return;
+  db.prepare(`
+    INSERT INTO automod_stats (guild_id, rule, day, count)
+    VALUES (?, ?, ?, 1)
+    ON CONFLICT(guild_id, rule, day) DO UPDATE SET
+      count = count + 1
+  `).run(guildId, rule, dayStr());
+}
+
+async function getAutomodStats(guildId, days = 30) {
+  if (!guildId) return [];
+  const since = dayStr(new Date(Date.now() - days * 86_400_000));
+  return query(`
+    SELECT rule, day, count FROM automod_stats
+    WHERE guild_id = ? AND day >= ?
+    ORDER BY day DESC, count DESC
+  `, [guildId, since]);
+}
+
+async function clearAutomodStats(guildId) {
+  if (!guildId) return;
+  db.prepare("DELETE FROM automod_stats WHERE guild_id = ?").run(guildId);
+}
+
 // ── Femboyified Users ────────────────────────────────────────────────────
 async function getAllFemboyifiedUsers() {
   return query("SELECT * FROM femboyified_users");
@@ -1120,6 +1160,11 @@ module.exports = {
   // ── Anti-raid ────────────────────────────────────────────────────────────
   getAllAntiraidConfigs,
   setAntiraidConfig,
+
+  // ── Automod stats ─────────────────────────────────────────────────────────
+  incrementAutomodStat,
+  getAutomodStats,
+  clearAutomodStats,
 
   // ── Femboyified Users ────────────────────────────────────────────────────
   getAllFemboyifiedUsers,

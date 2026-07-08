@@ -535,6 +535,8 @@ async function checkMessage(message) {
   const fire = async (rule, ruleName, heatValue = 10) => {
     const action = await enforce(message, rule, ruleName);
     await logAction(message.guild, cfg, message, ruleName, action);
+    // Best-effort trigger counter (BOT_SPEC §3.4). Never blocks the hot path.
+    try { db.incrementAutomodStat(message.guild.id, ruleName).catch(() => {}); } catch {}
     if (heatEnabled && heatValue > 0) {
       try {
         const h = addHeat(message.guild.id, message.author.id, heatValue, now, decayPerMinute);
@@ -591,6 +593,36 @@ async function checkMessage(message) {
   return false;
 }
 
+// ─── Test mode (BOT_SPEC §3.4) ──────────────────────────────────────────────
+// Dry-run every content rule against `content` and return which would fire,
+// WITHOUT enforcing (no delete, no mute, no warn) and WITHOUT heat/stats.
+// Spam is skipped (it's stateful and can't be evaluated from a single string).
+// `mentionCount` lets the caller simulate mass-mention; defaults to 0.
+function testRules(guildId, content, { mentionCount = 0 } = {}) {
+  const cfg = getConfig(guildId);
+  const R = cfg.rules || {};
+  const exCfg = getExtendedConfig(guildId);
+  const text = String(content || "");
+  const hits = [];
+
+  const check = (name, wouldFire, action) => {
+    if (wouldFire) hits.push({ rule: name, action: action || "delete" });
+  };
+
+  if (R.invites?.enabled) check("Invite link", hasInvite(text), R.invites.action);
+  if (R.bannedWords?.enabled) check("Banned word", hasBannedWord(text, R.bannedWords.words || []), R.bannedWords.action);
+  if (R.massMention?.enabled) check("Mass mention", mentionCount > (R.massMention.maxMentions || 5), R.massMention.action);
+  if (R.caps?.enabled) check("Excessive caps", text.length >= (R.caps.minLength || 10) && capsRatio(text) >= (R.caps.percent || 70), R.caps.action);
+
+  if (exCfg.link_blacklist?.length) check("Blacklisted link", hasBlacklistedLink(text, exCfg.link_blacklist, exCfg.link_whitelist), exCfg.link_action);
+  if (exCfg.repeated_text) check("Repeated text", hasRepeatedText(text, exCfg.repeated_text_count || 3), exCfg.repeated_text_action);
+  if (exCfg.emoji_spam) check("Emoji spam", emojiCount(text) > (exCfg.emoji_max || 5), exCfg.emoji_action);
+  if (exCfg.blocked_emojis_enabled) check("Blocked emoji", hasBlockedMessageEmoji(text, exCfg.blocked_emojis), exCfg.blocked_emojis_action);
+  if (exCfg.zalgo_enabled) check("Zalgo/unicode abuse", hasZalgo(text), exCfg.zalgo_action);
+
+  return { hits, enabled: cfg.enabled, spamNote: R.spam?.enabled ? "Spam is stateful and not tested in dry-run mode." : null };
+}
+
 async function checkReaction(reaction, user) {
   if (user?.bot || !reaction.message?.guild) return false;
   const guild = reaction.message.guild;
@@ -625,8 +657,9 @@ module.exports = {
   load, save, getConfig, setConfig, checkMessage, checkReaction,
   getExtendedConfig, setExtendedConfig,
   startSpamCleanup, stopSpamCleanup,
+  testRules,
   RULE_DEFAULTS, AUTOMOD_FILE,
   // Heat system (BOT_SPEC §3.2)
   getHeat, addHeat, thresholdHit, enforceHeat, stopHeatCleanup,
-  _test: { hasBlockedMessageEmoji, hasBlockedReactionEmoji, normalizeEmojiToken, getHeat, addHeat, thresholdHit },
+  _test: { hasBlockedMessageEmoji, hasBlockedReactionEmoji, normalizeEmojiToken, getHeat, addHeat, thresholdHit, testRules },
 };

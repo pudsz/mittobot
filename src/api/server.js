@@ -1378,6 +1378,52 @@ function startApi(ctx) {
     res.json({ ok: true, config: next });
   });
 
+  // ─── Automod test mode + trigger stats (BOT_SPEC §3.4) ─────────────────────
+  // Dry-run all rules against a candidate message string. Returns which would
+  // fire + their actions WITHOUT enforcing, deleting, heat, or stats.
+  app.post("/api/automod/test", requireAuth, (req, res) => {
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    const guildId = guildInfo.guildId;
+    if (!guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    if (!userCanAccessGuild(req.user.sub, guildId, req.user.isOwner)) return res.status(403).json({ error: "You don't have access to this guild" });
+    const b = req.body || {};
+    const content = typeof b.content === "string" ? b.content.slice(0, 4000) : "";
+    if (!content.trim()) return res.status(400).json({ error: "content is required" });
+    const mentionCount = Math.min(Math.max(parseInt(b.mentionCount, 10) || 0, 0), 100);
+    try {
+      res.json(automod.testRules(guildId, content, { mentionCount }));
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/automod/stats", requireAuth, async (req, res) => {
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    const guildId = guildInfo.guildId;
+    if (!guildId) return res.json({ stats: [] });
+    if (!userCanAccessGuild(req.user.sub, guildId, req.user.isOwner)) return res.status(403).json({ error: "You don't have access to this guild" });
+    const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 365);
+    try {
+      const db = require("../db");
+      res.json({ stats: await db.getAutomodStats(guildId, days), days });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/automod/stats", requireOwner, async (req, res) => {
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    const guildId = guildInfo.guildId;
+    if (!guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    try {
+      const db = require("../db");
+      await db.clearAutomodStats(guildId);
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ─── Welcome / leave / logs ──────────────────────────────────────────────
   app.get("/api/greet", requireAuth, (req, res) => {
     const guildInfo = getGuildInfo(reqGuildId(req));

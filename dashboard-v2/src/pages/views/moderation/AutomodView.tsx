@@ -1,15 +1,17 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { get, post } from "@/lib/api";
+import { get, post, del } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
-import { ShieldAlert, Plus, Trash2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { ShieldAlert, Plus, Trash2, FlaskConical, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
 import { useGuild } from "@/hooks/useGuild";
 import { guildPath } from "@/lib/api";
 import { SaveBar } from "@/components/app/SaveBar";
+import { useConfirm } from "@/components/app/ConfirmProvider";
 
 interface HeatThreshold { heat: number; action: "warn" | "mute" | "kick" | "ban"; duration?: string }
 interface HeatConfig { enabled: boolean; decayPerMinute: number; thresholds: HeatThreshold[] }
@@ -27,11 +29,25 @@ const HEAT_ACTIONS: HeatThreshold["action"][] = ["warn", "mute", "kick", "ban"];
 export default function AutomodView() {
   const { guildId } = useGuild();
   const queryClient = useQueryClient();
+  const confirm = useConfirm();
 
   const { data, isLoading } = useQuery<AutomodConfig>({
     queryKey: ["automod", guildId],
     queryFn: () => get(guildPath("/api/automod", guildId)),
     enabled: !!guildId,
+  });
+
+  // Trigger stats (BOT_SPEC §3.4)
+  const { data: statsData, refetch: refetchStats } = useQuery<{ stats: { rule: string; day: string; count: number }[]; days: number }>({
+    queryKey: ["automod-stats", guildId],
+    queryFn: () => get(guildPath("/api/automod/stats", guildId) + "&days=30"),
+    enabled: !!guildId,
+  });
+
+  const clearStatsMutation = useMutation({
+    mutationFn: () => del(guildPath("/api/automod/stats", guildId)),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["automod-stats", guildId] }); toast.success("Stats cleared"); },
+    onError: (e: any) => toast.error(e.message || "Clear failed"),
   });
 
   const saveMutation = useMutation({
@@ -54,6 +70,16 @@ export default function AutomodView() {
   const [heatEnabled, setHeatEnabled] = useState(false);
   const [heatDecay, setHeatDecay] = useState(5);
   const [heatThresholds, setHeatThresholds] = useState<HeatThreshold[]>([]);
+  // Test mode state (BOT_SPEC §3.4)
+  const [testInput, setTestInput] = useState("");
+  const [testMentions, setTestMentions] = useState(0);
+  const [testResult, setTestResult] = useState<{ hits: { rule: string; action: string }[]; enabled: boolean; spamNote: string | null } | null>(null);
+
+  const testMutation = useMutation({
+    mutationFn: (body: { content: string; mentionCount: number }) => post(guildPath("/api/automod/test", guildId), body),
+    onSuccess: (r: any) => setTestResult(r),
+    onError: (e: any) => { setTestResult(null); toast.error(e.message || "Test failed"); },
+  });
 
   // Sync state when data is loaded/updated
   useEffect(() => {
@@ -232,6 +258,92 @@ export default function AutomodView() {
             ))}
             <p className="text-[10px] text-muted-foreground/70 pt-1">Heat is off by default. Durations (for mute) use the standard format: <code className="font-mono">30s</code>, <code className="font-mono">5m</code>, <code className="font-mono">2h</code>, <code className="font-mono">1d</code> (max 28d).</p>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Test mode (BOT_SPEC §3.4) */}
+      <Card className="border-border/40 bg-card/40">
+        <CardHeader>
+          <CardTitle className="text-sm font-semibold flex items-center gap-2"><FlaskConical className="size-4 text-primary" /> Test mode</CardTitle>
+          <CardDescription className="text-xs">Dry-run every rule against a candidate message. Nothing is enforced, deleted, or counted.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-col md:flex-row gap-2">
+            <Input className="flex-1 text-xs font-mono" placeholder="Paste a message to test against your rules…" value={testInput}
+              onKeyDown={e => { if (e.key === "Enter" && testInput.trim() && guildId) testMutation.mutate({ content: testInput, mentionCount: testMentions }); }}
+              onChange={e => setTestInput(e.target.value)} />
+            <div className="flex gap-2">
+              <Input type="number" min={0} max={100} className="w-24 text-xs font-mono" placeholder="mentions"
+                value={testMentions} onChange={e => setTestMentions(parseInt(e.target.value) || 0)} />
+              <Button size="sm" disabled={!testInput.trim() || testMutation.isPending}
+                onClick={() => testMutation.mutate({ content: testInput, mentionCount: testMentions })}>
+                {testMutation.isPending ? "Testing…" : "Test"}
+              </Button>
+            </div>
+          </div>
+
+          {testResult && (
+            <div className="rounded-lg border border-border/40 bg-background-alt/30 p-3 space-y-2">
+              {!testResult.enabled && <p className="text-[10px] text-warning">⚠️ Automod is disabled in this guild — no rules would fire regardless.</p>}
+              {testResult.hits.length === 0 ? (
+                <p className="text-xs text-muted-foreground">✅ No rules would fire on this message.</p>
+              ) : (
+                <>
+                  <p className="text-xs font-semibold">{testResult.hits.length} rule(s) would fire:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {testResult.hits.map((h, i) => (
+                      <Badge key={i} variant="outline" className="text-[10px]">{h.rule} → {h.action}</Badge>
+                    ))}
+                  </div>
+                </>
+              )}
+              {testResult.spamNote && <p className="text-[10px] text-muted-foreground/60">{testResult.spamNote}</p>}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Trigger stats (BOT_SPEC §3.4) */}
+      <Card className="border-border/40 bg-card/40">
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle className="text-sm font-semibold flex items-center gap-2"><BarChart3 className="size-4 text-primary" /> Trigger stats (last 30 days)</CardTitle>
+            <CardDescription className="text-xs">Per-rule violation counts, updated live as the bot enforces.</CardDescription>
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => refetchStats()}>Refresh</Button>
+            <Button size="sm" variant="ghost" className="text-destructive" disabled={clearStatsMutation.isPending || !statsData?.stats?.length}
+              onClick={async () => {
+                if (!await confirm({ title: "Clear all automod stats?", description: "This permanently deletes the trigger counters for this guild. Cannot be undone.", confirmLabel: "Clear stats" })) return;
+                clearStatsMutation.mutate();
+              }}>Clear</Button>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          {!statsData?.stats?.length ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">No automod triggers recorded yet.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border/30">
+                    <th className="text-left py-2 px-4 text-muted-foreground font-medium">Rule</th>
+                    <th className="text-left py-2 px-4 text-muted-foreground font-medium">Day</th>
+                    <th className="text-right py-2 px-4 text-muted-foreground font-medium">Triggers</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {statsData.stats.slice(0, 50).map((s, i) => (
+                    <tr key={i} className="border-b border-border/20">
+                      <td className="py-1.5 px-4 font-mono">{s.rule}</td>
+                      <td className="py-1.5 px-4 text-muted-foreground font-mono">{s.day}</td>
+                      <td className="py-1.5 px-4 text-right font-mono font-semibold">{s.count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
