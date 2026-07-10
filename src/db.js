@@ -202,9 +202,14 @@ function init() {
     );
 
     CREATE TABLE IF NOT EXISTS custom_roles (
-      guild_id TEXT,
-      user_id  TEXT,
-      role_id  TEXT,
+      guild_id   TEXT,
+      user_id    TEXT,
+      role_id    TEXT,
+      style      TEXT,
+      color      TEXT,
+      name       TEXT,
+      has_icon   INTEGER DEFAULT 0,
+      created_at INTEGER DEFAULT 0,
       PRIMARY KEY (guild_id, user_id)
     );
 
@@ -339,12 +344,18 @@ function init() {
     CREATE INDEX IF NOT EXISTS backup_guild ON server_backups (guild_id);
 
     CREATE TABLE IF NOT EXISTS economy_users (
-      guild_id   TEXT NOT NULL,
-      user_id    TEXT NOT NULL,
-      balance    INTEGER DEFAULT 0,
-      bank       INTEGER DEFAULT 0,
-      last_daily BIGINT DEFAULT 0,
-      last_work  BIGINT DEFAULT 0,
+      guild_id       TEXT NOT NULL,
+      user_id        TEXT NOT NULL,
+      balance        INTEGER DEFAULT 0,
+      bank           INTEGER DEFAULT 0,
+      last_daily     BIGINT DEFAULT 0,
+      last_work      BIGINT DEFAULT 0,
+      games_played   INTEGER DEFAULT 0,
+      games_won      INTEGER DEFAULT 0,
+      games_lost     INTEGER DEFAULT 0,
+      total_wagered  INTEGER DEFAULT 0,
+      total_won      INTEGER DEFAULT 0,
+      biggest_win    INTEGER DEFAULT 0,
       PRIMARY KEY (guild_id, user_id)
     );
 
@@ -357,7 +368,29 @@ function init() {
       work_cooldown   BIGINT DEFAULT 3600000,
       interest_rate   REAL DEFAULT 0.0,
       tax_rate        REAL DEFAULT 0.0,
-      gamble_odds     REAL DEFAULT 0.45
+      gamble_odds     REAL DEFAULT 0.45,
+      -- New game configs
+      blackjack_min_bet     INTEGER DEFAULT 10,
+      blackjack_max_bet     INTEGER DEFAULT 10000,
+      blackjack_payout      REAL DEFAULT 1.5,
+      slots_min_bet         INTEGER DEFAULT 5,
+      slots_max_bet         INTEGER DEFAULT 5000,
+      slots_win_odds        REAL DEFAULT 0.30,
+      slots_jackpot_multiplier INTEGER DEFAULT 50,
+      coinflip_min_bet      INTEGER DEFAULT 1,
+      coinflip_max_bet      INTEGER DEFAULT 10000,
+      highlow_min_bet       INTEGER DEFAULT 10,
+      highlow_max_bet       INTEGER DEFAULT 10000,
+      highlow_dice_sides    INTEGER DEFAULT 6,
+      -- Skill games
+      fish_min_bet          INTEGER DEFAULT 10,
+      fish_max_bet          INTEGER DEFAULT 5000,
+      mine_min_bet          INTEGER DEFAULT 10,
+      mine_max_bet          INTEGER DEFAULT 5000,
+      trivia_streak_bonus   REAL DEFAULT 0.1,
+      wordle_enabled        INTEGER DEFAULT 1,
+      wordle_streak_bonus   REAL DEFAULT 0.2,
+      typerace_min_players  INTEGER DEFAULT 2
     );
 
     CREATE TABLE IF NOT EXISTS economy_shop (
@@ -467,6 +500,47 @@ function init() {
   try { db.exec("ALTER TABLE automod_extended ADD COLUMN mentions_roles_enabled INTEGER DEFAULT 0"); } catch {}
   try { db.exec("ALTER TABLE automod_extended ADD COLUMN mentions_roles_max INTEGER DEFAULT 3"); } catch {}
   try { db.exec("ALTER TABLE automod_extended ADD COLUMN mentions_roles_action TEXT DEFAULT 'delete'"); } catch {}
+  // Economy user stats columns
+  try { db.exec("ALTER TABLE economy_users ADD COLUMN games_played INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE economy_users ADD COLUMN games_won INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE economy_users ADD COLUMN games_lost INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE economy_users ADD COLUMN total_wagered INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE economy_users ADD COLUMN total_won INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE economy_users ADD COLUMN biggest_win INTEGER DEFAULT 0"); } catch {}
+  // Economy config new game columns
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN blackjack_min_bet INTEGER DEFAULT 10"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN blackjack_max_bet INTEGER DEFAULT 10000"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN blackjack_payout REAL DEFAULT 1.5"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN slots_min_bet INTEGER DEFAULT 5"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN slots_max_bet INTEGER DEFAULT 5000"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN slots_win_odds REAL DEFAULT 0.30"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN slots_jackpot_multiplier INTEGER DEFAULT 50"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN coinflip_min_bet INTEGER DEFAULT 1"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN coinflip_max_bet INTEGER DEFAULT 10000"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN highlow_min_bet INTEGER DEFAULT 10"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN highlow_max_bet INTEGER DEFAULT 10000"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN highlow_dice_sides INTEGER DEFAULT 6"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN fish_min_bet INTEGER DEFAULT 10"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN fish_max_bet INTEGER DEFAULT 5000"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN mine_min_bet INTEGER DEFAULT 10"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN mine_max_bet INTEGER DEFAULT 5000"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN trivia_streak_bonus REAL DEFAULT 0.1"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN wordle_enabled INTEGER DEFAULT 1"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN wordle_streak_bonus REAL DEFAULT 0.2"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN typerace_min_players INTEGER DEFAULT 2"); } catch {}
+  // Economy user stats columns for new games
+  try { db.exec("ALTER TABLE economy_users ADD COLUMN wordle_streak INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE economy_users ADD COLUMN typerace_best_wpm INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE economy_users ADD COLUMN fish_caught INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE economy_users ADD COLUMN mine_depth INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE economy_users ADD COLUMN trivia_streak INTEGER DEFAULT 0"); } catch {}
+  // Custom roles — persist the full role object (not just role_id) so style,
+  // color, name, and icon survive a restart. Pre-existing DBs only had role_id.
+  try { db.exec("ALTER TABLE custom_roles ADD COLUMN style TEXT"); } catch {}
+  try { db.exec("ALTER TABLE custom_roles ADD COLUMN color TEXT"); } catch {}
+  try { db.exec("ALTER TABLE custom_roles ADD COLUMN name TEXT"); } catch {}
+  try { db.exec("ALTER TABLE custom_roles ADD COLUMN has_icon INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE custom_roles ADD COLUMN created_at INTEGER DEFAULT 0"); } catch {}
   // (typo column retained for back-compat; safe to ignore)
   // Normalize legacy rows: guild_id='dm' sentinel rows become proper private DMs (guild_id=NULL).
   try { db.exec("UPDATE ai_conversations SET scope='private', guild_id=NULL, channel_id=NULL WHERE guild_id='dm'"); } catch {}
@@ -1010,12 +1084,20 @@ async function replaceCustomRoles(customRoles) {
   return withTransaction(() => {
     db.prepare("DELETE FROM custom_roles").run();
     const insertStmt = db.prepare(`
-      INSERT INTO custom_roles (guild_id, user_id, role_id)
-      VALUES (?, ?, ?)
+      INSERT INTO custom_roles (guild_id, user_id, role_id, style, color, name, has_icon, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     for (const [guildId, users] of Object.entries(customRoles)) {
-      for (const [userId, roleId] of Object.entries(users)) {
-        insertStmt.run(guildId, userId, roleId);
+      for (const [userId, val] of Object.entries(users)) {
+        // The in-memory store holds a rich object { roleId, style, color, name,
+        // hasIcon, createdAt }. Older code bound the whole object as role_id,
+        // which SQLite rejects (objects aren't bindable) — so nothing persisted.
+        const r = val && typeof val === "object" ? val : { roleId: val };
+        insertStmt.run(
+          guildId, userId, r.roleId,
+          r.style ?? null, r.color ?? null, r.name ?? null,
+          r.hasIcon ? 1 : 0, r.createdAt ?? 0,
+        );
       }
     }
   });
@@ -1459,7 +1541,7 @@ module.exports = {
         ON CONFLICT(guild_id, user_id) DO UPDATE SET balance = balance + ?
       `).run(guildId, toId, amount, amount);
       return true;
-    })();
+    });
   },
   async getEconomyLeaderboard(guildId, limit = 10) {
     return query(
@@ -1476,8 +1558,20 @@ module.exports = {
   },
   async setEconomyConfig(guildId, cfg) {
     db.prepare(`
-      INSERT INTO economy_config (guild_id, daily_amount, work_min, work_max, daily_cooldown, work_cooldown, interest_rate, tax_rate, gamble_odds)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO economy_config (
+        guild_id, daily_amount, work_min, work_max, daily_cooldown, work_cooldown,
+        interest_rate, tax_rate, gamble_odds,
+        blackjack_min_bet, blackjack_max_bet, blackjack_payout,
+        slots_min_bet, slots_max_bet, slots_win_odds, slots_jackpot_multiplier,
+        coinflip_min_bet, coinflip_max_bet,
+        highlow_min_bet, highlow_max_bet, highlow_dice_sides,
+        fish_min_bet, fish_max_bet,
+        mine_min_bet, mine_max_bet,
+        trivia_streak_bonus,
+        wordle_enabled, wordle_streak_bonus,
+        typerace_min_players
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(guild_id) DO UPDATE SET
         daily_amount = excluded.daily_amount,
         work_min = excluded.work_min,
@@ -1486,10 +1580,43 @@ module.exports = {
         work_cooldown = excluded.work_cooldown,
         interest_rate = excluded.interest_rate,
         tax_rate = excluded.tax_rate,
-        gamble_odds = excluded.gamble_odds
-    `).run(guildId, cfg.dailyAmount ?? 200, cfg.workMin ?? 50, cfg.workMax ?? 300,
-            cfg.dailyCooldown ?? 86400000, cfg.workCooldown ?? 3600000,
-            cfg.interestRate ?? 0.0, cfg.taxRate ?? 0.0, cfg.gambleOdds ?? 0.45);
+        gamble_odds = excluded.gamble_odds,
+        blackjack_min_bet = excluded.blackjack_min_bet,
+        blackjack_max_bet = excluded.blackjack_max_bet,
+        blackjack_payout = excluded.blackjack_payout,
+        slots_min_bet = excluded.slots_min_bet,
+        slots_max_bet = excluded.slots_max_bet,
+        slots_win_odds = excluded.slots_win_odds,
+        slots_jackpot_multiplier = excluded.slots_jackpot_multiplier,
+        coinflip_min_bet = excluded.coinflip_min_bet,
+        coinflip_max_bet = excluded.coinflip_max_bet,
+        highlow_min_bet = excluded.highlow_min_bet,
+        highlow_max_bet = excluded.highlow_max_bet,
+        highlow_dice_sides = excluded.highlow_dice_sides,
+        fish_min_bet = excluded.fish_min_bet,
+        fish_max_bet = excluded.fish_max_bet,
+        mine_min_bet = excluded.mine_min_bet,
+        mine_max_bet = excluded.mine_max_bet,
+        trivia_streak_bonus = excluded.trivia_streak_bonus,
+        wordle_enabled = excluded.wordle_enabled,
+        wordle_streak_bonus = excluded.wordle_streak_bonus,
+        typerace_min_players = excluded.typerace_min_players
+    `).run(
+      guildId,
+      cfg.dailyAmount ?? 200, cfg.workMin ?? 50, cfg.workMax ?? 300,
+      cfg.dailyCooldown ?? 86400000, cfg.workCooldown ?? 3600000,
+      cfg.interestRate ?? 0.0, cfg.taxRate ?? 0.0, cfg.gambleOdds ?? 0.45,
+      cfg.blackjackMinBet ?? 10, cfg.blackjackMaxBet ?? 10000, cfg.blackjackPayout ?? 1.5,
+      cfg.slotsMinBet ?? 5, cfg.slotsMaxBet ?? 5000, cfg.slotsWinOdds ?? 0.30, cfg.slotsJackpotMultiplier ?? 50,
+      cfg.coinflipMinBet ?? 1, cfg.coinflipMaxBet ?? 10000,
+      cfg.highlowMinBet ?? 10, cfg.highlowMaxBet ?? 10000, cfg.highlowDiceSides ?? 6,
+      cfg.fishMinBet ?? 10, cfg.fishMaxBet ?? 5000,
+      cfg.mineMinBet ?? 10, cfg.mineMaxBet ?? 5000,
+      cfg.triviaStreakBonus ?? 0.1,
+      // Coerce booleans to 0/1 — SQLite can't bind raw JS booleans.
+      (cfg.wordleEnabled == null ? 1 : cfg.wordleEnabled ? 1 : 0), cfg.wordleStreakBonus ?? 0.2,
+      cfg.typeraceMinPlayers ?? 2
+    );
   },
   async getEconomyStats(guildId) {
     const row = get(

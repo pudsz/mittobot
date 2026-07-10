@@ -895,20 +895,20 @@ function realModSlash(name, desc, withDuration = false, withSeverity = false) {
 }
 
 module.exports = [
-  // Fake mod
-  { name: "warn",     description: "Fake warn",         category: "fakemod", prefix: (m,a,c) => handleFakeMod(m,a,"warn",c),    slash: fakeModSlash("warn",    "Fake warn a user"),    execute: (i,c) => slashFakeMod(i,"warn") },
-  { name: "kick",     description: "Fake kick",         category: "fakemod", prefix: (m,a,c) => handleFakeMod(m,a,"kick",c),    slash: fakeModSlash("kick",    "Fake kick a user"),    execute: (i,c) => slashFakeMod(i,"kick") },
-  { name: "ban",      description: "Fake ban",          category: "fakemod", prefix: (m,a,c) => handleFakeMod(m,a,"ban",c),     slash: fakeModSlash("ban",     "Fake ban a user"),     execute: (i,c) => slashFakeMod(i,"ban") },
-  { name: "mute",     description: "Fake mute",         category: "fakemod", prefix: (m,a,c) => handleFakeMod(m,a,"mute",c),    slash: fakeModSlash("mute",    "Fake mute a user", true), execute: (i,c) => slashFakeMod(i,"mute") },
-  { name: "unmute",   description: "Fake unmute",       category: "fakemod", prefix: (m,a,c) => handleFakeMod(m,a,"unmute",c),  slash: fakeModSlash("unmute",  "Fake unmute a user"),  execute: (i,c) => slashFakeMod(i,"unmute") },
-  { name: "unban",    description: "Fake unban",        category: "fakemod", prefix: (m,a,c) => handleFakeMod(m,a,"unban",c),   slash: fakeModSlash("unban",   "Fake unban a user"),   execute: (i,c) => slashFakeMod(i,"unban") },
-  { name: "softban",  description: "Fake softban",      category: "fakemod", prefix: (m,a,c) => handleFakeMod(m,a,"softban",c), slash: fakeModSlash("softban", "Fake softban a user"), execute: (i,c) => slashFakeMod(i,"softban") },
-  { name: "tempban",  description: "Fake tempban",      category: "fakemod", prefix: (m,a,c) => handleFakeMod(m,a,"tempban",c), slash: fakeModSlash("tempban", "Fake tempban a user", true), execute: (i,c) => slashFakeMod(i,"tempban") },
-  { name: "timeout",  description: "Fake timeout",      category: "fakemod", prefix: (m,a,c) => handleFakeMod(m,a,"timeout",c), slash: fakeModSlash("timeout", "Fake timeout a user", true), execute: (i,c) => slashFakeMod(i,"timeout") },
-  { name: "untimeout",description: "Fake untimeout",    category: "fakemod", prefix: (m,a,c) => handleFakeMod(m,a,"untimeout",c),slash: fakeModSlash("untimeout","Fake untimeout a user"),execute: (i,c) => slashFakeMod(i,"untimeout") },
-  { name: "lock",     description: "Fake lock",         category: "fakemod", prefix: (m,a,c) => handleFakeMod(m,a,"lock",c),    slash: new SlashCommandBuilder().setName("lock").setDescription("Fake lock this channel").addStringOption(o => o.setName("reason").setDescription("Reason").setRequired(false)),    execute: (i,c) => slashFakeMod(i,"lock") },
-  { name: "unlock",   description: "Fake unlock",       category: "fakemod", prefix: (m,a,c) => handleFakeMod(m,a,"unlock",c),  slash: new SlashCommandBuilder().setName("unlock").setDescription("Fake unlock this channel").addStringOption(o => o.setName("reason").setDescription("Reason").setRequired(false)),  execute: (i,c) => slashFakeMod(i,"unlock") },
-  { name: "slowmode", description: "Fake slowmode",     category: "fakemod", prefix: (m,a,c) => handleFakeMod(m,a,"slowmode",c),slash: new SlashCommandBuilder().setName("slowmode").setDescription("Fake set slowmode").addIntegerOption(o => o.setName("seconds").setDescription("Seconds").setRequired(false)),     execute: (i,c) => slashFakeMod(i,"slowmode") },
+  // Fake mod (prefix-only)
+  { name: "warn",     description: "Fake warn",         category: "fakemod", prefix: (m,a,c) => handleFakeMod(m,a,"warn",c) },
+  { name: "kick",     description: "Fake kick",         category: "fakemod", prefix: (m,a,c) => handleFakeMod(m,a,"kick",c) },
+  { name: "ban",      description: "Fake ban",          category: "fakemod", prefix: (m,a,c) => handleFakeMod(m,a,"ban",c) },
+  { name: "mute",     description: "Fake mute",         category: "fakemod", prefix: (m,a,c) => handleFakeMod(m,a,"mute",c) },
+  { name: "unmute",   description: "Fake unmute",       category: "fakemod", prefix: (m,a,c) => handleFakeMod(m,a,"unmute",c) },
+  { name: "unban",    description: "Fake unban",        category: "fakemod", prefix: (m,a,c) => handleFakeMod(m,a,"unban",c) },
+  { name: "softban",  description: "Fake softban",      category: "fakemod", prefix: (m,a,c) => handleFakeMod(m,a,"softban",c) },
+  { name: "tempban",  description: "Fake tempban",      category: "fakemod", prefix: (m,a,c) => handleFakeMod(m,a,"tempban",c) },
+  { name: "timeout",  description: "Fake timeout",      category: "fakemod", prefix: (m,a,c) => handleFakeMod(m,a,"timeout",c) },
+  { name: "untimeout",description: "Fake untimeout",    category: "fakemod", prefix: (m,a,c) => handleFakeMod(m,a,"untimeout",c) },
+  { name: "lock",     description: "Fake lock",         category: "fakemod", prefix: (m,a,c) => handleFakeMod(m,a,"lock",c) },
+  { name: "unlock",   description: "Fake unlock",       category: "fakemod", prefix: (m,a,c) => handleFakeMod(m,a,"unlock",c) },
+  { name: "slowmode", description: "Fake slowmode",     category: "fakemod", prefix: (m,a,c) => handleFakeMod(m,a,"slowmode",c) },
   // Real mod
   { name: "realwarn",      description: "Warn a user",           prefix: (m,a,c) => handleRealMod(m,a,"warn",c),      slash: new SlashCommandBuilder().setName("realwarn").setDescription("Warn a user").addUserOption(o => o.setName("user").setDescription("Target user").setRequired(true)).addIntegerOption(o => o.setName("severity").setDescription("Severity (1-5, more = worse)").setRequired(false).setMinValue(1).setMaxValue(5)).addStringOption(o => o.setName("reason").setDescription("Reason").setRequired(false)), execute: (i,c) => slashRealMod(i,c,"warn") },
   { name: "realkick",      description: "Kick a user",           prefix: (m,a,c) => handleRealMod(m,a,"kick",c),      slash: realModSlash("realkick",      "Kick a user"),              execute: (i,c) => slashRealMod(i,c,"kick") },

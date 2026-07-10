@@ -15,7 +15,16 @@ import { useConfirm } from "@/components/app/ConfirmProvider";
 
 interface EconomyConfig {
   dailyAmount: number; workMin: number; workMax: number;
-  interestRate: number; taxRate: number; gambleOdds: number;
+  interestRate: number; taxRate: number;
+  // Game tuning (all optional — older configs/defaults may omit them).
+  slotsMinBet?: number; slotsMaxBet?: number; slotsWinOdds?: number; slotsJackpotMultiplier?: number;
+  coinflipMinBet?: number; coinflipMaxBet?: number;
+  highlowMinBet?: number; highlowMaxBet?: number; highlowDiceSides?: number;
+  blackjackMinBet?: number; blackjackMaxBet?: number; blackjackPayout?: number;
+  fishMinBet?: number;
+  mineMinBet?: number;
+  triviaStreakBonus?: number;
+  wordleEnabled?: number; wordleStreakBonus?: number;
 }
 
 interface EconomyStats {
@@ -240,7 +249,6 @@ export default function EconomyView() {
                       { key: "workMax", label: "Work Max", min: 1 },
                       { key: "interestRate", label: "Interest Rate (%)", min: 0, max: 100, step: 0.1 },
                       { key: "taxRate", label: "Tax Rate (%)", min: 0, max: 100, step: 0.1 },
-                      { key: "gambleOdds", label: "Gamble Odds (0-1)", min: 0, max: 1, step: 0.01 },
                     ].map(f => (
                       <div key={f.key}>
                         <label className="text-xs text-muted-foreground">{f.label}</label>
@@ -250,6 +258,78 @@ export default function EconomyView() {
                           onChange={e => handleConfigChange(f.key as keyof EconomyConfig, e.target.value)} />
                       </div>
                     ))}
+                  </div>
+
+                  <div className="mt-5 pt-4 border-t border-border/30">
+                    <p className="text-xs font-semibold text-muted-foreground mb-3">🎰 Slots</p>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      {[
+                        { key: "slotsMinBet", label: "Min Bet", min: 1 },
+                        { key: "slotsMaxBet", label: "Max Bet", min: 1 },
+                        { key: "slotsWinOdds", label: "Win Odds (0-1)", min: 0, max: 1, step: 0.01 },
+                        { key: "slotsJackpotMultiplier", label: "Jackpot ×", min: 1 },
+                      ].map(f => (
+                        <div key={f.key}>
+                          <label className="text-xs text-muted-foreground">{f.label}</label>
+                          <Input type="number" className="mt-1 text-xs font-mono"
+                            value={cfgValue(f.key as keyof EconomyConfig)}
+                            min={f.min} max={f.max} step={f.step}
+                            onChange={e => handleConfigChange(f.key as keyof EconomyConfig, e.target.value)} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="mt-5 pt-4 border-t border-border/30">
+                    <p className="text-xs font-semibold text-muted-foreground mb-3">🃏 Blackjack · 🪙 Betflip · 🎲 High/Low</p>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      {[
+                        { key: "blackjackMinBet", label: "BJ Min Bet", min: 1 },
+                        { key: "blackjackMaxBet", label: "BJ Max Bet", min: 1 },
+                        { key: "blackjackPayout", label: "BJ Payout ×", min: 1, max: 3, step: 0.1 },
+                        { key: "coinflipMinBet", label: "Betflip Min", min: 1 },
+                        { key: "coinflipMaxBet", label: "Betflip Max", min: 1 },
+                        { key: "highlowMinBet", label: "High/Low Min", min: 1 },
+                        { key: "highlowMaxBet", label: "High/Low Max", min: 1 },
+                        { key: "highlowDiceSides", label: "Dice Sides", min: 2, max: 100 },
+                      ].map(f => (
+                        <div key={f.key}>
+                          <label className="text-xs text-muted-foreground">{f.label}</label>
+                          <Input type="number" className="mt-1 text-xs font-mono"
+                            value={cfgValue(f.key as keyof EconomyConfig)}
+                            min={f.min} max={f.max} step={f.step}
+                            onChange={e => handleConfigChange(f.key as keyof EconomyConfig, e.target.value)} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="mt-5 pt-4 border-t border-border/30">
+                    <p className="text-xs font-semibold text-muted-foreground mb-3">🎣 Fish · ⛏️ Mine · 🧠 Trivia · 🔤 Wordle</p>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      {[
+                        { key: "fishMinBet", label: "Fish Cost", min: 1 },
+                        { key: "mineMinBet", label: "Mine Cost", min: 1 },
+                        { key: "triviaStreakBonus", label: "Trivia Streak Bonus", min: 0, max: 10, step: 0.05 },
+                        { key: "wordleStreakBonus", label: "Wordle Streak Bonus", min: 0, max: 10, step: 0.05 },
+                      ].map(f => (
+                        <div key={f.key}>
+                          <label className="text-xs text-muted-foreground">{f.label}</label>
+                          <Input type="number" className="mt-1 text-xs font-mono"
+                            value={cfgValue(f.key as keyof EconomyConfig)}
+                            min={f.min} max={f.max} step={f.step}
+                            onChange={e => handleConfigChange(f.key as keyof EconomyConfig, e.target.value)} />
+                        </div>
+                      ))}
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-muted-foreground">Wordle</label>
+                        <Button size="sm" variant={config.wordleEnabled === 0 ? "outline" : "default"}
+                          className="text-xs"
+                          onClick={() => handleConfigChange("wordleEnabled", config.wordleEnabled === 0 ? "1" : "0")}>
+                          {config.wordleEnabled === 0 ? "Disabled" : "Enabled"}
+                        </Button>
+                      </div>
+                    </div>
                   </div>
                 </CardContent>
               </Card>

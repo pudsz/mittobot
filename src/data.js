@@ -63,7 +63,14 @@ const data = {
 
       this.customRoles = {};
       for (const row of await db.getCustomRoles()) {
-        (this.customRoles[row.guild_id] ??= {})[row.user_id] = row.role_id;
+        (this.customRoles[row.guild_id] ??= {})[row.user_id] = {
+          roleId: row.role_id,
+          style: row.style || "normal",
+          color: row.color || "Random",
+          name: row.name || "",
+          hasIcon: row.has_icon === 1,
+          createdAt: row.created_at || 0,
+        };
       }
 
       this.alphaUsers = {};

@@ -2332,7 +2332,28 @@ function startApi(ctx) {
       if (Number.isInteger(body.workMax) && body.workMax >= body.workMin) patch.workMax = body.workMax;
       if (Number.isFinite(body.interestRate) && body.interestRate >= 0 && body.interestRate <= 100) patch.interestRate = body.interestRate;
       if (Number.isFinite(body.taxRate) && body.taxRate >= 0 && body.taxRate <= 100) patch.taxRate = body.taxRate;
-      if (Number.isFinite(body.gambleOdds) && body.gambleOdds >= 0 && body.gambleOdds <= 1) patch.gambleOdds = body.gambleOdds;
+      // NOTE: gambleOdds is intentionally NOT accepted — gamble() uses slotsWinOdds,
+      // and accepting gambleOdds here would persist a value that silently does
+      // nothing. Use slotsWinOdds (Slots section) to tune the win chance.
+      // Game bet limits — min must be ≥1, max must be ≥ its min.
+      const intGte = (v, lo) => Number.isInteger(v) && v >= lo;
+      if (intGte(body.slotsMinBet, 1) && intGte(body.slotsMaxBet, body.slotsMinBet)) { patch.slotsMinBet = body.slotsMinBet; patch.slotsMaxBet = body.slotsMaxBet; }
+      if (intGte(body.coinflipMinBet, 1) && intGte(body.coinflipMaxBet, body.coinflipMinBet)) { patch.coinflipMinBet = body.coinflipMinBet; patch.coinflipMaxBet = body.coinflipMaxBet; }
+      if (intGte(body.highlowMinBet, 1) && intGte(body.highlowMaxBet, body.highlowMinBet)) { patch.highlowMinBet = body.highlowMinBet; patch.highlowMaxBet = body.highlowMaxBet; }
+      if (intGte(body.blackjackMinBet, 1) && intGte(body.blackjackMaxBet, body.blackjackMinBet)) { patch.blackjackMinBet = body.blackjackMinBet; patch.blackjackMaxBet = body.blackjackMaxBet; }
+      // Fish & mine are fixed-cost (no player-chosen bet), so only the cost is
+      // tunable — fishMaxBet/mineMaxBet are dead config and not accepted.
+      if (intGte(body.fishMinBet, 1)) patch.fishMinBet = body.fishMinBet;
+      if (intGte(body.mineMinBet, 1)) patch.mineMinBet = body.mineMinBet;
+      // Tunable odds/multipliers/payouts.
+      if (Number.isFinite(body.slotsWinOdds) && body.slotsWinOdds >= 0 && body.slotsWinOdds <= 1) patch.slotsWinOdds = body.slotsWinOdds;
+      if (intGte(body.slotsJackpotMultiplier, 1)) patch.slotsJackpotMultiplier = body.slotsJackpotMultiplier;
+      if (Number.isFinite(body.blackjackPayout) && body.blackjackPayout >= 1 && body.blackjackPayout <= 3) patch.blackjackPayout = body.blackjackPayout;
+      if (intGte(body.highlowDiceSides, 2) && body.highlowDiceSides <= 100) patch.highlowDiceSides = body.highlowDiceSides;
+      if (Number.isFinite(body.triviaStreakBonus) && body.triviaStreakBonus >= 0 && body.triviaStreakBonus <= 10) patch.triviaStreakBonus = body.triviaStreakBonus;
+      if (Number.isFinite(body.wordleStreakBonus) && body.wordleStreakBonus >= 0 && body.wordleStreakBonus <= 10) patch.wordleStreakBonus = body.wordleStreakBonus;
+      if (typeof body.wordleEnabled === "boolean") patch.wordleEnabled = body.wordleEnabled ? 1 : 0;
+      else if (body.wordleEnabled === 0 || body.wordleEnabled === 1) patch.wordleEnabled = body.wordleEnabled;
       const cfg = await economy.saveConfig(guildInfo.guildId, patch);
       res.json({ ok: true, config: cfg });
     } catch (err) {

@@ -97,6 +97,7 @@ const COMMAND_FILES = [
   "./src/commands/theme",
   "./src/commands/voice",
   "./src/commands/leveling",
+  "./src/commands/experiments",
 ];
 for (const file of COMMAND_FILES) {
   const defs = require(file);
@@ -274,6 +275,16 @@ client.on("messageCreate", async message => {
     leveling.onMessage(message).catch(err => console.error("[leveling] onMessage:", err.message));
   }
 
+  // Typing-race submissions: a reply to an active typerace prompt is consumed
+  // here (before the AI handler, which would otherwise treat a reply-to-bot as
+  // an AI conversation).
+  try {
+    const economyMod = require("./src/commands/economy");
+    if (typeof economyMod.consumeTyperaceReply === "function" && await economyMod.consumeTyperaceReply(message)) {
+      return;
+    }
+  } catch (err) { console.error("[typerace] reply handling:", err.message); }
+
   await handleAiMessage(message, ctx);
 
   const content = message.content;
@@ -343,6 +354,13 @@ client.on("interactionCreate", async interaction => {
       const rpsmpMod = require("./src/commands/rpsmp");
       if (typeof rpsmpMod.handleRpsMpButton === "function") {
         return await rpsmpMod.handleRpsMpButton(interaction);
+      }
+    }
+    // Economy game buttons (blackjack bj_*, trivia trivia_*)
+    if (interaction.isButton() && (interaction.customId.startsWith("bj_") || interaction.customId.startsWith("trivia_"))) {
+      const economyMod = require("./src/commands/economy");
+      if (typeof economyMod.routeGameButton === "function" && await economyMod.routeGameButton(interaction)) {
+        return;
       }
     }
     // Alpha experiments: proceed button → open code modal
