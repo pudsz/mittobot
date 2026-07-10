@@ -3,8 +3,9 @@ import StatusView from "@/pages/views/system/StatusView";
 import SettingsView from "@/pages/views/system/SettingsView";
 import ModulesView from "@/pages/views/system/ModulesView";
 import DataStoresView from "@/pages/views/system/DataStoresView";
+import AlphaExperimentsView from "@/pages/views/system/AlphaExperimentsView";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { FlaskConical, Construction } from "lucide-react";
+import { Construction } from "lucide-react";
 
 function PlaceholderView({ icon: Icon, title, description, features }: {
   icon: React.ComponentType<{ className?: string }>;
@@ -42,10 +43,6 @@ function PlaceholderView({ icon: Icon, title, description, features }: {
       </Card>
     </div>
   );
-}
-function AlphaExperimentsView() {
-  return <PlaceholderView icon={FlaskConical} title="Alpha Experiments" description="Enable feature flags undergoing testing."
-    features={["Experimental feature flags selector", "Developer debug logs stream toggle", "Telemetry reports builder"]} />;
 }
 
 export default function SystemHub() {

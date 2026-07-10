@@ -467,6 +467,60 @@ function init() {
       updated_at BIGINT NOT NULL,
       PRIMARY KEY (scope, target_id)
     );
+
+    CREATE TABLE IF NOT EXISTS starboard_config (
+      guild_id      TEXT PRIMARY KEY,
+      enabled       INTEGER DEFAULT 0,
+      channel_id    TEXT,
+      emoji         TEXT DEFAULT '⭐',
+      threshold     INTEGER DEFAULT 3,
+      self_star     INTEGER DEFAULT 0,   -- allow authors to star their own message
+      ignore_nsfw   INTEGER DEFAULT 1,
+      ignored_channels TEXT DEFAULT '[]'
+    );
+
+    -- One row per starred source message: tracks the board post so edits/removes update it.
+    CREATE TABLE IF NOT EXISTS starboard_messages (
+      guild_id        TEXT,
+      source_msg_id   TEXT,
+      source_channel  TEXT,
+      board_msg_id    TEXT,
+      star_count      INTEGER DEFAULT 0,
+      PRIMARY KEY (guild_id, source_msg_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS birthday_config (
+      guild_id    TEXT PRIMARY KEY,
+      enabled     INTEGER DEFAULT 0,
+      channel_id  TEXT,
+      message     TEXT DEFAULT '🎉 Happy Birthday {user}! 🎂',
+      role_id     TEXT,                 -- optional role granted for the day
+      hour        INTEGER DEFAULT 9     -- local-to-UTC hour (0-23) the daily tick announces
+    );
+
+    -- One birthday per user per guild. month/day only (year optional for age).
+    CREATE TABLE IF NOT EXISTS birthdays (
+      guild_id     TEXT,
+      user_id      TEXT,
+      month        INTEGER,
+      day          INTEGER,
+      year         INTEGER,            -- nullable; only used to show age
+      last_announced TEXT,             -- 'YYYY-MM-DD' guard against double-announce
+      PRIMARY KEY (guild_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS birthdays_date ON birthdays (guild_id, month, day);
+
+    -- Custom text/embed tags invoked by name.
+    CREATE TABLE IF NOT EXISTS tags (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id    TEXT NOT NULL,
+      name        TEXT NOT NULL,
+      content     TEXT NOT NULL,
+      created_by  TEXT,
+      uses        INTEGER DEFAULT 0,
+      created_at  BIGINT
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS tags_guild_name ON tags (guild_id, name);
   `);
 
   // Migrations for columns added after initial table creation
@@ -672,6 +726,135 @@ async function setGreetConfig(guildId, cfg) {
     cfg.logs_member_events ? 1 : 0,
     cfg.logs_message_events ? 1 : 0
   );
+}
+
+// ── Starboard ───────────────────────────────────────────────────────────
+async function getAllStarboardConfigs() {
+  return query("SELECT * FROM starboard_config");
+}
+
+async function setStarboardConfig(guildId, cfg) {
+  db.prepare(`
+    INSERT INTO starboard_config (guild_id, enabled, channel_id, emoji, threshold, self_star, ignore_nsfw, ignored_channels)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(guild_id) DO UPDATE SET
+      enabled = excluded.enabled,
+      channel_id = excluded.channel_id,
+      emoji = excluded.emoji,
+      threshold = excluded.threshold,
+      self_star = excluded.self_star,
+      ignore_nsfw = excluded.ignore_nsfw,
+      ignored_channels = excluded.ignored_channels
+  `).run(
+    guildId,
+    cfg.enabled ? 1 : 0,
+    cfg.channel_id || null,
+    cfg.emoji || "⭐",
+    cfg.threshold ?? 3,
+    cfg.self_star ? 1 : 0,
+    cfg.ignore_nsfw ? 1 : 0,
+    JSON.stringify(cfg.ignored_channels || []),
+  );
+}
+
+function getStarboardEntry(guildId, sourceMsgId) {
+  return get("SELECT * FROM starboard_messages WHERE guild_id = ? AND source_msg_id = ?", [guildId, sourceMsgId]);
+}
+
+function upsertStarboardEntry(guildId, sourceMsgId, sourceChannel, boardMsgId, starCount) {
+  db.prepare(`
+    INSERT INTO starboard_messages (guild_id, source_msg_id, source_channel, board_msg_id, star_count)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(guild_id, source_msg_id) DO UPDATE SET
+      board_msg_id = excluded.board_msg_id,
+      star_count = excluded.star_count
+  `).run(guildId, sourceMsgId, sourceChannel, boardMsgId, starCount);
+}
+
+function deleteStarboardEntry(guildId, sourceMsgId) {
+  db.prepare("DELETE FROM starboard_messages WHERE guild_id = ? AND source_msg_id = ?").run(guildId, sourceMsgId);
+}
+
+function getTopStarboard(guildId, limit = 20) {
+  return query("SELECT * FROM starboard_messages WHERE guild_id = ? ORDER BY star_count DESC LIMIT ?", [guildId, limit]);
+}
+
+// ── Birthdays ───────────────────────────────────────────────────────────
+async function getAllBirthdayConfigs() {
+  return query("SELECT * FROM birthday_config");
+}
+
+async function setBirthdayConfig(guildId, cfg) {
+  db.prepare(`
+    INSERT INTO birthday_config (guild_id, enabled, channel_id, message, role_id, hour)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(guild_id) DO UPDATE SET
+      enabled = excluded.enabled,
+      channel_id = excluded.channel_id,
+      message = excluded.message,
+      role_id = excluded.role_id,
+      hour = excluded.hour
+  `).run(
+    guildId,
+    cfg.enabled ? 1 : 0,
+    cfg.channel_id || null,
+    cfg.message || "🎉 Happy Birthday {user}! 🎂",
+    cfg.role_id || null,
+    cfg.hour ?? 9,
+  );
+}
+
+function setBirthday(guildId, userId, month, day, year) {
+  db.prepare(`
+    INSERT INTO birthdays (guild_id, user_id, month, day, year)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(guild_id, user_id) DO UPDATE SET
+      month = excluded.month, day = excluded.day, year = excluded.year
+  `).run(guildId, userId, month, day, year || null);
+}
+
+function getBirthday(guildId, userId) {
+  return get("SELECT * FROM birthdays WHERE guild_id = ? AND user_id = ?", [guildId, userId]);
+}
+
+function deleteBirthday(guildId, userId) {
+  db.prepare("DELETE FROM birthdays WHERE guild_id = ? AND user_id = ?").run(guildId, userId);
+}
+
+function getBirthdaysOn(guildId, month, day) {
+  return query("SELECT * FROM birthdays WHERE guild_id = ? AND month = ? AND day = ?", [guildId, month, day]);
+}
+
+function getUpcomingBirthdays(guildId, limit = 25) {
+  return query("SELECT * FROM birthdays WHERE guild_id = ? ORDER BY month, day LIMIT ?", [guildId, limit]);
+}
+
+function markBirthdayAnnounced(guildId, userId, dateStr) {
+  db.prepare("UPDATE birthdays SET last_announced = ? WHERE guild_id = ? AND user_id = ?").run(dateStr, guildId, userId);
+}
+
+// ── Tags ────────────────────────────────────────────────────────────────
+function getTags(guildId) {
+  return query("SELECT * FROM tags WHERE guild_id = ? ORDER BY name ASC", [guildId]);
+}
+
+function getTag(guildId, name) {
+  return get("SELECT * FROM tags WHERE guild_id = ? AND name = ?", [guildId, String(name).toLowerCase()]);
+}
+
+function createTag(guildId, name, content, createdBy) {
+  const info = db.prepare("INSERT INTO tags (guild_id, name, content, created_by, uses, created_at) VALUES (?, ?, ?, ?, 0, ?) ON CONFLICT(guild_id, name) DO UPDATE SET content = excluded.content, created_by = excluded.created_by")
+    .run(guildId, String(name).toLowerCase(), content, createdBy || null, Date.now());
+  return info.lastInsertRowid;
+}
+
+function deleteTag(guildId, name) {
+  const info = db.prepare("DELETE FROM tags WHERE guild_id = ? AND name = ?").run(guildId, String(name).toLowerCase());
+  return info.changes > 0;
+}
+
+function incrementTagUses(guildId, name) {
+  db.prepare("UPDATE tags SET uses = uses + 1 WHERE guild_id = ? AND name = ?").run(guildId, String(name).toLowerCase());
 }
 
 // ── Roles ───────────────────────────────────────────────────────────────
@@ -1340,6 +1523,31 @@ module.exports = {
   // ── Greet ───────────────────────────────────────────────────────────────
   getAllGreetConfigs,
   setGreetConfig,
+
+  // ── Starboard ────────────────────────────────────────────────────────────
+  getAllStarboardConfigs,
+  setStarboardConfig,
+  getStarboardEntry,
+  upsertStarboardEntry,
+  deleteStarboardEntry,
+  getTopStarboard,
+
+  // ── Birthdays ────────────────────────────────────────────────────────────
+  getAllBirthdayConfigs,
+  setBirthdayConfig,
+  setBirthday,
+  getBirthday,
+  deleteBirthday,
+  getBirthdaysOn,
+  getUpcomingBirthdays,
+  markBirthdayAnnounced,
+
+  // ── Tags ─────────────────────────────────────────────────────────────────
+  getTags,
+  getTag,
+  createTag,
+  deleteTag,
+  incrementTagUses,
 
   // ── Roles ───────────────────────────────────────────────────────────────
   getAllRolesConfigs,

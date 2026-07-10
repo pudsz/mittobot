@@ -1,7 +1,8 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import EconomyView from "@/pages/views/engagement/EconomyView";
+import TagsView from "@/pages/views/engagement/TagsView";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Bookmark, Music, Construction } from "lucide-react";
+import { Music, Construction } from "lucide-react";
 
 function PlaceholderView({ icon: Icon, title, description, features }: {
   icon: React.ComponentType<{ className?: string }>;
@@ -39,10 +40,6 @@ function PlaceholderView({ icon: Icon, title, description, features }: {
       </Card>
     </div>
   );
-}
-function TagsView() {
-  return <PlaceholderView icon={Bookmark} title="Custom Tags" description="Manage custom triggers and auto responses."
-    features={["Quick response text tag CRUD editor", "Rich Embed JSON builder support", "Tag usage statistics analytics"]} />;
 }
 function MusicView() {
   return <PlaceholderView icon={Music} title="Music Stream" description="View voice channel playback queues, player states, and presets."

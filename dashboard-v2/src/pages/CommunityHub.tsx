@@ -6,10 +6,12 @@ import ChannelsView from "@/pages/views/community/ChannelsView";
 import ScheduleView from "@/pages/views/community/ScheduleView";
 import BackupsView from "@/pages/views/community/BackupsView";
 import LevelsView from "@/pages/views/community/LevelsView";
+import StarboardView from "@/pages/views/community/StarboardView";
+import BirthdaysView from "@/pages/views/community/BirthdaysView";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Ticket, Gift,
-  Star, MessageCircle, Calendar, Link2, Share2, Construction
+  MessageCircle, Link2, Share2, Construction
 } from "lucide-react";
 
 function PlaceholderView({ icon: Icon, title, description, features }: {
@@ -58,17 +60,9 @@ function GiveawaysView() {
   return <PlaceholderView icon={Gift} title="Giveaway Widgets" description="Host interactive giveaways in text channels."
     features={["Giveaway editor form (winners count, duration, restrictions)", "Active list with participant counts", "Manual giveaway cancel or immediate end", "Winner rerolling interface"]} />;
 }
-function StarboardView() {
-  return <PlaceholderView icon={Star} title="Starboard Highlights" description="Log top-starred messages to a highlights board."
-    features={["Target starboard channel select", "Star emoji configuration and reaction thresholds", "Browse logged spotlight cards"]} />;
-}
 function SuggestionsView() {
   return <PlaceholderView icon={MessageCircle} title="Suggestions Board" description="Receive user suggestion votes."
     features={["Suggestion channel select", "Staff review decisions panel (approve, reject, discuss)", "Direct comment replies thread links"]} />;
-}
-function BirthdaysView() {
-  return <PlaceholderView icon={Calendar} title="Birthdays announcements" description="Congratulate members automatically."
-    features={["Target announcement channel select", "Date entry format validations", "List of upcoming birthday celebrations"]} />;
 }
 function InvitesView() {
   return <PlaceholderView icon={Link2} title="Invite Tracking" description="Analyze which invite links brought in members."

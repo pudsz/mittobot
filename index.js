@@ -23,6 +23,8 @@ const roletracker = require("./src/roletracker");
 const femboyify = require("./src/femboyify");
 const scheduler = require("./src/scheduler");
 const leveling = require("./src/leveling");
+const starboard = require("./src/starboard");
+const birthdays = require("./src/birthdays");
 
 const commandMap = new Map();
 const slashMap = new Map();
@@ -98,6 +100,8 @@ const COMMAND_FILES = [
   "./src/commands/voice",
   "./src/commands/leveling",
   "./src/commands/experiments",
+  "./src/commands/birthday",
+  "./src/commands/tags",
 ];
 for (const file of COMMAND_FILES) {
   const defs = require(file);
@@ -522,6 +526,7 @@ client.on("voiceStateUpdate", (oldState, newState) => {
 client.on("messageReactionAdd", async (reaction, user) => {
   logReaction(reaction, user, true).catch(err => console.error("[safe] reaction log:", err.message));
   roles.onReaction(reaction, user, true).catch(err => console.error("[safe] reaction role add:", err.message));
+  starboard.onReaction(reaction, user).catch(err => console.error("[starboard] reaction add:", err.message));
   // Auto-exec: hydrate partials first so emoji data is complete
   if (reaction.message?.guild) {
     if (reaction.partial) await reaction.fetch().catch(() => null);
@@ -542,6 +547,7 @@ client.on("messageReactionAdd", async (reaction, user) => {
 client.on("messageReactionRemove", (reaction, user) => {
   logReaction(reaction, user, false).catch(err => console.error("[safe] reaction log:", err.message));
   roles.onReaction(reaction, user, false).catch(err => console.error("[safe] reaction role remove:", err.message));
+  starboard.onReaction(reaction, user).catch(err => console.error("[starboard] reaction remove:", err.message));
 });
 
 // Welcome, leave, and autorole events
@@ -680,6 +686,8 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
       roletracker.load(),
       femboyify.load(),
       leveling.load(),
+      starboard.load(),
+      birthdays.load(),
     ]);
     // Load scheduled messages after settings are ready
     await scheduler.load(client).catch(err => console.error("[scheduler] Load error:", err.message));
@@ -693,6 +701,11 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
     // channels (≥2 humans, not muted) every 60s. unref'd so it never blocks
     // shutdown. No-op for guilds without voice XP configured.
     setInterval(() => { leveling.voiceXpTick(client).catch(() => {}); }, 60_000).unref();
+    // Birthday tick — announces the day's birthdays once per guild-day at the
+    // configured hour. Runs every 30 min; the per-user last_announced guard
+    // makes repeated ticks within a day idempotent. unref'd.
+    setInterval(() => { birthdays.tick(client).catch(() => {}); }, 30 * 60_000).unref();
+    birthdays.tick(client).catch(() => {}); // run once shortly after startup
     settings.hydrateAiKeysFromEnv();
     // Start probation cleanup timer
     try {

@@ -1510,6 +1510,114 @@ function startApi(ctx) {
     res.json({ ok: true, config: next });
   });
 
+  // ─── Starboard ───────────────────────────────────────────────────────────
+  app.get("/api/starboard", requireAuth, (req, res) => {
+    const starboard = require("../starboard");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (guildInfo.guildId && !userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    res.json({
+      guildId: guildInfo.guildId,
+      hasGuild: guildInfo.hasGuild,
+      channels: guildInfo.channels,
+      config: guildInfo.guildId ? starboard.getConfig(guildInfo.guildId) : starboard.getConfig("_none"),
+      top: guildInfo.guildId ? starboard.getTop(guildInfo.guildId, 10) : [],
+    });
+  });
+
+  app.post("/api/starboard", requireAuth, (req, res) => {
+    const starboard = require("../starboard");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    const guildId = guildInfo.guildId;
+    if (!guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    if (!userCanAccessGuild(req.user.sub, guildId, req.user.isOwner)) return res.status(403).json({ error: "You don't have access to this guild" });
+    const b = req.body || {};
+    const okChan = v => v === null || /^\d{17,20}$/.test(v || "");
+    const patch = {};
+    if (typeof b.enabled === "boolean") patch.enabled = b.enabled;
+    if (okChan(b.channelId)) patch.channelId = b.channelId || null;
+    if (typeof b.emoji === "string" && b.emoji.length <= 64) patch.emoji = b.emoji || "⭐";
+    if (Number.isInteger(b.threshold) && b.threshold >= 1 && b.threshold <= 100) patch.threshold = b.threshold;
+    if (typeof b.selfStar === "boolean") patch.selfStar = b.selfStar;
+    if (typeof b.ignoreNsfw === "boolean") patch.ignoreNsfw = b.ignoreNsfw;
+    if (Array.isArray(b.ignoredChannels)) patch.ignoredChannels = b.ignoredChannels.filter(c => /^\d{17,20}$/.test(c)).slice(0, 50);
+    const next = starboard.setConfig(guildId, patch);
+    res.json({ ok: true, config: next });
+  });
+
+  // ─── Birthdays ───────────────────────────────────────────────────────────
+  app.get("/api/birthdays", requireAuth, (req, res) => {
+    const birthdays = require("../birthdays");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (guildInfo.guildId && !userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    res.json({
+      guildId: guildInfo.guildId,
+      hasGuild: guildInfo.hasGuild,
+      channels: guildInfo.channels,
+      roles: guildInfo.roles,
+      config: guildInfo.guildId ? birthdays.getConfig(guildInfo.guildId) : birthdays.getConfig("_none"),
+      upcoming: guildInfo.guildId ? birthdays.upcoming(guildInfo.guildId, 25) : [],
+    });
+  });
+
+  app.post("/api/birthdays", requireAuth, (req, res) => {
+    const birthdays = require("../birthdays");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    const guildId = guildInfo.guildId;
+    if (!guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    if (!userCanAccessGuild(req.user.sub, guildId, req.user.isOwner)) return res.status(403).json({ error: "You don't have access to this guild" });
+    const b = req.body || {};
+    const okChan = v => v === null || /^\d{17,20}$/.test(v || "");
+    const patch = {};
+    if (typeof b.enabled === "boolean") patch.enabled = b.enabled;
+    if (okChan(b.channelId)) patch.channelId = b.channelId || null;
+    if (typeof b.message === "string") patch.message = b.message.slice(0, 1000);
+    if (b.roleId === null || /^\d{17,20}$/.test(b.roleId || "")) patch.roleId = b.roleId || null;
+    if (Number.isInteger(b.hour) && b.hour >= 0 && b.hour <= 23) patch.hour = b.hour;
+    const next = birthdays.setConfig(guildId, patch);
+    res.json({ ok: true, config: next });
+  });
+
+  // ─── Tags ────────────────────────────────────────────────────────────────
+  app.get("/api/tags", requireAuth, (req, res) => {
+    const dbMod = require("../db");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (guildInfo.guildId && !userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    res.json({
+      guildId: guildInfo.guildId,
+      hasGuild: guildInfo.hasGuild,
+      tags: guildInfo.guildId ? dbMod.getTags(guildInfo.guildId) : [],
+    });
+  });
+
+  app.post("/api/tags", requireAuth, (req, res) => {
+    const dbMod = require("../db");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    const guildId = guildInfo.guildId;
+    if (!guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    if (!userCanAccessGuild(req.user.sub, guildId, req.user.isOwner)) return res.status(403).json({ error: "You don't have access to this guild" });
+    const b = req.body || {};
+    const name = String(b.name || "").toLowerCase();
+    const content = String(b.content || "");
+    if (!/^[a-z0-9_-]{1,32}$/.test(name)) return res.status(400).json({ error: "Invalid tag name (a-z, 0-9, -, _, max 32)" });
+    if (!content || content.length > 2000) return res.status(400).json({ error: "Content required (max 2000 chars)" });
+    if (!dbMod.getTag(guildId, name) && dbMod.getTags(guildId).length >= 200) return res.status(400).json({ error: "Tag limit reached (200)" });
+    dbMod.createTag(guildId, name, content, req.user.sub);
+    res.json({ ok: true, tags: dbMod.getTags(guildId) });
+  });
+
+  app.delete("/api/tags/:name", requireAuth, (req, res) => {
+    const dbMod = require("../db");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    const guildId = guildInfo.guildId;
+    if (!guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    if (!userCanAccessGuild(req.user.sub, guildId, req.user.isOwner)) return res.status(403).json({ error: "You don't have access to this guild" });
+    dbMod.deleteTag(guildId, String(req.params.name || "").toLowerCase());
+    res.json({ ok: true, tags: dbMod.getTags(guildId) });
+  });
+
   // ─── Theme (per-guild colors / footer / tone pack) ───────────────────────
   app.get("/api/theme", requireAuth, (req, res) => {
     const themeMod = require("../theme");
