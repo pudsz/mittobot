@@ -31,6 +31,8 @@ const DEFAULTS = {
   deepseekModel:      "deepseek-chat",
   togetherApiKey:     "",
   togetherModel:      "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+  requestyApiKey:     "",
+  requestyModel:      "openai/gpt-4o-mini",
   aiSystemPrompt:     AI_SYSTEM_PROMPT_DEFAULT,
   aiAllowedChannels:  "",
   aiIgnoredChannels:  "",
@@ -44,17 +46,20 @@ const DEFAULTS = {
   aiKeyword:           "mitto",
   aiFallbackProviders:  "",   // comma-separated provider IDs, up to 5
   aiChattyMode:         false, // respond to conversations naturally without being pinged
-  aiChattyCooldown:     60,    // seconds between responses in the same channel (chatty mode)  aiDmEnabled:        true,
+  aiChattyCooldown:     60,    // seconds between responses in the same channel (chatty mode)
+  aiDmEnabled:          true,  // respond to direct messages via AI
   // ─── Voice settings ────────────────────────────────────────────────────
   voiceEnabled:       false,
   voiceChannelId:     "",
   voiceTTSVoice:      "en-US-EmmaMultilingualNeural",
-  voiceVolume:          1.0,  // respond to direct messages via AI
+  voiceVolume:          1.0,
   aiBrowserEnabled:     true,  // enable Playwright-powered browse_page tool
   aiToolPermissions:    "",   // JSON map of tool name -> min perm level: {"warn_member":"mod","kick_member":"admin","ban_member":"admin","mute_member":"mod"}
+  aiPersonality:        "neutral",
   funEnabled:         true,
   infoEnabled:        true,
   fakeModEnabled:     true,
+  levelingEnabled:    false,
   maintenanceMode:    false,
   maintenanceMessage: "🔧 The bot is currently under maintenance. Please try again later.",
 };

@@ -39,6 +39,7 @@ const AI_SETTING_KEYS = new Set([
   "nvidiaApiKey", "nvidiaModel", "nvidiaBaseUrl",
   "deepseekApiKey", "deepseekModel",
   "togetherApiKey", "togetherModel",
+  "requestyApiKey", "requestyModel",
   "aiSystemPrompt", "aiAllowedChannels", "aiIgnoredChannels",
   "aiTemperature", "aiMaxTokens", "aiTopP", "aiContextLimit",
   "aiToolsEnabled", "aiMemoryEnabled", "aiThinkingEnabled",
@@ -131,7 +132,7 @@ function startApi(ctx) {
   // Check if the dashboard is built and can be served locally (same-origin).
   // This is checked early so we can relax the DASHBOARD_ORIGIN requirement:
   // same-origin requests don't need CORS at all.
-  const dashboardPath = path.resolve(__dirname, "../../dashboard/dist");
+  const dashboardPath = path.resolve(__dirname, "../../dashboard-v2/dist");
   const servingDashboard = fs.existsSync(dashboardPath);
 
   // CORS: restrict to the dashboard origin(s). DASHBOARD_ORIGIN may be a
@@ -1355,8 +1356,111 @@ function startApi(ctx) {
     if (Array.isArray(body.ignoredChannels)) patch.ignoredChannels = body.ignoredChannels.filter(x => /^\d{17,20}$/.test(x));
     if (Array.isArray(body.ignoredRoles))    patch.ignoredRoles    = body.ignoredRoles.filter(x => /^\d{17,20}$/.test(x));
     if (body.rules && typeof body.rules === "object") patch.rules = body.rules;
+    // Heat config (BOT_SPEC §3.2). Deep-merged by setConfig so partial patches
+    // are safe; here we validate + clamp the shape.
+    if (body.heat && typeof body.heat === "object") {
+      const heat = {};
+      if (typeof body.heat.enabled === "boolean") heat.enabled = body.heat.enabled;
+      if (typeof body.heat.decayPerMinute === "number") heat.decayPerMinute = Math.min(Math.max(body.heat.decayPerMinute, 0), 100);
+      if (Array.isArray(body.heat.thresholds)) {
+        heat.thresholds = body.heat.thresholds
+          .filter(t => t && typeof t === "object" && typeof t.heat === "number")
+          .map(t => ({
+            heat: Math.min(Math.max(t.heat, 1), 10_000),
+            action: ["warn", "mute", "kick", "ban"].includes(t.action) ? t.action : "warn",
+            ...(typeof t.duration === "string" ? { duration: t.duration.slice(0, 8) } : {}),
+          }))
+          .slice(0, 10);
+      }
+      patch.heat = heat;
+    }
+    // Extended-automod block (merged into the unified config). setConfig routes
+    // this to the extended store (automod_extended table), so it's persisted
+    // separately from the base row and partial patches don't wipe siblings.
+    if (body.extended && typeof body.extended === "object") {
+      const e = body.extended;
+      const ext = {};
+      if (Array.isArray(e.link_blacklist)) ext.link_blacklist = e.link_blacklist.filter(x => typeof x === "string").map(s => s.slice(0, 200)).slice(0, 100);
+      if (Array.isArray(e.link_whitelist)) ext.link_whitelist = e.link_whitelist.filter(x => typeof x === "string").map(s => s.slice(0, 200)).slice(0, 100);
+      if (typeof e.link_action === "string" && ["delete", "warn", "mute"].includes(e.link_action)) ext.link_action = e.link_action;
+      if (typeof e.repeated_text === "boolean") ext.repeated_text = e.repeated_text;
+      if (typeof e.repeated_text_count === "number") ext.repeated_text_count = Math.min(Math.max(e.repeated_text_count, 2), 20);
+      if (typeof e.repeated_text_action === "string" && ["delete", "warn", "mute"].includes(e.repeated_text_action)) ext.repeated_text_action = e.repeated_text_action;
+      if (typeof e.emoji_spam === "boolean") ext.emoji_spam = e.emoji_spam;
+      if (typeof e.emoji_max === "number") ext.emoji_max = Math.min(Math.max(e.emoji_max, 1), 100);
+      if (typeof e.emoji_action === "string" && ["delete", "warn", "mute"].includes(e.emoji_action)) ext.emoji_action = e.emoji_action;
+      if (typeof e.blocked_emojis_enabled === "boolean") ext.blocked_emojis_enabled = e.blocked_emojis_enabled;
+      if (Array.isArray(e.blocked_emojis)) ext.blocked_emojis = e.blocked_emojis.filter(x => typeof x === "string").slice(0, 100);
+      if (typeof e.blocked_emojis_action === "string" && ["delete", "warn", "mute"].includes(e.blocked_emojis_action)) ext.blocked_emojis_action = e.blocked_emojis_action;
+      if (typeof e.blocked_reaction_emojis_enabled === "boolean") ext.blocked_reaction_emojis_enabled = e.blocked_reaction_emojis_enabled;
+      if (Array.isArray(e.blocked_reaction_emojis)) ext.blocked_reaction_emojis = e.blocked_reaction_emojis.filter(x => typeof x === "string").slice(0, 100);
+      if (typeof e.blocked_reaction_action === "string" && ["delete", "warn", "mute", "kick", "ban"].includes(e.blocked_reaction_action)) ext.blocked_reaction_action = e.blocked_reaction_action;
+      if (typeof e.zalgo_enabled === "boolean") ext.zalgo_enabled = e.zalgo_enabled;
+      if (typeof e.zalgo_action === "string" && ["delete", "warn", "mute"].includes(e.zalgo_action)) ext.zalgo_action = e.zalgo_action;
+      // §3.1 new rule types
+      if (typeof e.regex_enabled === "boolean") ext.regex_enabled = e.regex_enabled;
+      if (Array.isArray(e.regex_patterns)) ext.regex_patterns = e.regex_patterns.filter(x => typeof x === "string" && x.length <= 200).slice(0, 10);
+      if (typeof e.regex_action === "string" && ["delete", "warn", "mute"].includes(e.regex_action)) ext.regex_action = e.regex_action;
+      if (typeof e.attachments_enabled === "boolean") ext.attachments_enabled = e.attachments_enabled;
+      if (Array.isArray(e.attachments_blocked_exts)) ext.attachments_blocked_exts = e.attachments_blocked_exts.filter(x => typeof x === "string").map(s => s.replace(/[^a-z0-9]/gi, "").slice(0, 10)).slice(0, 50);
+      if (typeof e.attachments_max_size_mb === "number") ext.attachments_max_size_mb = Math.min(Math.max(e.attachments_max_size_mb, 0), 100);
+      if (typeof e.attachments_action === "string" && ["delete", "warn", "mute"].includes(e.attachments_action)) ext.attachments_action = e.attachments_action;
+      if (typeof e.newlines_enabled === "boolean") ext.newlines_enabled = e.newlines_enabled;
+      if (typeof e.newlines_max === "number") ext.newlines_max = Math.min(Math.max(e.newlines_max, 1), 500);
+      if (typeof e.newlines_action === "string" && ["delete", "warn", "mute"].includes(e.newlines_action)) ext.newlines_action = e.newlines_action;
+      if (typeof e.mentions_roles_enabled === "boolean") ext.mentions_roles_enabled = e.mentions_roles_enabled;
+      if (typeof e.mentions_roles_max === "number") ext.mentions_roles_max = Math.min(Math.max(e.mentions_roles_max, 1), 50);
+      if (typeof e.mentions_roles_action === "string" && ["delete", "warn", "mute"].includes(e.mentions_roles_action)) ext.mentions_roles_action = e.mentions_roles_action;
+      patch.extended = ext;
+    }
     const next = automod.setConfig(guildId, patch);
     res.json({ ok: true, config: next });
+  });
+
+  // ─── Automod test mode + trigger stats (BOT_SPEC §3.4) ─────────────────────
+  // Dry-run all rules against a candidate message string. Returns which would
+  // fire + their actions WITHOUT enforcing, deleting, heat, or stats.
+  app.post("/api/automod/test", requireAuth, (req, res) => {
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    const guildId = guildInfo.guildId;
+    if (!guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    if (!userCanAccessGuild(req.user.sub, guildId, req.user.isOwner)) return res.status(403).json({ error: "You don't have access to this guild" });
+    const b = req.body || {};
+    const content = typeof b.content === "string" ? b.content.slice(0, 4000) : "";
+    if (!content.trim()) return res.status(400).json({ error: "content is required" });
+    const mentionCount = Math.min(Math.max(parseInt(b.mentionCount, 10) || 0, 0), 100);
+    try {
+      res.json(automod.testRules(guildId, content, { mentionCount }));
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/automod/stats", requireAuth, async (req, res) => {
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    const guildId = guildInfo.guildId;
+    if (!guildId) return res.json({ stats: [] });
+    if (!userCanAccessGuild(req.user.sub, guildId, req.user.isOwner)) return res.status(403).json({ error: "You don't have access to this guild" });
+    const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 365);
+    try {
+      const db = require("../db");
+      res.json({ stats: await db.getAutomodStats(guildId, days), days });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/automod/stats", requireOwner, async (req, res) => {
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    const guildId = guildInfo.guildId;
+    if (!guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    try {
+      const db = require("../db");
+      await db.clearAutomodStats(guildId);
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // ─── Welcome / leave / logs ──────────────────────────────────────────────
@@ -1404,6 +1508,200 @@ function startApi(ctx) {
     };
     const next = greet.setConfig(guildId, clean);
     res.json({ ok: true, config: next });
+  });
+
+  // ─── Theme (per-guild colors / footer / tone pack) ───────────────────────
+  app.get("/api/theme", requireAuth, (req, res) => {
+    const themeMod = require("../theme");
+    const tone = require("../tone");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (guildInfo.guildId && !userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner)) {
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    }
+    res.json({
+      guildId: guildInfo.guildId,
+      hasGuild: guildInfo.hasGuild,
+      guildName: guildInfo.guildName,
+      config: themeMod.getTheme(guildInfo.guildId),
+      packs: tone.listPacks(),
+      emojiStyles: themeMod.EMOJI_STYLES,
+    });
+  });
+
+  app.post("/api/theme", requireAuth, (req, res) => {
+    const themeMod = require("../theme");
+    const tone = require("../tone");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    const guildId = guildInfo.guildId;
+    if (!guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    if (!userCanAccessGuild(req.user.sub, guildId, req.user.isOwner)) return res.status(403).json({ error: "You don't have access to this guild" });
+    const b = req.body || {};
+    if (b.reset === true) {
+      return res.json({ ok: true, config: themeMod.resetTheme(guildId) });
+    }
+    const patch = {};
+    if (typeof b.tone === "string" && tone.PACKS[b.tone]) patch.tone = b.tone;
+    if (typeof b.emojiStyle === "string" && themeMod.EMOJI_STYLES.includes(b.emojiStyle)) patch.emojiStyle = b.emojiStyle;
+    if (b.colors && typeof b.colors === "object") {
+      patch.colors = {};
+      for (const kind of themeMod.COLOR_KINDS) {
+        const v = b.colors[kind];
+        if (typeof v === "number" && v >= 0 && v <= 0xffffff) patch.colors[kind] = v;
+        else if (typeof v === "string" && /^#?[0-9a-f]{6}$/i.test(v)) patch.colors[kind] = parseInt(v.replace("#", ""), 16);
+      }
+    }
+    if (b.footer && typeof b.footer === "object") {
+      patch.footer = {
+        enabled: !!b.footer.enabled,
+        text: b.footer.text ? String(b.footer.text).slice(0, 200) : null,
+      };
+    }
+    res.json({ ok: true, config: themeMod.setTheme(guildId, patch) });
+  });
+
+  // ─── Anti-raid ───────────────────────────────────────────────────────────
+  app.get("/api/antiraid", requireAuth, (req, res) => {
+    const antiraidMod = require("../antiraid");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (guildInfo.guildId && !userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner)) {
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    }
+    res.json({
+      guildId: guildInfo.guildId,
+      hasGuild: guildInfo.hasGuild,
+      guildName: guildInfo.guildName,
+      config: antiraidMod.getConfig(guildInfo.guildId),
+      locked: guildInfo.guildId ? antiraidMod.isLocked(guildInfo.guildId) : false,
+    });
+  });
+
+  app.post("/api/antiraid", requireAuth, (req, res) => {
+    const antiraidMod = require("../antiraid");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    const guildId = guildInfo.guildId;
+    if (!guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    if (!userCanAccessGuild(req.user.sub, guildId, req.user.isOwner)) return res.status(403).json({ error: "You don't have access to this guild" });
+    const b = req.body || {};
+    if (b.reset === true) {
+      return res.json({ ok: true, config: antiraidMod.resetConfig(guildId) });
+    }
+    if (b.unlock === true) {
+      antiraidMod.manualUnlock(guildId).catch(err => console.error("[api] antiraid unlock:", err.message));
+      return res.json({ ok: true, locked: false });
+    }
+    const patch = {};
+    if (typeof b.enabled === "boolean") patch.enabled = b.enabled;
+    if (b.joinRate && typeof b.joinRate === "object") {
+      patch.joinRate = {
+        maxJoins: Math.min(Math.max(parseInt(b.joinRate.maxJoins, 10) || 10, 2), 100),
+        windowSeconds: Math.min(Math.max(parseInt(b.joinRate.windowSeconds, 10) || 10, 3), 600),
+      };
+    }
+    if (b.accountAge && typeof b.accountAge === "object") {
+      patch.accountAge = {
+        minAccountAgeHours: Math.min(Math.max(parseInt(b.accountAge.minAccountAgeHours, 10) || 0, 0), 720),
+        gateAction: ["kick", "quarantine", "notify"].includes(b.accountAge.gateAction) ? b.accountAge.gateAction : "notify",
+      };
+    }
+    if (typeof b.raidAction === "string" && ["lockdown", "kick_new", "quarantine", "notify"].includes(b.raidAction)) patch.raidAction = b.raidAction;
+    if (typeof b.alertChannelId === "string") patch.alertChannelId = b.alertChannelId.trim() || null;
+    if (typeof b.quarantineRoleId === "string") patch.quarantineRoleId = b.quarantineRoleId.trim() || null;
+    if (typeof b.cooldownMinutes === "number") patch.cooldownMinutes = Math.min(Math.max(b.cooldownMinutes, 1), 1440);
+    if (Array.isArray(b.exemptRoles)) patch.exemptRoles = b.exemptRoles.filter(r => typeof r === "string").slice(0, 25);
+    res.json({ ok: true, config: antiraidMod.setConfig(guildId, patch) });
+  });
+
+  // ─── Leveling & XP (BOT_SPEC §4) ───────────────────────────────────────────
+  app.get("/api/leveling", requireAuth, (req, res) => {
+    const levelingMod = require("../leveling");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (guildInfo.guildId && !userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner)) {
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    }
+    res.json({
+      guildId: guildInfo.guildId,
+      hasGuild: guildInfo.hasGuild,
+      guildName: guildInfo.guildName,
+      channels: guildInfo.channels,
+      roles: guildInfo.roles,
+      config: levelingMod.getConfig(guildInfo.guildId),
+      leaderboard: guildInfo.guildId ? levelingMod.getLeaderboard(guildInfo.guildId, 100) : [],
+    });
+  });
+
+  app.post("/api/leveling", requireAuth, (req, res) => {
+    const levelingMod = require("../leveling");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    const guildId = guildInfo.guildId;
+    if (!guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    if (!userCanAccessGuild(req.user.sub, guildId, req.user.isOwner)) return res.status(403).json({ error: "You don't have access to this guild" });
+    const b = req.body || {};
+    if (b.reset === true) {
+      return res.json({ ok: true, config: levelingMod.resetConfig(guildId) });
+    }
+    const patch = {};
+    if (typeof b.enabled === "boolean") patch.enabled = b.enabled;
+    if (typeof b.minXp === "number") patch.minXp = Math.min(Math.max(b.minXp, 0), 1000);
+    if (typeof b.maxXp === "number") patch.maxXp = Math.min(Math.max(b.maxXp, 0), 1000);
+    if (typeof b.xpCooldownSeconds === "number") patch.xpCooldownSeconds = Math.min(Math.max(b.xpCooldownSeconds, 0), 3600);
+    if (typeof b.levelUpMessage === "string") patch.levelUpMessage = b.levelUpMessage.slice(0, 500);
+    if (typeof b.levelUpDestination === "string") patch.levelUpDestination = b.levelUpDestination.slice(0, 100);
+    if (b.channelMultipliers && typeof b.channelMultipliers === "object") {
+      const cm = {};
+      for (const [k, v] of Object.entries(b.channelMultipliers)) if (/^\d{17,20}$/.test(k) && typeof v === "number") cm[k] = Math.min(Math.max(v, 0), 100);
+      patch.channelMultipliers = cm;
+    }
+    if (b.roleMultipliers && typeof b.roleMultipliers === "object") {
+      const rm = {};
+      for (const [k, v] of Object.entries(b.roleMultipliers)) if (/^\d{17,20}$/.test(k) && typeof v === "number") rm[k] = Math.min(Math.max(v, 0), 100);
+      patch.roleMultipliers = rm;
+    }
+    if (Array.isArray(b.roleRewards)) {
+      patch.roleRewards = b.roleRewards
+        .filter(r => r && typeof r === "object" && typeof r.level === "number" && /^\d{17,20}$/.test(r.roleId || ""))
+        .map(r => ({ level: Math.min(Math.max(r.level, 0), 1000), roleId: r.roleId, removePrior: !!r.removePrior }))
+        .slice(0, 50);
+    }
+    if (typeof b.stackRewards === "boolean") patch.stackRewards = b.stackRewards;
+    if (Array.isArray(b.ignoredChannels)) patch.ignoredChannels = b.ignoredChannels.filter(x => /^\d{17,20}$/.test(x));
+    if (Array.isArray(b.ignoredRoles)) patch.ignoredRoles = b.ignoredRoles.filter(x => /^\d{17,20}$/.test(x));
+    if (typeof b.voiceXpPerMinute === "number") patch.voiceXpPerMinute = Math.min(Math.max(b.voiceXpPerMinute, 0), 100);
+    res.json({ ok: true, config: levelingMod.setConfig(guildId, patch) });
+  });
+
+  // Admin: adjust a user's XP/level. Owner-only (matches $givexp/$setlevel perms
+  // being admin — but the API is a privileged write surface so require owner).
+  app.post("/api/leveling/user", requireOwner, (req, res) => {
+    const levelingMod = require("../leveling");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    const guildId = guildInfo.guildId;
+    if (!guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    const b = req.body || {};
+    if (!/^\d{17,20}$/.test(b.userId || "")) return res.status(400).json({ error: "userId required" });
+    if (typeof b.action !== "string" || !["give", "setLevel"].includes(b.action)) return res.status(400).json({ error: "action must be give or setLevel" });
+    const amount = parseInt(b.amount, 10);
+    if (Number.isNaN(amount)) return res.status(400).json({ error: "amount required" });
+    let data;
+    if (b.action === "give") {
+      data = levelingMod.giveXp(guildId, b.userId, Math.max(-1_000_000, Math.min(1_000_000, amount)));
+    } else {
+      if (amount < 0 || amount > 1000) return res.status(400).json({ error: "level must be 0–1000" });
+      data = levelingMod.setLevel(guildId, b.userId, amount);
+    }
+    res.json({ ok: true, user: data });
+  });
+
+  app.post("/api/leveling/reset", requireOwner, async (req, res) => {
+    const levelingMod = require("../leveling");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    const guildId = guildInfo.guildId;
+    if (!guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    try {
+      await levelingMod.resetGuild(guildId);
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // ─── Roles (autorole + reaction-role viewer) ─────────────────────────────
@@ -1515,7 +1813,17 @@ function startApi(ctx) {
     const { store } = req.params;
     if (!DATA_STORES.includes(store)) return res.status(400).json({ error: "Unknown store" });
     try { await ctx.data.load(); } catch (err) { return res.status(500).json({ error: err.message }); }
-    res.json({ store, data: ctx.data[store] ?? {} });
+    const full = ctx.data[store] ?? {};
+    // Scope guild-keyed stores to the selected guild when ?guildId= is present,
+    // so the dashboard only sees this guild's data. stickies (channel-keyed)
+    // and afkUsers (user-keyed, with an inner guildId field) aren't guild-keyed
+    // at the top level, so they're returned whole.
+    const guildId = reqGuildId(req);
+    let scoped = full;
+    if (guildId && (store === "warnings" || store === "reactionlogs" || store === "customRoles")) {
+      scoped = full[guildId] ?? {};
+    }
+    res.json({ store, data: scoped });
   });
 
   // ─── Dangerzone — Trap Channel Config ─────────────────────────────────────
@@ -2024,7 +2332,28 @@ function startApi(ctx) {
       if (Number.isInteger(body.workMax) && body.workMax >= body.workMin) patch.workMax = body.workMax;
       if (Number.isFinite(body.interestRate) && body.interestRate >= 0 && body.interestRate <= 100) patch.interestRate = body.interestRate;
       if (Number.isFinite(body.taxRate) && body.taxRate >= 0 && body.taxRate <= 100) patch.taxRate = body.taxRate;
-      if (Number.isFinite(body.gambleOdds) && body.gambleOdds >= 0 && body.gambleOdds <= 1) patch.gambleOdds = body.gambleOdds;
+      // NOTE: gambleOdds is intentionally NOT accepted — gamble() uses slotsWinOdds,
+      // and accepting gambleOdds here would persist a value that silently does
+      // nothing. Use slotsWinOdds (Slots section) to tune the win chance.
+      // Game bet limits — min must be ≥1, max must be ≥ its min.
+      const intGte = (v, lo) => Number.isInteger(v) && v >= lo;
+      if (intGte(body.slotsMinBet, 1) && intGte(body.slotsMaxBet, body.slotsMinBet)) { patch.slotsMinBet = body.slotsMinBet; patch.slotsMaxBet = body.slotsMaxBet; }
+      if (intGte(body.coinflipMinBet, 1) && intGte(body.coinflipMaxBet, body.coinflipMinBet)) { patch.coinflipMinBet = body.coinflipMinBet; patch.coinflipMaxBet = body.coinflipMaxBet; }
+      if (intGte(body.highlowMinBet, 1) && intGte(body.highlowMaxBet, body.highlowMinBet)) { patch.highlowMinBet = body.highlowMinBet; patch.highlowMaxBet = body.highlowMaxBet; }
+      if (intGte(body.blackjackMinBet, 1) && intGte(body.blackjackMaxBet, body.blackjackMinBet)) { patch.blackjackMinBet = body.blackjackMinBet; patch.blackjackMaxBet = body.blackjackMaxBet; }
+      // Fish & mine are fixed-cost (no player-chosen bet), so only the cost is
+      // tunable — fishMaxBet/mineMaxBet are dead config and not accepted.
+      if (intGte(body.fishMinBet, 1)) patch.fishMinBet = body.fishMinBet;
+      if (intGte(body.mineMinBet, 1)) patch.mineMinBet = body.mineMinBet;
+      // Tunable odds/multipliers/payouts.
+      if (Number.isFinite(body.slotsWinOdds) && body.slotsWinOdds >= 0 && body.slotsWinOdds <= 1) patch.slotsWinOdds = body.slotsWinOdds;
+      if (intGte(body.slotsJackpotMultiplier, 1)) patch.slotsJackpotMultiplier = body.slotsJackpotMultiplier;
+      if (Number.isFinite(body.blackjackPayout) && body.blackjackPayout >= 1 && body.blackjackPayout <= 3) patch.blackjackPayout = body.blackjackPayout;
+      if (intGte(body.highlowDiceSides, 2) && body.highlowDiceSides <= 100) patch.highlowDiceSides = body.highlowDiceSides;
+      if (Number.isFinite(body.triviaStreakBonus) && body.triviaStreakBonus >= 0 && body.triviaStreakBonus <= 10) patch.triviaStreakBonus = body.triviaStreakBonus;
+      if (Number.isFinite(body.wordleStreakBonus) && body.wordleStreakBonus >= 0 && body.wordleStreakBonus <= 10) patch.wordleStreakBonus = body.wordleStreakBonus;
+      if (typeof body.wordleEnabled === "boolean") patch.wordleEnabled = body.wordleEnabled ? 1 : 0;
+      else if (body.wordleEnabled === 0 || body.wordleEnabled === 1) patch.wordleEnabled = body.wordleEnabled;
       const cfg = await economy.saveConfig(guildInfo.guildId, patch);
       res.json({ ok: true, config: cfg });
     } catch (err) {
@@ -2302,8 +2631,7 @@ function startApi(ctx) {
   });
 
   // ─── Serve built dashboard (SPA) ──────────────────────────────────────
-  // In production (Docker / Pterodactyl), the Vite build output sits at
-  // dashboard/dist/ relative to the project root.  The Express server serves
+  // The Vite build output sits at dashboard/dist/. The Express server serves
   // the static files AND handles SPA fallback so the entire application
   // (bot API + dashboard UI) runs on a single port.
   // Note: dashboardPath & servingDashboard are already resolved above.
@@ -2337,47 +2665,36 @@ function startApi(ctx) {
     res.status(500).json({ error: "Internal server error" });
   });
 
-  // ── SSL / HTTPS ──────────────────────────────────────────────────────
-  // Self-signed cert generation (uses openssl, falls back to Node crypto).
-  // Required when the upstream proxy forwards SSL-wrapped traffic instead of
-  // terminating it (common in Pterodactyl environments without a reverse proxy).
-  function getSSLCredentials() {
-    const certPath = process.env.SSL_CERT_PATH;
-    const keyPath  = process.env.SSL_KEY_PATH;
+  // ── HTTP / HTTPS ────────────────────────────────────────────────────
+  // Default: plain HTTP on PORT. The recommended production setup is to put a
+  // reverse proxy (Caddy/nginx) in front of the bot to terminate TLS — in that
+  // case the bot stays on plain HTTP. Real HTTPS is opt-in: set both
+  // SSL_CERT_PATH and SSL_KEY_PATH to serve TLS directly (no self-signed cert,
+  // which browsers reject and which breaks reverse-proxy chaining).
+  const certPath = process.env.SSL_CERT_PATH;
+  const keyPath  = process.env.SSL_KEY_PATH;
+  const useHttps = Boolean(certPath && keyPath && fs.existsSync(certPath) && fs.existsSync(keyPath));
 
-    if (certPath && keyPath && fs.existsSync(certPath) && fs.existsSync(keyPath)) {
-      console.log("[api] Using SSL certificate from:", certPath);
-      return { cert: fs.readFileSync(certPath, "utf8"), key: fs.readFileSync(keyPath, "utf8") };
-    }
-
-    // Generate a self-signed cert via openssl
-    const tmpKey  = path.join(os.tmpdir(), "server.key");
-    const tmpCert = path.join(os.tmpdir(), "server.crt");
-
-    try {
-      const { execSync } = require("child_process");
-      execSync(
-        `openssl req -x509 -newkey rsa:2048 -keyout "${tmpKey}" -out "${tmpCert}" -days 3650 -nodes -subj "/CN=${os.hostname()}" 2>/dev/null`,
-        { stdio: "pipe", timeout: 10_000 }
-      );
-      console.log("[api] Generated self-signed SSL certificate (10yr expiry)");
-      return { cert: fs.readFileSync(tmpCert, "utf8"), key: fs.readFileSync(tmpKey, "utf8") };
-    } catch (err) {
-      console.error("[api] openssl is required for SSL cert generation but was not found:", err.message);
-      console.error("[api] Install openssl or set SSL_CERT_PATH and SSL_KEY_PATH env vars.");
-      throw new Error("openssl required for SSL certificate generation");
-    }
-  }
-  // --- Create HTTPS server ---
-  const sslCreds = getSSLCredentials();
-
-  https.createServer(sslCreds, app).listen(PORT, "0.0.0.0", () => {
+  const onListening = () => {
     const schedCount = (() => { try { return require("../scheduler").count(); } catch { return 0; } })();
-    console.log(`[api] Bot dashboard API on https://0.0.0.0:${PORT} (${schedCount} schedules loaded)`);
+    const scheme = useHttps ? "https" : "http";
+    console.log(`[api] Bot dashboard API on ${scheme}://0.0.0.0:${PORT} (${schedCount} schedules loaded)`);
     if (servingDashboard) {
-      console.log(`[api] Dashboard available at https://0.0.0.0:${PORT}/`);
+      console.log(`[api] Dashboard available at ${scheme}://0.0.0.0:${PORT}/`);
     }
-  });
+  };
+
+  if (useHttps) {
+    console.log("[api] Using SSL certificate from:", certPath);
+    https
+      .createServer({ cert: fs.readFileSync(certPath, "utf8"), key: fs.readFileSync(keyPath, "utf8") }, app)
+      .listen(PORT, "0.0.0.0", onListening);
+  } else {
+    if (certPath || keyPath) {
+      console.warn("[api] SSL_CERT_PATH/SSL_KEY_PATH set but one is missing or unreadable — serving HTTP instead.");
+    }
+    app.listen(PORT, "0.0.0.0", onListening);
+  }
 }
 
 module.exports = { startApi };

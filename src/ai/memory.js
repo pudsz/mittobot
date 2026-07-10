@@ -5,6 +5,7 @@
 //   - DM memories           ("dm" + userId)    → private facts for one DM user
 // Memories replace the previous concept of "facts" (renamed for terminology clarity).
 const db = require("../db");
+const { sanitizeUserInput } = require("../ai");
 
 const MAX_CONTENT = 600;       // clamp a single memory
 const MAX_PER_USER = 60;       // prune oldest beyond this, per (guild,user)
@@ -76,7 +77,8 @@ async function prune(guildId, userId) {
 }
 
 async function add(guildId, userId, content) {
-  const text = clamp(content);
+  // Sanitize memory content on write to prevent stored injection payloads
+  const text = clamp(sanitizeUserInput(content));
   if (!guildId || !text) return null;
   const uid = userId || null;
 

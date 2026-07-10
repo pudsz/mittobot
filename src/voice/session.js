@@ -48,6 +48,7 @@ class VoiceSession extends EventEmitter {
     this.listening = false;      // Currently listening for speech
     this.active = false;         // Session is live
     this._startedAt = null;      // Set when session starts
+    this._startLock = false;     // Prevents stop() from racing with start()
 
     // Speech detection state
     this._speechBuffer = [];
@@ -55,10 +56,12 @@ class VoiceSession extends EventEmitter {
     this._lastSpeechMs = 0;
     this._speechStartedMs = 0;
     this._isInSpeech = false;
+    this._processingSTT = false; // Prevents overlapping _onSpeechEnd
 
     // Audio playback queue
     this._playQueue = [];
     this._isPlaying = false;
+    this._speakLock = false;     // Serializes speak() → _playNext() entry
   }
 
   get userId() { return this._userId; }
@@ -66,7 +69,8 @@ class VoiceSession extends EventEmitter {
 
   /** Start the voice session — join channel and begin listening */
   async start() {
-    if (this.active) return;
+    if (this.active || this._startLock) return;
+    this._startLock = true;
 
     try {
       // 1. Join voice channel
@@ -111,6 +115,9 @@ class VoiceSession extends EventEmitter {
       this.sttEngine = createSTTEngine("auto");
       await this.sttEngine.init();
 
+      // Bail out if stop() was called while we were awaiting
+      if (!this._startLock) return;
+
       // 6. Start listening if STT is available
       if (this.sttEngine.ready) {
         this._startListening();
@@ -128,6 +135,8 @@ class VoiceSession extends EventEmitter {
     } catch (err) {
       console.error("[voice:session] Failed to start:", err.message);
       this.emit("error", err);
+    } finally {
+      this._startLock = false;
     }
   }
 
@@ -135,6 +144,7 @@ class VoiceSession extends EventEmitter {
   stop() {
     if (!this.active) return;
     this.active = false;
+    this._startLock = false; // Unblock any in-flight start()
     this._stopListening();
 
     if (this.sttEngine) {
@@ -154,6 +164,9 @@ class VoiceSession extends EventEmitter {
 
     this._playQueue = [];
     this._speechBuffer = [];
+    this._isPlaying = false;
+    this._speakLock = false;
+    this._processingSTT = false;
     this.emit("stopped");
     console.log(`[voice:session] Stopped session for user ${this.userId}`);
   }
@@ -168,10 +181,15 @@ class VoiceSession extends EventEmitter {
   async speak(text, voice) {
     if (!this.active || !text) return;
 
-    // Add to queue (or play immediately if nothing playing)
+    // Add to queue and kick off playback if idle
     this._playQueue.push({ text, voice });
-    if (!this._isPlaying) {
-      await this._playNext();
+    if (!this._isPlaying && !this._speakLock) {
+      this._speakLock = true;
+      try {
+        await this._playNext();
+      } finally {
+        this._speakLock = false;
+      }
     }
   }
 
@@ -188,7 +206,7 @@ class VoiceSession extends EventEmitter {
     try {
       const buffers = await tts.synthesizeLong(item.text, item.voice);
       for (const buf of buffers) {
-        if (!this.active) break;
+        if (!this.active || !this.player) break;
         const stream = Readable.from(buf);
         const resource = createAudioResource(stream, {
           inputType: StreamType.Arbitrary,
@@ -203,10 +221,12 @@ class VoiceSession extends EventEmitter {
           }
         } catch { /* best-effort */ }
         this.player.play(resource);
-        // Wait for playback to finish
+        // Wait for playback to finish — clean up both listeners to avoid leaks
         await new Promise((resolve) => {
-          this.player.once(AudioPlayerStatus.Idle, resolve);
-          this.player.once("error", resolve);
+          const onIdle = () => { this.player?.removeListener("error", onError); resolve(); };
+          const onError = () => { this.player?.removeListener(AudioPlayerStatus.Idle, onIdle); resolve(); };
+          this.player.once(AudioPlayerStatus.Idle, onIdle);
+          this.player.once("error", onError);
         });
       }
     } catch (err) {
@@ -317,13 +337,15 @@ class VoiceSession extends EventEmitter {
   }
 
   async _onSpeechEnd() {
-    if (!this._isInSpeech) return;
+    if (!this._isInSpeech || this._processingSTT) return;
+    this._processingSTT = true;
     const duration = Date.now() - this._speechStartedMs;
 
     if (duration < MIN_SPEECH_DURATION_MS) {
       // Too short — ignore
       this._isInSpeech = false;
       this._speechBuffer = [];
+      this._processingSTT = false;
       return;
     }
 
@@ -363,6 +385,7 @@ class VoiceSession extends EventEmitter {
     } catch (err) {
       console.error("[voice:session] Speech processing error:", err.message);
     } finally {
+      this._processingSTT = false;
       this.listening = true;
     }
   }

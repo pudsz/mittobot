@@ -173,7 +173,20 @@ function init() {
       blocked_reaction_emojis TEXT DEFAULT '[]',
       blocked_reaction_action TEXT DEFAULT 'delete',
       zalgo_enabled  INTEGER DEFAULT 0,
-      zalgo_action   TEXT DEFAULT 'delete'
+      zalgo_action   TEXT DEFAULT 'delete',
+      regex_enabled     INTEGER DEFAULT 0,
+      regex_patterns    TEXT DEFAULT '[]',
+      regex_action      TEXT DEFAULT 'delete',
+      attachments_enabled        INTEGER DEFAULT 0,
+      attachments_blocked_exts   TEXT DEFAULT '[]',
+      attachments_max_size_mb    REAL DEFAULT 0,
+      attachments_action         TEXT DEFAULT 'delete',
+      newlines_enabled INTEGER DEFAULT 0,
+      newlines_max     INTEGER DEFAULT 10,
+      newlines_action  TEXT DEFAULT 'delete',
+      mentions_roles_enabled INTEGER DEFAULT 0,
+      mentions_roles_max    INTEGER DEFAULT 3,
+      mentions_roles_action TEXT DEFAULT 'delete'
     );
 
     CREATE TABLE IF NOT EXISTS reaction_logs (
@@ -189,15 +202,55 @@ function init() {
     );
 
     CREATE TABLE IF NOT EXISTS custom_roles (
-      guild_id TEXT,
-      user_id  TEXT,
-      role_id  TEXT,
+      guild_id   TEXT,
+      user_id    TEXT,
+      role_id    TEXT,
+      style      TEXT,
+      color      TEXT,
+      name       TEXT,
+      has_icon   INTEGER DEFAULT 0,
+      created_at INTEGER DEFAULT 0,
       PRIMARY KEY (guild_id, user_id)
     );
 
     CREATE TABLE IF NOT EXISTS dangerzone_config (
       guild_id TEXT PRIMARY KEY,
       channels TEXT DEFAULT '{}'
+    );
+
+    CREATE TABLE IF NOT EXISTS theme_config (
+      guild_id TEXT PRIMARY KEY,
+      config   TEXT NOT NULL DEFAULT '{}'
+    );
+
+    CREATE TABLE IF NOT EXISTS antiraid_config (
+      guild_id TEXT PRIMARY KEY,
+      config   TEXT NOT NULL DEFAULT '{}'
+    );
+
+    CREATE TABLE IF NOT EXISTS automod_stats (
+      guild_id TEXT,
+      rule     TEXT,
+      day      TEXT,
+      count    INTEGER DEFAULT 0,
+      PRIMARY KEY (guild_id, rule, day)
+    );
+
+    CREATE TABLE IF NOT EXISTS leveling_users (
+      guild_id     TEXT,
+      user_id      TEXT,
+      xp           INTEGER DEFAULT 0,
+      level        INTEGER DEFAULT 0,
+      last_xp_at   INTEGER DEFAULT 0,
+      messages     INTEGER DEFAULT 0,
+      voice_minutes INTEGER DEFAULT 0,
+      PRIMARY KEY (guild_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS leveling_xp ON leveling_users (guild_id, xp DESC);
+
+    CREATE TABLE IF NOT EXISTS leveling_config (
+      guild_id TEXT PRIMARY KEY,
+      config   TEXT NOT NULL DEFAULT '{}'
     );
 
     CREATE TABLE IF NOT EXISTS ai_memories (
@@ -291,12 +344,18 @@ function init() {
     CREATE INDEX IF NOT EXISTS backup_guild ON server_backups (guild_id);
 
     CREATE TABLE IF NOT EXISTS economy_users (
-      guild_id   TEXT NOT NULL,
-      user_id    TEXT NOT NULL,
-      balance    INTEGER DEFAULT 0,
-      bank       INTEGER DEFAULT 0,
-      last_daily BIGINT DEFAULT 0,
-      last_work  BIGINT DEFAULT 0,
+      guild_id       TEXT NOT NULL,
+      user_id        TEXT NOT NULL,
+      balance        INTEGER DEFAULT 0,
+      bank           INTEGER DEFAULT 0,
+      last_daily     BIGINT DEFAULT 0,
+      last_work      BIGINT DEFAULT 0,
+      games_played   INTEGER DEFAULT 0,
+      games_won      INTEGER DEFAULT 0,
+      games_lost     INTEGER DEFAULT 0,
+      total_wagered  INTEGER DEFAULT 0,
+      total_won      INTEGER DEFAULT 0,
+      biggest_win    INTEGER DEFAULT 0,
       PRIMARY KEY (guild_id, user_id)
     );
 
@@ -309,7 +368,29 @@ function init() {
       work_cooldown   BIGINT DEFAULT 3600000,
       interest_rate   REAL DEFAULT 0.0,
       tax_rate        REAL DEFAULT 0.0,
-      gamble_odds     REAL DEFAULT 0.45
+      gamble_odds     REAL DEFAULT 0.45,
+      -- New game configs
+      blackjack_min_bet     INTEGER DEFAULT 10,
+      blackjack_max_bet     INTEGER DEFAULT 10000,
+      blackjack_payout      REAL DEFAULT 1.5,
+      slots_min_bet         INTEGER DEFAULT 5,
+      slots_max_bet         INTEGER DEFAULT 5000,
+      slots_win_odds        REAL DEFAULT 0.30,
+      slots_jackpot_multiplier INTEGER DEFAULT 50,
+      coinflip_min_bet      INTEGER DEFAULT 1,
+      coinflip_max_bet      INTEGER DEFAULT 10000,
+      highlow_min_bet       INTEGER DEFAULT 10,
+      highlow_max_bet       INTEGER DEFAULT 10000,
+      highlow_dice_sides    INTEGER DEFAULT 6,
+      -- Skill games
+      fish_min_bet          INTEGER DEFAULT 10,
+      fish_max_bet          INTEGER DEFAULT 5000,
+      mine_min_bet          INTEGER DEFAULT 10,
+      mine_max_bet          INTEGER DEFAULT 5000,
+      trivia_streak_bonus   REAL DEFAULT 0.1,
+      wordle_enabled        INTEGER DEFAULT 1,
+      wordle_streak_bonus   REAL DEFAULT 0.2,
+      typerace_min_players  INTEGER DEFAULT 2
     );
 
     CREATE TABLE IF NOT EXISTS economy_shop (
@@ -405,6 +486,61 @@ function init() {
   try { db.exec("ALTER TABLE automod_extended ADD COLUMN blocked_reaction_emojis TEXT DEFAULT '[]'"); } catch { /* column already exists */ }
   try { db.exec("ALTER TABLE automod_extended ADD COLUMN blocked_reaction_action TEXT DEFAULT 'delete'"); } catch { /* column already exists */ }
   try { db.exec("ALTER TABLE automod_extended ADD COLUMN zalgo_action TEXT DEFAULT 'delete'"); } catch { /* column already exists */ }
+  // §3.1 new rule types
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN regex_enabled INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN regex_patterns TEXT DEFAULT '[]'"); } catch {}
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN regex_action TEXT DEFAULT 'delete'"); } catch {}
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN attachments_enabled INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN attachments_blocked_exts TEXT DEFAULT '[]'"); } catch {}
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN attachments_max_size_mb REAL DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN attachments_action TEXT DEFAULT 'delete'"); } catch {}
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN newlines_enabled INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN newlines_max INTEGER DEFAULT 10"); } catch {}
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN newlines_action TEXT DEFAULT 'delete'"); } catch {}
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN mentions_roles_enabled INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN mentions_roles_max INTEGER DEFAULT 3"); } catch {}
+  try { db.exec("ALTER TABLE automod_extended ADD COLUMN mentions_roles_action TEXT DEFAULT 'delete'"); } catch {}
+  // Economy user stats columns
+  try { db.exec("ALTER TABLE economy_users ADD COLUMN games_played INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE economy_users ADD COLUMN games_won INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE economy_users ADD COLUMN games_lost INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE economy_users ADD COLUMN total_wagered INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE economy_users ADD COLUMN total_won INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE economy_users ADD COLUMN biggest_win INTEGER DEFAULT 0"); } catch {}
+  // Economy config new game columns
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN blackjack_min_bet INTEGER DEFAULT 10"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN blackjack_max_bet INTEGER DEFAULT 10000"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN blackjack_payout REAL DEFAULT 1.5"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN slots_min_bet INTEGER DEFAULT 5"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN slots_max_bet INTEGER DEFAULT 5000"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN slots_win_odds REAL DEFAULT 0.30"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN slots_jackpot_multiplier INTEGER DEFAULT 50"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN coinflip_min_bet INTEGER DEFAULT 1"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN coinflip_max_bet INTEGER DEFAULT 10000"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN highlow_min_bet INTEGER DEFAULT 10"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN highlow_max_bet INTEGER DEFAULT 10000"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN highlow_dice_sides INTEGER DEFAULT 6"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN fish_min_bet INTEGER DEFAULT 10"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN fish_max_bet INTEGER DEFAULT 5000"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN mine_min_bet INTEGER DEFAULT 10"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN mine_max_bet INTEGER DEFAULT 5000"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN trivia_streak_bonus REAL DEFAULT 0.1"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN wordle_enabled INTEGER DEFAULT 1"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN wordle_streak_bonus REAL DEFAULT 0.2"); } catch {}
+  try { db.exec("ALTER TABLE economy_config ADD COLUMN typerace_min_players INTEGER DEFAULT 2"); } catch {}
+  // Economy user stats columns for new games
+  try { db.exec("ALTER TABLE economy_users ADD COLUMN wordle_streak INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE economy_users ADD COLUMN typerace_best_wpm INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE economy_users ADD COLUMN fish_caught INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE economy_users ADD COLUMN mine_depth INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE economy_users ADD COLUMN trivia_streak INTEGER DEFAULT 0"); } catch {}
+  // Custom roles — persist the full role object (not just role_id) so style,
+  // color, name, and icon survive a restart. Pre-existing DBs only had role_id.
+  try { db.exec("ALTER TABLE custom_roles ADD COLUMN style TEXT"); } catch {}
+  try { db.exec("ALTER TABLE custom_roles ADD COLUMN color TEXT"); } catch {}
+  try { db.exec("ALTER TABLE custom_roles ADD COLUMN name TEXT"); } catch {}
+  try { db.exec("ALTER TABLE custom_roles ADD COLUMN has_icon INTEGER DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE custom_roles ADD COLUMN created_at INTEGER DEFAULT 0"); } catch {}
   // (typo column retained for back-compat; safe to ignore)
   // Normalize legacy rows: guild_id='dm' sentinel rows become proper private DMs (guild_id=NULL).
   try { db.exec("UPDATE ai_conversations SET scope='private', guild_id=NULL, channel_id=NULL WHERE guild_id='dm'"); } catch {}
@@ -678,9 +814,22 @@ async function setExtendedAutomod(guildId, cfg) {
       blocked_reaction_emojis,
       blocked_reaction_action,
       zalgo_enabled,
-      zalgo_action
+      zalgo_action,
+      regex_enabled,
+      regex_patterns,
+      regex_action,
+      attachments_enabled,
+      attachments_blocked_exts,
+      attachments_max_size_mb,
+      attachments_action,
+      newlines_enabled,
+      newlines_max,
+      newlines_action,
+      mentions_roles_enabled,
+      mentions_roles_max,
+      mentions_roles_action
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(guild_id) DO UPDATE SET
       link_blacklist = excluded.link_blacklist,
       link_whitelist = excluded.link_whitelist,
@@ -698,7 +847,20 @@ async function setExtendedAutomod(guildId, cfg) {
       blocked_reaction_emojis = excluded.blocked_reaction_emojis,
       blocked_reaction_action = excluded.blocked_reaction_action,
       zalgo_enabled = excluded.zalgo_enabled,
-      zalgo_action = excluded.zalgo_action
+      zalgo_action = excluded.zalgo_action,
+      regex_enabled = excluded.regex_enabled,
+      regex_patterns = excluded.regex_patterns,
+      regex_action = excluded.regex_action,
+      attachments_enabled = excluded.attachments_enabled,
+      attachments_blocked_exts = excluded.attachments_blocked_exts,
+      attachments_max_size_mb = excluded.attachments_max_size_mb,
+      attachments_action = excluded.attachments_action,
+      newlines_enabled = excluded.newlines_enabled,
+      newlines_max = excluded.newlines_max,
+      newlines_action = excluded.newlines_action,
+      mentions_roles_enabled = excluded.mentions_roles_enabled,
+      mentions_roles_max = excluded.mentions_roles_max,
+      mentions_roles_action = excluded.mentions_roles_action
   `).run(
     guildId,
     JSON.stringify(cfg.link_blacklist || []),
@@ -717,7 +879,20 @@ async function setExtendedAutomod(guildId, cfg) {
     JSON.stringify(cfg.blocked_reaction_emojis || []),
     cfg.blocked_reaction_action || "delete",
     cfg.zalgo_enabled ? 1 : 0,
-    cfg.zalgo_action || "delete"
+    cfg.zalgo_action || "delete",
+    cfg.regex_enabled ? 1 : 0,
+    JSON.stringify((cfg.regex_patterns || []).slice(0, 10)),
+    cfg.regex_action || "delete",
+    cfg.attachments_enabled ? 1 : 0,
+    JSON.stringify((cfg.attachments_blocked_exts || []).slice(0, 50)),
+    cfg.attachments_max_size_mb || 0,
+    cfg.attachments_action || "delete",
+    cfg.newlines_enabled ? 1 : 0,
+    cfg.newlines_max || 10,
+    cfg.newlines_action || "delete",
+    cfg.mentions_roles_enabled ? 1 : 0,
+    cfg.mentions_roles_max || 3,
+    cfg.mentions_roles_action || "delete"
   );
 }
 
@@ -909,12 +1084,20 @@ async function replaceCustomRoles(customRoles) {
   return withTransaction(() => {
     db.prepare("DELETE FROM custom_roles").run();
     const insertStmt = db.prepare(`
-      INSERT INTO custom_roles (guild_id, user_id, role_id)
-      VALUES (?, ?, ?)
+      INSERT INTO custom_roles (guild_id, user_id, role_id, style, color, name, has_icon, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     for (const [guildId, users] of Object.entries(customRoles)) {
-      for (const [userId, roleId] of Object.entries(users)) {
-        insertStmt.run(guildId, userId, roleId);
+      for (const [userId, val] of Object.entries(users)) {
+        // The in-memory store holds a rich object { roleId, style, color, name,
+        // hasIcon, createdAt }. Older code bound the whole object as role_id,
+        // which SQLite rejects (objects aren't bindable) — so nothing persisted.
+        const r = val && typeof val === "object" ? val : { roleId: val };
+        insertStmt.run(
+          guildId, userId, r.roleId,
+          r.style ?? null, r.color ?? null, r.name ?? null,
+          r.hasIcon ? 1 : 0, r.createdAt ?? 0,
+        );
       }
     }
   });
@@ -958,6 +1141,134 @@ async function setDangerzoneConfig(guildId, cfg) {
     ON CONFLICT(guild_id) DO UPDATE SET
       channels = excluded.channels
   `).run(guildId, JSON.stringify(cfg.channels || {}));
+}
+
+// ── Theme ────────────────────────────────────────────────────────────────
+async function getAllThemeConfigs() {
+  return query("SELECT * FROM theme_config");
+}
+
+async function setThemeConfig(guildId, cfg) {
+  db.prepare(`
+    INSERT INTO theme_config (guild_id, config)
+    VALUES (?, ?)
+    ON CONFLICT(guild_id) DO UPDATE SET
+      config = excluded.config
+  `).run(guildId, JSON.stringify(cfg || {}));
+}
+
+// ── Anti-raid ──────────────────────────────────────────────────────────────
+async function getAllAntiraidConfigs() {
+  return query("SELECT * FROM antiraid_config");
+}
+
+async function setAntiraidConfig(guildId, cfg) {
+  db.prepare(`
+    INSERT INTO antiraid_config (guild_id, config)
+    VALUES (?, ?)
+    ON CONFLICT(guild_id) DO UPDATE SET
+      config = excluded.config
+  `).run(guildId, JSON.stringify(cfg || {}));
+}
+
+// ── Automod trigger stats (BOT_SPEC §3.4) ──────────────────────────────────
+// Per-(guild, rule, day) counter. `day` is YYYY-MM-DD UTC. Upserted on each
+// violation so the hot path is a single INSERT...ON CONFLICT (sync, fast).
+function dayStr(d = new Date()) {
+  return d.toISOString().slice(0, 10);
+}
+
+function incrementAutomodStat(guildId, rule) {
+  if (!guildId || !rule) return;
+  db.prepare(`
+    INSERT INTO automod_stats (guild_id, rule, day, count)
+    VALUES (?, ?, ?, 1)
+    ON CONFLICT(guild_id, rule, day) DO UPDATE SET
+      count = count + 1
+  `).run(guildId, rule, dayStr());
+}
+
+async function getAutomodStats(guildId, days = 30) {
+  if (!guildId) return [];
+  const since = dayStr(new Date(Date.now() - days * 86_400_000));
+  return query(`
+    SELECT rule, day, count FROM automod_stats
+    WHERE guild_id = ? AND day >= ?
+    ORDER BY day DESC, count DESC
+  `, [guildId, since]);
+}
+
+async function clearAutomodStats(guildId) {
+  if (!guildId) return;
+  db.prepare("DELETE FROM automod_stats WHERE guild_id = ?").run(guildId);
+}
+
+// ── Leveling (BOT_SPEC §4) ────────────────────────────────────────────────
+async function getAllLevelingConfigs() {
+  return query("SELECT * FROM leveling_config");
+}
+
+async function setLevelingConfig(guildId, cfg) {
+  db.prepare(`
+    INSERT INTO leveling_config (guild_id, config)
+    VALUES (?, ?)
+    ON CONFLICT(guild_id) DO UPDATE SET
+      config = excluded.config
+  `).run(guildId, JSON.stringify(cfg || {}));
+}
+
+function getLevelingUser(guildId, userId) {
+  return get("SELECT * FROM leveling_users WHERE guild_id = ? AND user_id = ?", [guildId, userId]);
+}
+
+// Atomic XP + message increment in one statement. Returns the new row.
+function addLevelingXp(guildId, userId, xpGain, level, now) {
+  db.prepare(`
+    INSERT INTO leveling_users (guild_id, user_id, xp, level, last_xp_at, messages, voice_minutes)
+    VALUES (?, ?, ?, ?, ?, 1, 0)
+    ON CONFLICT(guild_id, user_id) DO UPDATE SET
+      xp = xp + ?,
+      level = ?,
+      last_xp_at = ?,
+      messages = messages + 1
+  `).run(guildId, userId, xpGain, level, now, xpGain, level, now);
+  return getLevelingUser(guildId, userId);
+}
+
+// Set absolute xp + level (for $setlevel / $givexp). Recomputes messages=0
+// is wrong — keep messages. Use for admin overrides.
+function setLevelingUser(guildId, userId, xp, level) {
+  db.prepare(`
+    INSERT INTO leveling_users (guild_id, user_id, xp, level, last_xp_at, messages, voice_minutes)
+    VALUES (?, ?, ?, ?, 0, 0, 0)
+    ON CONFLICT(guild_id, user_id) DO UPDATE SET
+      xp = ?,
+      level = ?
+  `).run(guildId, userId, xp, level, xp, level);
+  return getLevelingUser(guildId, userId);
+}
+
+function addLevelingVoiceMinutes(guildId, userId, minutes) {
+  db.prepare(`
+    INSERT INTO leveling_users (guild_id, user_id, xp, level, last_xp_at, messages, voice_minutes)
+    VALUES (?, ?, 0, 0, 0, 0, ?)
+    ON CONFLICT(guild_id, user_id) DO UPDATE SET
+      voice_minutes = voice_minutes + ?
+  `).run(guildId, userId, minutes, minutes);
+}
+
+async function getLevelingLeaderboard(guildId, limit = 100) {
+  return query("SELECT user_id, xp, level, messages, voice_minutes FROM leveling_users WHERE guild_id = ? ORDER BY xp DESC LIMIT ?", [guildId, Math.min(Math.max(limit, 1), 1000)]);
+}
+
+// Rank = 1 + count of users with more xp. Returns 0 if the user has no row.
+function getLevelingRank(guildId, userId) {
+  const row = get("SELECT (SELECT COUNT(*) + 1 FROM leveling_users u2 WHERE u2.guild_id = u1.guild_id AND u2.xp > u1.xp) AS rank FROM leveling_users u1 WHERE u1.guild_id = ? AND u1.user_id = ?", [guildId, userId]);
+  return row ? row.rank : 0;
+}
+
+async function resetLevelingGuild(guildId) {
+  db.prepare("DELETE FROM leveling_users WHERE guild_id = ?").run(guildId);
 }
 
 // ── Femboyified Users ────────────────────────────────────────────────────
@@ -1074,6 +1385,30 @@ module.exports = {
   // ── Dangerzone ───────────────────────────────────────────────────────────
   getAllDangerzoneConfigs,
   setDangerzoneConfig,
+
+  // ── Theme ─────────────────────────────────────────────────────────────────
+  getAllThemeConfigs,
+  setThemeConfig,
+
+  // ── Anti-raid ────────────────────────────────────────────────────────────
+  getAllAntiraidConfigs,
+  setAntiraidConfig,
+
+  // ── Automod stats ─────────────────────────────────────────────────────────
+  incrementAutomodStat,
+  getAutomodStats,
+  clearAutomodStats,
+
+  // ── Leveling (BOT_SPEC §4) ────────────────────────────────────────────────
+  getAllLevelingConfigs,
+  setLevelingConfig,
+  getLevelingUser,
+  addLevelingXp,
+  setLevelingUser,
+  addLevelingVoiceMinutes,
+  getLevelingLeaderboard,
+  getLevelingRank,
+  resetLevelingGuild,
 
   // ── Femboyified Users ────────────────────────────────────────────────────
   getAllFemboyifiedUsers,
@@ -1206,7 +1541,7 @@ module.exports = {
         ON CONFLICT(guild_id, user_id) DO UPDATE SET balance = balance + ?
       `).run(guildId, toId, amount, amount);
       return true;
-    })();
+    });
   },
   async getEconomyLeaderboard(guildId, limit = 10) {
     return query(
@@ -1223,8 +1558,20 @@ module.exports = {
   },
   async setEconomyConfig(guildId, cfg) {
     db.prepare(`
-      INSERT INTO economy_config (guild_id, daily_amount, work_min, work_max, daily_cooldown, work_cooldown, interest_rate, tax_rate, gamble_odds)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO economy_config (
+        guild_id, daily_amount, work_min, work_max, daily_cooldown, work_cooldown,
+        interest_rate, tax_rate, gamble_odds,
+        blackjack_min_bet, blackjack_max_bet, blackjack_payout,
+        slots_min_bet, slots_max_bet, slots_win_odds, slots_jackpot_multiplier,
+        coinflip_min_bet, coinflip_max_bet,
+        highlow_min_bet, highlow_max_bet, highlow_dice_sides,
+        fish_min_bet, fish_max_bet,
+        mine_min_bet, mine_max_bet,
+        trivia_streak_bonus,
+        wordle_enabled, wordle_streak_bonus,
+        typerace_min_players
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(guild_id) DO UPDATE SET
         daily_amount = excluded.daily_amount,
         work_min = excluded.work_min,
@@ -1233,10 +1580,43 @@ module.exports = {
         work_cooldown = excluded.work_cooldown,
         interest_rate = excluded.interest_rate,
         tax_rate = excluded.tax_rate,
-        gamble_odds = excluded.gamble_odds
-    `).run(guildId, cfg.dailyAmount ?? 200, cfg.workMin ?? 50, cfg.workMax ?? 300,
-            cfg.dailyCooldown ?? 86400000, cfg.workCooldown ?? 3600000,
-            cfg.interestRate ?? 0.0, cfg.taxRate ?? 0.0, cfg.gambleOdds ?? 0.45);
+        gamble_odds = excluded.gamble_odds,
+        blackjack_min_bet = excluded.blackjack_min_bet,
+        blackjack_max_bet = excluded.blackjack_max_bet,
+        blackjack_payout = excluded.blackjack_payout,
+        slots_min_bet = excluded.slots_min_bet,
+        slots_max_bet = excluded.slots_max_bet,
+        slots_win_odds = excluded.slots_win_odds,
+        slots_jackpot_multiplier = excluded.slots_jackpot_multiplier,
+        coinflip_min_bet = excluded.coinflip_min_bet,
+        coinflip_max_bet = excluded.coinflip_max_bet,
+        highlow_min_bet = excluded.highlow_min_bet,
+        highlow_max_bet = excluded.highlow_max_bet,
+        highlow_dice_sides = excluded.highlow_dice_sides,
+        fish_min_bet = excluded.fish_min_bet,
+        fish_max_bet = excluded.fish_max_bet,
+        mine_min_bet = excluded.mine_min_bet,
+        mine_max_bet = excluded.mine_max_bet,
+        trivia_streak_bonus = excluded.trivia_streak_bonus,
+        wordle_enabled = excluded.wordle_enabled,
+        wordle_streak_bonus = excluded.wordle_streak_bonus,
+        typerace_min_players = excluded.typerace_min_players
+    `).run(
+      guildId,
+      cfg.dailyAmount ?? 200, cfg.workMin ?? 50, cfg.workMax ?? 300,
+      cfg.dailyCooldown ?? 86400000, cfg.workCooldown ?? 3600000,
+      cfg.interestRate ?? 0.0, cfg.taxRate ?? 0.0, cfg.gambleOdds ?? 0.45,
+      cfg.blackjackMinBet ?? 10, cfg.blackjackMaxBet ?? 10000, cfg.blackjackPayout ?? 1.5,
+      cfg.slotsMinBet ?? 5, cfg.slotsMaxBet ?? 5000, cfg.slotsWinOdds ?? 0.30, cfg.slotsJackpotMultiplier ?? 50,
+      cfg.coinflipMinBet ?? 1, cfg.coinflipMaxBet ?? 10000,
+      cfg.highlowMinBet ?? 10, cfg.highlowMaxBet ?? 10000, cfg.highlowDiceSides ?? 6,
+      cfg.fishMinBet ?? 10, cfg.fishMaxBet ?? 5000,
+      cfg.mineMinBet ?? 10, cfg.mineMaxBet ?? 5000,
+      cfg.triviaStreakBonus ?? 0.1,
+      // Coerce booleans to 0/1 — SQLite can't bind raw JS booleans.
+      (cfg.wordleEnabled == null ? 1 : cfg.wordleEnabled ? 1 : 0), cfg.wordleStreakBonus ?? 0.2,
+      cfg.typeraceMinPlayers ?? 2
+    );
   },
   async getEconomyStats(guildId) {
     const row = get(

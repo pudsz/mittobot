@@ -50,12 +50,11 @@ async function processVoiceInput({ guildId, userId, username, transcript, guild 
       `- Speaker: ${username} (id:${userId})`,
     ].join("\n");
 
-    // 3. Get relevant memories
-    const recentMemories = aiMemory.forGuild(guildId).slice(0, 10);
-    const userMemories = userId ? aiMemory.forUser(guildId, userId).slice(0, 5) : [];
-    const allMemories = [...userMemories, ...recentMemories];
-    const memoryBlock = allMemories.length
-      ? `\nRelevant memories:\n${allMemories.map(m => `- ${m.content}`).join("\n")}`
+    // 3. Get relevant memories — scoped to the current speaker only (not all guild users)
+    const { sanitizeUserInput } = require("../ai");
+    const scopedMemories = aiMemory.recall(guildId, userId, 10);
+    const memoryBlock = scopedMemories.length
+      ? `\nRelevant memories:\n${scopedMemories.map(m => `- ${sanitizeUserInput(m.content)}`).join("\n")}`
       : "";
 
     // 4. Build conversation history from DB
@@ -80,10 +79,15 @@ async function processVoiceInput({ guildId, userId, username, transcript, guild 
       const p = pid === providerId ? provider : getProvider(pid);
       if (!p || !p.chat) continue;
       const pmodel = pid === providerId ? model : settings.getAiModel(pid);
+      const pkey = settings.getAiApiKey(pid);
       try {
-        response = await p.chat(messages, pmodel, guild, {
+        response = await p.chat(messages, {
+          apiKey: pkey,
+          model: pmodel,
+          temperature: settings.get("aiTemperature"),
+          maxTokens: settings.get("aiMaxTokens"),
+          topP: settings.get("aiTopP"),
           tools: [],
-          toolChoice: "none",
         });
         if (response?.text) break;
       } catch (fbErr) {

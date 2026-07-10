@@ -18,6 +18,11 @@ const CATEGORIES = {
     label:       "Fake Moderation",
     description: "Visual-only mod commands (warn, kick, ban, mute, timeout…) that take no real action.",
   },
+  leveling: {
+    key:         "levelingEnabled",
+    label:       "Leveling & XP",
+    description: "XP per message, level-up roles/rewards, leaderboard, rank cards. $rank, $levels, $givexp, $setlevel.",
+  },
 };
 
 function listCategories() {

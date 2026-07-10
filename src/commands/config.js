@@ -1,6 +1,11 @@
-const { EmbedBuilder, SlashCommandBuilder, PermissionFlagsBits, MessageFlags } = require("discord.js");
+const {
+  EmbedBuilder, SlashCommandBuilder, PermissionFlagsBits, MessageFlags,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder,
+  ChannelSelectMenuBuilder, ChannelType, ModalBuilder, TextInputBuilder, TextInputStyle,
+} = require("discord.js");
 const { errorEmbed, successEmbed } = require("../utils");
 const config = require("../config");
+const ui = require("../ui");
 
 const BLURPLE = 0x5865f2;
 const ALIAS_RE = /^[a-z0-9_-]{1,32}$/;
@@ -142,18 +147,204 @@ function applyChange(ctx, guildId, def, name, sub, value, mentions) {
   }
 }
 
+// ─── Interactive panel ─────────────────────────────────────────────────────
+const PAGE_SIZE = 25;
+
+function panelCommandNames(ctx) {
+  const names = [];
+  for (const def of ctx.commandMap.values()) {
+    if (def?.name && !def._dynamic) names.push(def.name);
+  }
+  return [...new Set(names)].sort();
+}
+
+function pickView(session) {
+  const { ctx } = session.state;
+  const page = session.state.page || 0;
+  const names = panelCommandNames(ctx);
+  const totalPages = Math.max(1, Math.ceil(names.length / PAGE_SIZE));
+  const slice = names.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const embed = new EmbedBuilder()
+    .setColor(BLURPLE)
+    .setTitle("⚙️ Command Config")
+    .setDescription(
+      `Pick a command below to configure it — enable/disable, permission level, ` +
+      `cooldown, and channel rules.\n\n**${names.length} commands** • page ${page + 1}/${totalPages}`
+    );
+  const select = new StringSelectMenuBuilder()
+    .setCustomId("cfg:pick")
+    .setPlaceholder("Choose a command…")
+    .addOptions(slice.map(n => ({ label: n, value: n })));
+  const nav = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("cfg:pgprev").setEmoji("◀️").setStyle(ButtonStyle.Secondary).setDisabled(page === 0),
+    new ButtonBuilder().setCustomId("cfg:pgnext").setEmoji("▶️").setStyle(ButtonStyle.Secondary).setDisabled(page >= totalPages - 1),
+    new ButtonBuilder().setCustomId("cfg:find").setLabel("Search by name").setEmoji("🔎").setStyle(ButtonStyle.Primary),
+  );
+  return { embeds: [embed], components: [new ActionRowBuilder().addComponents(select), nav] };
+}
+
+function cmdView(session) {
+  const { ctx, name } = session.state;
+  const def = ctx.commandMap.get(name);
+  const c = config.resolve(session.guildId, name, def);
+  const embed = configEmbed(ctx, session.guildId, name, def)
+    .setFooter({ text: "Aliases are edited via the config command: config <command> alias <name>" });
+  const buttons = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("cfg:toggle")
+      .setLabel(c.enabled ? "Disable" : "Enable")
+      .setEmoji(c.enabled ? "🔴" : "🟢")
+      .setStyle(c.enabled ? ButtonStyle.Danger : ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("cfg:cooldown").setLabel("Cooldown").setEmoji("⏱️").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("cfg:reset").setLabel("Reset").setEmoji("♻️").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("cfg:back").setLabel("Back").setEmoji("↩️").setStyle(ButtonStyle.Secondary),
+  );
+  const permSelect = new StringSelectMenuBuilder()
+    .setCustomId("cfg:perm")
+    .setPlaceholder("Permission level…")
+    .addOptions(config.PERM_ORDER.map(lvl => ({
+      label: config.PERM_LABELS[lvl],
+      value: lvl,
+      default: lvl === c.permission,
+    })));
+  const allowSelect = new ChannelSelectMenuBuilder()
+    .setCustomId("cfg:allowch")
+    .setPlaceholder("Allowed channels (empty = everywhere)")
+    .setChannelTypes(ChannelType.GuildText)
+    .setMinValues(0).setMaxValues(25)
+    .setDefaultChannels(c.allowedChannels.slice(0, 25));
+  const blockSelect = new ChannelSelectMenuBuilder()
+    .setCustomId("cfg:blockch")
+    .setPlaceholder("Blocked channels")
+    .setChannelTypes(ChannelType.GuildText)
+    .setMinValues(0).setMaxValues(25)
+    .setDefaultChannels(c.blockedChannels.slice(0, 25));
+  return {
+    embeds: [embed],
+    components: [
+      buttons,
+      new ActionRowBuilder().addComponents(permSelect),
+      new ActionRowBuilder().addComponents(allowSelect),
+      new ActionRowBuilder().addComponents(blockSelect),
+    ],
+  };
+}
+
+ui.registerPanel("cfg", {
+  level: "admin",
+  render(session) {
+    return session.state.view === "cmd" ? cmdView(session) : pickView(session);
+  },
+  handlers: {
+    async pick(interaction, session, { repaint }) {
+      session.state.name = interaction.values[0];
+      session.state.view = "cmd";
+      await repaint();
+    },
+    async pgprev(interaction, session, { repaint }) {
+      session.state.page = Math.max(0, (session.state.page || 0) - 1);
+      await repaint();
+    },
+    async pgnext(interaction, session, { repaint }) {
+      session.state.page = (session.state.page || 0) + 1;
+      await repaint();
+    },
+    async back(interaction, session, { repaint }) {
+      session.state.view = "pick";
+      await repaint();
+    },
+    async find(interaction) {
+      const modal = new ModalBuilder().setCustomId("cfg_modal:find").setTitle("Find a command")
+        .addComponents(new ActionRowBuilder().addComponents(
+          new TextInputBuilder().setCustomId("name").setLabel("Command name or alias")
+            .setStyle(TextInputStyle.Short).setMaxLength(32).setRequired(true),
+        ));
+      await interaction.showModal(modal);
+    },
+    async toggle(interaction, session, { repaint }) {
+      const { name } = session.state;
+      const def = session.state.ctx.commandMap.get(name);
+      const c = config.resolve(session.guildId, name, def);
+      config.set(session.guildId, name, { enabled: !c.enabled });
+      await repaint();
+    },
+    async perm(interaction, session, { repaint }) {
+      config.set(session.guildId, session.state.name, { permission: interaction.values[0] });
+      await repaint();
+    },
+    async allowch(interaction, session, { repaint }) {
+      config.set(session.guildId, session.state.name, { allowedChannels: interaction.values });
+      await repaint();
+    },
+    async blockch(interaction, session, { repaint }) {
+      config.set(session.guildId, session.state.name, { blockedChannels: interaction.values });
+      await repaint();
+    },
+    async cooldown(interaction, session) {
+      const def = session.state.ctx.commandMap.get(session.state.name);
+      const c = config.resolve(session.guildId, session.state.name, def);
+      const modal = new ModalBuilder().setCustomId("cfg_modal:cooldown").setTitle(`Cooldown — ${session.state.name}`)
+        .addComponents(new ActionRowBuilder().addComponents(
+          new TextInputBuilder().setCustomId("secs").setLabel("Cooldown in seconds (0 = none)")
+            .setStyle(TextInputStyle.Short).setValue(String(c.cooldown || 0)).setMaxLength(5).setRequired(true),
+        ));
+      await interaction.showModal(modal);
+    },
+    async reset(interaction, session) {
+      const { name, ctx } = session.state;
+      await ui.confirm(interaction, {
+        embed: errorEmbed(`Reset all overrides for \`${name}\` (permission, channels, cooldown, aliases)?`, session.guildId),
+        ownerId: interaction.user.id,
+        confirmLabel: "Reset",
+        ephemeral: true,
+        onConfirm: async (i) => {
+          config.reset(session.guildId, name);
+          await i.update({ embeds: [successEmbed(`\`${name}\` config reset to defaults.`, session.guildId)], components: [] });
+          try { await session.message?.edit(cmdView(session)); } catch { /* panel gone */ }
+        },
+      });
+    },
+  },
+  modals: {
+    async find(interaction, session, { repaint }) {
+      const raw = interaction.fields.getTextInputValue("name").trim().toLowerCase();
+      const known = knownCommand(session.state.ctx, raw, session.guildId);
+      if (!known) return ui.ephemeralNote(interaction, `Unknown command \`${raw}\`.`);
+      session.state.name = known.name;
+      session.state.view = "cmd";
+      await repaint();
+    },
+    async cooldown(interaction, session, { repaint }) {
+      const secs = parseInt(interaction.fields.getTextInputValue("secs").trim(), 10);
+      if (isNaN(secs) || secs < 0 || secs > 86400) {
+        return ui.ephemeralNote(interaction, "Cooldown must be 0–86400 seconds.");
+      }
+      config.set(session.guildId, session.state.name, { cooldown: secs });
+      await repaint();
+    },
+  },
+});
+
+async function openConfigPanel(source, ctx, userId, commandName = null) {
+  await ui.openPanel(source, "cfg", {
+    ownerId: userId,
+    state: { ctx, view: commandName ? "cmd" : "pick", name: commandName, page: 0 },
+    ephemeral: true,
+  });
+}
+
 async function prefixConfig(message, args, ctx) {
   if (!canManage(message.member, message.author.id))
     return message.reply({ embeds: [errorEmbed("Only Administrators can manage command config.")] });
-  if (!args[0]) return message.reply({ embeds: [helpEmbed(ctx)] });
+  if (!args[0]) return openConfigPanel(message, ctx, message.author.id);
+  if (args[0].toLowerCase() === "help") return message.reply({ embeds: [helpEmbed(ctx)] });
 
   const requestedName = args[0].toLowerCase();
   const known = knownCommand(ctx, requestedName, message.guild.id);
-  if (!known) return message.reply({ embeds: [errorEmbed(`Unknown command \`${requestedName}\`.`)] });
+  if (!known) return message.reply({ embeds: [errorEmbed(`Unknown command \`${requestedName}\`.`, message)] });
   const { name, def } = known;
 
   const sub = args[1]?.toLowerCase();
-  if (!sub) return message.reply({ embeds: [configEmbed(ctx, message.guild.id, name, def)] });
+  if (!sub) return openConfigPanel(message, ctx, message.author.id, name);
 
   const mentions = {
     channelId: message.mentions.channels.first()?.id || (/^\d{17,20}$/.test(args[2]) ? args[2] : null),
@@ -167,14 +358,15 @@ async function slashConfig(interaction, ctx) {
   if (!canManage(interaction.member, interaction.user.id))
     return interaction.reply({ embeds: [errorEmbed("Only Administrators can manage command config.")], flags: MessageFlags.Ephemeral });
 
-  const name = interaction.options.getString("command").toLowerCase();
+  const name = interaction.options.getString("command")?.toLowerCase();
+  if (!name) return openConfigPanel(interaction, ctx, interaction.user.id);
   const known = knownCommand(ctx, name, interaction.guild.id);
-  if (!known) return interaction.reply({ embeds: [errorEmbed(`Unknown command \`${name}\`.`)], flags: MessageFlags.Ephemeral });
+  if (!known) return interaction.reply({ embeds: [errorEmbed(`Unknown command \`${name}\`.`, interaction)], flags: MessageFlags.Ephemeral });
   const def = known.def;
   const canonicalName = known.name;
 
   const action  = interaction.options.getString("action");
-  if (!action) return interaction.reply({ embeds: [configEmbed(ctx, interaction.guild.id, canonicalName, def)] });
+  if (!action) return openConfigPanel(interaction, ctx, interaction.user.id, canonicalName);
 
   const value   = interaction.options.getString("value");
   const channel = interaction.options.getChannel("channel");
@@ -194,7 +386,7 @@ module.exports = [
       .setName("config")
       .setDescription("Configure any command (admin only)")
       .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-      .addStringOption(o => o.setName("command").setDescription("Command name").setRequired(true))
+      .addStringOption(o => o.setName("command").setDescription("Command name (empty = interactive panel)").setRequired(false))
       .addStringOption(o => o.setName("action").setDescription("Leave empty to view. Otherwise an action below.").setRequired(false)
         .addChoices(
           { name: "enable", value: "enable" }, { name: "disable", value: "disable" },

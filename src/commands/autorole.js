@@ -1,6 +1,10 @@
-const { EmbedBuilder, SlashCommandBuilder, PermissionFlagsBits, MessageFlags } = require("discord.js");
+const {
+  EmbedBuilder, SlashCommandBuilder, PermissionFlagsBits, MessageFlags,
+  ActionRowBuilder, RoleSelectMenuBuilder,
+} = require("discord.js");
 const { errorEmbed, successEmbed } = require("../utils");
 const roles = require("../roles");
+const ui = require("../ui");
 
 const BLURPLE = 0x5865f2;
 
@@ -22,9 +26,54 @@ function toggleRole(guildId, roleId) {
   return idx < 0; // true if added
 }
 
+// ─── Interactive panel: one role-select sets the whole autorole list ──────
+ui.registerPanel("autorole", {
+  level: "admin",
+  render(session) {
+    const guild = session.state.guild;
+    const current = roles.getAutoroles(guild.id);
+    const embed = listEmbed(guild)
+      .setDescription(
+        (current.length ? current.map(id => `<@&${id}>`).join("\n") : "No autoroles set. New members receive none.") +
+        "\n\nUse the menu below to set the full list — selected roles are assigned to every new member."
+      );
+    const select = new RoleSelectMenuBuilder()
+      .setCustomId("autorole:set")
+      .setPlaceholder("Select autoroles (empty = none)")
+      .setMinValues(0).setMaxValues(25)
+      .setDefaultRoles(current.slice(0, 25));
+    return { embeds: [embed], components: [new ActionRowBuilder().addComponents(select)] };
+  },
+  handlers: {
+    async set(interaction, session, { repaint }) {
+      const guild = session.state.guild;
+      const me = guild.members.me;
+      const ok = [];
+      const skipped = [];
+      for (const id of interaction.values) {
+        const role = guild.roles.cache.get(id);
+        if (!role || role.managed || role.position >= me.roles.highest.position) skipped.push(role ? role.name : id);
+        else ok.push(id);
+      }
+      roles.setAutoroles(guild.id, ok);
+      await repaint();
+      if (skipped.length) {
+        await ui.ephemeralNote(interaction, `Skipped (above my highest role or managed): ${skipped.map(n => `\`${n}\``).join(", ")}`);
+      }
+    },
+  },
+});
+
 async function handleAutorole(message, args, ctx) {
   const sub = args[0]?.toLowerCase();
-  if (!sub || sub === "list") return message.reply({ embeds: [listEmbed(message.guild)], allowedMentions: { parse: [] } });
+  if (!sub) {
+    return ui.openPanel(message, "autorole", {
+      ownerId: message.author.id,
+      state: { guild: message.guild },
+      ephemeral: true,
+    });
+  }
+  if (sub === "list") return message.reply({ embeds: [listEmbed(message.guild)], allowedMentions: { parse: [] } });
 
   if (sub === "add" || sub === "remove" || sub === "toggle") {
     const role = message.mentions.roles.first() || message.guild.roles.cache.get(args[1]) || message.guild.roles.cache.find(r => r.name.toLowerCase() === args.slice(1).join(" ").toLowerCase());
@@ -56,7 +105,14 @@ module.exports = [
         .addChoices({ name: "add", value: "add" }, { name: "remove", value: "remove" }, { name: "list", value: "list" }))
       .addRoleOption(o => o.setName("role").setDescription("Role to add/remove").setRequired(false)),
     execute: async (interaction, ctx) => {
-      const action = interaction.options.getString("action") || "list";
+      const action = interaction.options.getString("action");
+      if (!action) {
+        return ui.openPanel(interaction, "autorole", {
+          ownerId: interaction.user.id,
+          state: { guild: interaction.guild },
+          ephemeral: true,
+        });
+      }
       if (action === "list") return interaction.reply({ embeds: [listEmbed(interaction.guild)], allowedMentions: { parse: [] } });
       const role = interaction.options.getRole("role");
       if (!role) return interaction.reply({ embeds: [errorEmbed("Provide a role.")], flags: MessageFlags.Ephemeral });

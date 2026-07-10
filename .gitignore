@@ -24,17 +24,17 @@ Screenshot_*.png
 acli
 
 # Dashboard (Vite app) build/deps
-# v1
-/dashboard/node_modules/
-/dashboard/dist/
-/dashboard/.env
-/dashboard/.env.local
-# v2
-/dashboard-v2/node_modules/
-/dashboard-v2/dist/
-/dashboard-v2/.env
-/dashboard-v2/.env.local
-/dashboard-v2/test-results/
+# v1 (legacy JS dashboard)
+dashboard/node_modules/
+dashboard/dist/
+dashboard/.env
+dashboard/.env.local
+# v2 (TypeScript rewrite)
+dashboard-v2/node_modules/
+dashboard-v2/dist/
+dashboard-v2/test-results/
+dashboard-v2/.env
+dashboard-v2/.env.local
 
 Freebuff2API/
 .aider*

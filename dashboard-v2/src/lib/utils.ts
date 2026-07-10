@@ -19,7 +19,7 @@ export function avatarUrl(user: { id: string; avatar?: string | null }) {
 export function guildIconUrl(guild: { id: string; icon?: string | null }, size = 128) {
   return guild.icon
     ? `https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.png?size=${size}`
-    : null;
+    : undefined;
 }
 
 /** "MyServer Name" → "MSN" acronym for icon-less guilds. */

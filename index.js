@@ -12,6 +12,9 @@ const automod = require("./src/automod");
 const greet = require("./src/greet");
 const roles = require("./src/roles");
 const dangerzone = require("./src/dangerzone");
+const antiraid = require("./src/antiraid");
+const theme = require("./src/theme");
+const ui = require("./src/ui");
 const { loadModule, MODULES_DIR, ensureModulesDir } = require("./src/commands/modules");
 const aiMemory = require("./src/ai/memory");
 const autoexec = require("./src/autoexec");
@@ -19,6 +22,7 @@ const safe = require("./src/safe");
 const roletracker = require("./src/roletracker");
 const femboyify = require("./src/femboyify");
 const scheduler = require("./src/scheduler");
+const leveling = require("./src/leveling");
 
 const commandMap = new Map();
 const slashMap = new Map();
@@ -90,6 +94,10 @@ const COMMAND_FILES = [
   "./src/commands/schedule",
   "./src/commands/backup",
   "./src/commands/websearch",
+  "./src/commands/theme",
+  "./src/commands/voice",
+  "./src/commands/leveling",
+  "./src/commands/experiments",
 ];
 for (const file of COMMAND_FILES) {
   const defs = require(file);
@@ -159,20 +167,22 @@ function checkAccess(def, command, { member, userId, channelId }) {
   });
 }
 
-function denyMessage(reason, remain) {
+function denyMessage(guildId, reason, remain) {
+  const tone = require("./src/tone");
   switch (reason) {
     case "disabled":
-      return "That command is disabled here.";
     case "category":
-      return "That command category is currently disabled.";
     case "channel":
-      return "That command can't be used in this channel.";
-    case "permission":
-      return settings.get("noPermMsg");
     case "cooldown":
-      return `⏳ Slow down — try again in **${remain}s**.`;
+      return tone.t(guildId, `deny.${reason}`, { remain });
+    case "permission": {
+      // A customized global noPermMsg overrides the tone pack.
+      const msg = settings.get("noPermMsg");
+      if (msg && msg !== settings.DEFAULTS.noPermMsg) return msg;
+      return tone.t(guildId, "deny.permission");
+    }
     default:
-      return "You can't use that command right now.";
+      return tone.t(guildId, "deny.default");
   }
 }
 
@@ -258,6 +268,23 @@ client.on("messageCreate", async message => {
 
   await handleAfkChecks(message, ctx);
 
+  // Leveling XP — fire-and-forget so it never blocks the command pipeline.
+  // Awards XP for every non-bot message (including commands); the per-user
+  // cooldown + channel multipliers are enforced inside leveling.onMessage.
+  if (features.isEnabled("leveling")) {
+    leveling.onMessage(message).catch(err => console.error("[leveling] onMessage:", err.message));
+  }
+
+  // Typing-race submissions: a reply to an active typerace prompt is consumed
+  // here (before the AI handler, which would otherwise treat a reply-to-bot as
+  // an AI conversation).
+  try {
+    const economyMod = require("./src/commands/economy");
+    if (typeof economyMod.consumeTyperaceReply === "function" && await economyMod.consumeTyperaceReply(message)) {
+      return;
+    }
+  } catch (err) { console.error("[typerace] reply handling:", err.message); }
+
   await handleAiMessage(message, ctx);
 
   const content = message.content;
@@ -278,7 +305,7 @@ client.on("messageCreate", async message => {
 
   if (!access.ok) {
     if (["permission", "channel", "cooldown"].includes(access.reason)) {
-      safe.reply(message, { embeds: [utils.errorEmbed(denyMessage(access.reason, access.remain))] }, "access denied message");
+      safe.reply(message, { embeds: [utils.errorEmbed(denyMessage(message.guild.id, access.reason, access.remain), message)] }, "access denied message");
     }
     return;
   }
@@ -290,12 +317,14 @@ client.on("messageCreate", async message => {
     await handler.prefix(message, args, ctx);
   } catch (err) {
     console.error(`Error executing command ${command}:`, err);
-    safe.reply(message, { embeds: [utils.errorEmbed("An unexpected error occurred.")] }, "command error");
+    safe.reply(message, { embeds: [theme.say(message, "error", "error.generic")] }, "command error");
   }
 });
 
 client.on("interactionCreate", async interaction => {
   try {
+    // ui.js central dispatch — pagination, confirm dialogs, registered panels.
+    if (interaction.customId && await ui.dispatch(interaction)) return;
     // Help system: category select menu
     if (interaction.isStringSelectMenu() && interaction.customId === "help:select") {
       return await handleHelpSelect(interaction);
@@ -325,6 +354,13 @@ client.on("interactionCreate", async interaction => {
       const rpsmpMod = require("./src/commands/rpsmp");
       if (typeof rpsmpMod.handleRpsMpButton === "function") {
         return await rpsmpMod.handleRpsMpButton(interaction);
+      }
+    }
+    // Economy game buttons (blackjack bj_*, trivia trivia_*)
+    if (interaction.isButton() && (interaction.customId.startsWith("bj_") || interaction.customId.startsWith("trivia_"))) {
+      const economyMod = require("./src/commands/economy");
+      if (typeof economyMod.routeGameButton === "function" && await economyMod.routeGameButton(interaction)) {
+        return;
       }
     }
     // Alpha experiments: proceed button → open code modal
@@ -387,7 +423,7 @@ client.on("interactionCreate", async interaction => {
       });
       if (!access.ok) {
         return interaction.reply({
-          embeds: [utils.errorEmbed(denyMessage(access.reason, access.remain))],
+          embeds: [utils.errorEmbed(denyMessage(interaction.guildId, access.reason, access.remain), interaction)],
           flags: MessageFlags.Ephemeral,
         });
       }
@@ -403,7 +439,7 @@ client.on("interactionCreate", async interaction => {
       return;
     }
     console.error(`Interaction error (${interaction.customId ?? interaction.commandName}):`, err);
-    const reply = { embeds: [utils.errorEmbed("An unexpected error occurred.")], flags: 64 }; // 64 = Ephemeral
+    const reply = { embeds: [theme.say(interaction, "error", "error.generic")], flags: 64 }; // 64 = Ephemeral
     try {
       interaction.replied || interaction.deferred
         ? await interaction.followUp(reply)
@@ -510,6 +546,9 @@ client.on("messageReactionRemove", (reaction, user) => {
 
 // Welcome, leave, and autorole events
 client.on("guildMemberAdd", member => {
+  // Anti-raid runs FIRST — before greet/autoroles — so a raiding wave or a
+  // too-new account is stopped before it gets roles or a welcome message.
+  antiraid.onMemberAdd(member).catch(err => console.error("antiraid add:", err.message));
   greet.onMemberAdd(member).catch(err => console.error("greet add:", err.message));
   roles.onMemberAdd(member).catch(err => console.error("autorole:", err.message));
   // Auto-exec: fire any rules triggered by the "join" event
@@ -634,16 +673,26 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
       greet.load(),
       roles.load(),
       dangerzone.load(),
+      antiraid.load(),
+      theme.load(),
       aiMemory.load(),
       autoexec.load(),
       roletracker.load(),
       femboyify.load(),
+      leveling.load(),
     ]);
     // Load scheduled messages after settings are ready
     await scheduler.load(client).catch(err => console.error("[scheduler] Load error:", err.message));
     // Initialize VoiceManager after client is ready
     voiceManager = new VoiceManager(client);
     console.log("[voice] VoiceManager initialized");
+    // Give antiraid the live client so it can lock/unlock channels and look
+    // up guilds from guildMemberAdd / the periodic unlock sweep.
+    antiraid.setClient(client);
+    // Voice XP tick — awards voiceXpPerMinute to members in active voice
+    // channels (≥2 humans, not muted) every 60s. unref'd so it never blocks
+    // shutdown. No-op for guilds without voice XP configured.
+    setInterval(() => { leveling.voiceXpTick(client).catch(() => {}); }, 60_000).unref();
     settings.hydrateAiKeysFromEnv();
     // Start probation cleanup timer
     try {
