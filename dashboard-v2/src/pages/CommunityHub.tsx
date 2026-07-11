@@ -8,70 +8,11 @@ import BackupsView from "@/pages/views/community/BackupsView";
 import LevelsView from "@/pages/views/community/LevelsView";
 import StarboardView from "@/pages/views/community/StarboardView";
 import BirthdaysView from "@/pages/views/community/BirthdaysView";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Ticket, Gift,
-  MessageCircle, Link2, Share2, Construction
-} from "lucide-react";
-
-function PlaceholderView({ icon: Icon, title, description, features }: {
-  icon: React.ComponentType<{ className?: string }>;
-  title: string;
-  description: string;
-  features: string[];
-}) {
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-bold tracking-tight flex items-center gap-2.5">
-          <Icon className="size-5 text-primary" />
-          {title}
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">{description}</p>
-      </div>
-      <Card className="border-border/40 bg-card/30">
-        <CardHeader>
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Construction className="size-4 text-warning" />
-            Under Development
-          </CardTitle>
-          <CardDescription>This module is being built. The following features are planned:</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ul className="space-y-2">
-            {features.map((f, i) => (
-              <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
-                <span className="text-primary mt-0.5">›</span>
-                {f}
-              </li>
-            ))}
-          </ul>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-function TicketsView() {
-  return <PlaceholderView icon={Ticket} title="Tickets Support" description="Build and handle customer support tickets."
-    features={["Custom ticket panel designer", "Staff support roles setting", "Active ticket lists", "HTML-formatted transcript viewer for archives"]} />;
-}
-function GiveawaysView() {
-  return <PlaceholderView icon={Gift} title="Giveaway Widgets" description="Host interactive giveaways in text channels."
-    features={["Giveaway editor form (winners count, duration, restrictions)", "Active list with participant counts", "Manual giveaway cancel or immediate end", "Winner rerolling interface"]} />;
-}
-function SuggestionsView() {
-  return <PlaceholderView icon={MessageCircle} title="Suggestions Board" description="Receive user suggestion votes."
-    features={["Suggestion channel select", "Staff review decisions panel (approve, reject, discuss)", "Direct comment replies thread links"]} />;
-}
-function InvitesView() {
-  return <PlaceholderView icon={Link2} title="Invite Tracking" description="Analyze which invite links brought in members."
-    features={["Invite leaderboard", "Per-code tracker logs", "Inviter metrics dashboards"]} />;
-}
-function SocialView() {
-  return <PlaceholderView icon={Share2} title="Social Connectors" description="Connect YouTube, Twitch, or RSS alerts to Discord logs."
-    features={["Twitch streams checking intervals", "YouTube channel uploads updates", "RSS feeds parsing integrations", "Custom message template editor"]} />;
-}
+import TicketsView from "@/pages/views/community/TicketsView";
+import GiveawaysView from "@/pages/views/community/GiveawaysView";
+import SuggestionsView from "@/pages/views/community/SuggestionsView";
+import InvitesView from "@/pages/views/community/InvitesView";
+import SocialView from "@/pages/views/community/SocialView";
 
 export default function CommunityHub() {
   return (

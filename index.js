@@ -25,6 +25,11 @@ const scheduler = require("./src/scheduler");
 const leveling = require("./src/leveling");
 const starboard = require("./src/starboard");
 const birthdays = require("./src/birthdays");
+const tickets = require("./src/tickets");
+const giveaways = require("./src/giveaways");
+const suggestions = require("./src/suggestions");
+const invites = require("./src/invites");
+const social = require("./src/social");
 
 const commandMap = new Map();
 const slashMap = new Map();
@@ -102,6 +107,12 @@ const COMMAND_FILES = [
   "./src/commands/experiments",
   "./src/commands/birthday",
   "./src/commands/tags",
+  "./src/commands/tickets",
+  "./src/commands/giveaways",
+  "./src/commands/suggestions",
+  "./src/commands/invites",
+  "./src/commands/social",
+  "./src/commands/music",
 ];
 for (const file of COMMAND_FILES) {
   const defs = require(file);
@@ -211,6 +222,8 @@ const client = new Client({
     GatewayIntentBits.DirectMessages,
     GatewayIntentBits.DirectMessageReactions,
     GatewayIntentBits.GuildVoiceStates,
+    // Required for invite tracking — receive inviteCreate/Delete + fetch invite uses.
+    GatewayIntentBits.GuildInvites,
   ],
   partials: [Partials.Message, Partials.Channel, Partials.Reaction],
 });
@@ -366,6 +379,18 @@ client.on("interactionCreate", async interaction => {
       if (typeof economyMod.routeGameButton === "function" && await economyMod.routeGameButton(interaction)) {
         return;
       }
+    }
+    // Ticket buttons (ticket:create / ticket:close / ticket:closeconfirm / ticket:closecancel)
+    if (interaction.isButton() && interaction.customId.startsWith("ticket:")) {
+      if (await tickets.handleButton(interaction)) return;
+    }
+    // Giveaway entry button (customId "giveaway:enter:<id>")
+    if (interaction.isButton() && interaction.customId.startsWith("giveaway:enter:")) {
+      return await giveaways.handleEnterButton(interaction);
+    }
+    // Suggestion vote buttons (suggestion:up / suggestion:down)
+    if (interaction.isButton() && interaction.customId.startsWith("suggestion:")) {
+      if (await suggestions.handleButton(interaction)) return;
     }
     // Alpha experiments: proceed button → open code modal
     if (interaction.isButton() && interaction.customId === "experiments:proceed") {
@@ -552,6 +577,9 @@ client.on("messageReactionRemove", (reaction, user) => {
 
 // Welcome, leave, and autorole events
 client.on("guildMemberAdd", member => {
+  // Invite attribution — diff the cached invite uses ASAP so the join is
+  // attributed to the right code before anything else runs.
+  invites.onMemberAdd(member).catch(err => console.error("invites add:", err.message));
   // Anti-raid runs FIRST — before greet/autoroles — so a raiding wave or a
   // too-new account is stopped before it gets roles or a welcome message.
   antiraid.onMemberAdd(member).catch(err => console.error("antiraid add:", err.message));
@@ -585,6 +613,14 @@ client.on("messageDelete", message => {
   greet.onMessageDelete(message).catch(err => console.error("[safe] greet.onMessageDelete:", err.message));
 });
 client.on("messageUpdate",     (oldMsg, newMsg) => greet.onMessageUpdate(oldMsg, newMsg).catch(err => console.error("[safe] greet.onMessageUpdate:", err.message)));
+
+// Keep the invite-uses cache in sync so join attribution stays accurate.
+client.on("inviteCreate", invite => {
+  invites.onInviteCreate(invite);
+});
+client.on("inviteDelete", invite => {
+  invites.onInviteDelete(invite);
+});
 
 // Live role tracker and nickname lock
 client.on("guildMemberUpdate", (oldMember, newMember) => {
@@ -621,6 +657,9 @@ client.once("ready", async () => {
   } catch (err) {
     console.error("Failed to start bot API:", err);
   }
+
+  // Seed the invite-uses cache for all guilds so joins can be attributed to a code.
+  invites.init(client).catch(err => console.error("[invites] init:", err.message));
 });
 
 process.on("unhandledRejection", error => {
@@ -688,6 +727,8 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
       leveling.load(),
       starboard.load(),
       birthdays.load(),
+      tickets.load(),
+      suggestions.load(),
     ]);
     // Load scheduled messages after settings are ready
     await scheduler.load(client).catch(err => console.error("[scheduler] Load error:", err.message));
@@ -706,6 +747,14 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
     // makes repeated ticks within a day idempotent. unref'd.
     setInterval(() => { birthdays.tick(client).catch(() => {}); }, 30 * 60_000).unref();
     birthdays.tick(client).catch(() => {}); // run once shortly after startup
+    // Giveaway tick — ends giveaways whose deadline has passed. Runs every 30s;
+    // getDueGiveaways only returns not-yet-drawn rows so it's idempotent. unref'd.
+    setInterval(() => { giveaways.tick(client).catch(() => {}); }, 30_000).unref();
+    // Social connectors tick — poll RSS/YouTube/Twitch sources for new posts and
+    // announce them. Runs every 5 min; per-connector try/catch keeps one bad feed
+    // from breaking the loop. unref'd so it never blocks shutdown.
+    setInterval(() => { social.poll(client).catch(() => {}); }, 5 * 60_000).unref();
+    social.poll(client).catch(() => {}); // run once shortly after startup
     settings.hydrateAiKeysFromEnv();
     // Start probation cleanup timer
     try {

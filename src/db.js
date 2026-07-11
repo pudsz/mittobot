@@ -521,6 +521,108 @@ function init() {
       created_at  BIGINT
     );
     CREATE UNIQUE INDEX IF NOT EXISTS tags_guild_name ON tags (guild_id, name);
+
+    CREATE TABLE IF NOT EXISTS ticket_config (
+      guild_id              TEXT PRIMARY KEY,
+      enabled               INTEGER DEFAULT 0,
+      category_id           TEXT,
+      support_role_id       TEXT,
+      panel_channel_id      TEXT,
+      transcript_channel_id TEXT,
+      open_message          TEXT,
+      button_label          TEXT DEFAULT 'Create Ticket'
+    );
+
+    -- One row per opened ticket. status flips 'open' -> 'closed' on archive.
+    CREATE TABLE IF NOT EXISTS tickets (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id    TEXT NOT NULL,
+      channel_id  TEXT NOT NULL,
+      user_id     TEXT NOT NULL,
+      status      TEXT DEFAULT 'open',
+      created_at  BIGINT,
+      closed_at   BIGINT,
+      closed_by   TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_tickets_guild_status ON tickets(guild_id, status);
+
+    -- Timed giveaways entered via a button; ended by the 30s tick in index.js.
+    CREATE TABLE IF NOT EXISTS giveaways (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id      TEXT NOT NULL,
+      channel_id    TEXT NOT NULL,
+      message_id    TEXT,                -- announcement message, patched in after post
+      prize         TEXT NOT NULL,
+      winners_count INTEGER DEFAULT 1,
+      ends_at       BIGINT NOT NULL,     -- epoch ms deadline
+      host_id       TEXT,
+      ended         INTEGER DEFAULT 0,   -- 0 = running, 1 = drawn
+      created_at    BIGINT
+    );
+    CREATE INDEX IF NOT EXISTS giveaways_due ON giveaways (ended, ends_at);
+
+    -- One row per entrant per giveaway (PK dedupes repeat button clicks).
+    CREATE TABLE IF NOT EXISTS giveaway_entries (
+      giveaway_id   INTEGER NOT NULL,
+      user_id       TEXT NOT NULL,
+      PRIMARY KEY (giveaway_id, user_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS suggestion_config (
+      guild_id    TEXT PRIMARY KEY,
+      enabled     INTEGER DEFAULT 0,
+      channel_id  TEXT,
+      anonymous   INTEGER DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS suggestions (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id    TEXT NOT NULL,
+      message_id  TEXT,
+      user_id     TEXT NOT NULL,
+      content     TEXT NOT NULL,
+      status      TEXT DEFAULT 'pending',   -- pending | approved | rejected | implemented
+      upvotes     INTEGER DEFAULT 0,
+      downvotes   INTEGER DEFAULT 0,
+      staff_note  TEXT,
+      created_at  BIGINT
+    );
+    CREATE INDEX IF NOT EXISTS idx_suggestions_guild ON suggestions(guild_id, id DESC);
+
+    CREATE TABLE IF NOT EXISTS suggestion_votes (
+      suggestion_id INTEGER NOT NULL,
+      user_id       TEXT NOT NULL,
+      vote          INTEGER NOT NULL,        -- 1 upvote, -1 downvote
+      PRIMARY KEY (suggestion_id, user_id)
+    );
+
+    -- Invite tracking — one row per (guild, joined member): who invited them and
+    -- via which code. invite_counts are derived with COUNT(inviter_id).
+    CREATE TABLE IF NOT EXISTS member_invites (
+      guild_id    TEXT,
+      user_id     TEXT,
+      inviter_id  TEXT,              -- nullable when the used code couldn't be attributed
+      invite_code TEXT,              -- nullable (e.g. vanity/unknown)
+      joined_at   BIGINT,
+      PRIMARY KEY (guild_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS member_invites_inviter ON member_invites (guild_id, inviter_id);
+
+    -- Social connectors: announce new RSS/YouTube/Twitch posts to a channel.
+    -- last_seen holds the newest item id/guid (rss/youtube) or the live stream id
+    -- (twitch) so poll() is idempotent across restarts.
+    CREATE TABLE IF NOT EXISTS social_connectors (
+      id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id            TEXT NOT NULL,
+      platform            TEXT NOT NULL,    -- 'rss' | 'youtube' | 'twitch'
+      target              TEXT NOT NULL,    -- feed URL / channel id / twitch login
+      announce_channel_id TEXT NOT NULL,
+      last_seen           TEXT,
+      message_template    TEXT,
+      enabled             INTEGER DEFAULT 1,
+      created_at          BIGINT
+    );
+    CREATE INDEX IF NOT EXISTS social_connectors_guild ON social_connectors (guild_id);
   `);
 
   // Migrations for columns added after initial table creation
@@ -855,6 +957,275 @@ function deleteTag(guildId, name) {
 
 function incrementTagUses(guildId, name) {
   db.prepare("UPDATE tags SET uses = uses + 1 WHERE guild_id = ? AND name = ?").run(guildId, String(name).toLowerCase());
+}
+
+// ── Tickets ──────────────────────────────────────────────────────────────
+async function getAllTicketConfigs() {
+  return query("SELECT * FROM ticket_config");
+}
+
+async function setTicketConfig(guildId, cfg) {
+  db.prepare(`
+    INSERT INTO ticket_config
+      (guild_id, enabled, category_id, support_role_id, panel_channel_id, transcript_channel_id, open_message, button_label)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(guild_id) DO UPDATE SET
+      enabled = excluded.enabled,
+      category_id = excluded.category_id,
+      support_role_id = excluded.support_role_id,
+      panel_channel_id = excluded.panel_channel_id,
+      transcript_channel_id = excluded.transcript_channel_id,
+      open_message = excluded.open_message,
+      button_label = excluded.button_label
+  `).run(
+    guildId,
+    cfg.enabled ? 1 : 0,
+    cfg.category_id || null,
+    cfg.support_role_id || null,
+    cfg.panel_channel_id || null,
+    cfg.transcript_channel_id || null,
+    cfg.open_message || null,
+    cfg.button_label || "Create Ticket",
+  );
+}
+
+// Insert an open ticket; returns the better-sqlite3 RunResult (lastInsertRowid).
+function createTicket(guildId, channelId, userId) {
+  return db.prepare(
+    "INSERT INTO tickets (guild_id, channel_id, user_id, status, created_at) VALUES (?, ?, ?, 'open', ?)"
+  ).run(guildId, channelId, userId, Date.now());
+}
+
+function closeTicket(id, closedBy, closedAt) {
+  db.prepare(
+    "UPDATE tickets SET status = 'closed', closed_by = ?, closed_at = ? WHERE id = ?"
+  ).run(closedBy, closedAt, id);
+}
+
+function getOpenTicketByChannel(guildId, channelId) {
+  return get("SELECT * FROM tickets WHERE guild_id = ? AND channel_id = ? AND status = 'open'", [guildId, channelId]);
+}
+
+function getOpenTicketCountForUser(guildId, userId) {
+  const row = get("SELECT COUNT(*) AS n FROM tickets WHERE guild_id = ? AND user_id = ? AND status = 'open'", [guildId, userId]);
+  return row ? row.n : 0;
+}
+
+function getOpenTickets(guildId) {
+  return query("SELECT * FROM tickets WHERE guild_id = ? AND status = 'open' ORDER BY created_at DESC", [guildId]);
+}
+
+// ── Giveaways ─────────────────────────────────────────────────────────────
+function createGiveaway(gv) {
+  // Insert first so the new row id can be baked into the Enter button customId.
+  const info = db.prepare(`
+    INSERT INTO giveaways (guild_id, channel_id, message_id, prize, winners_count, ends_at, host_id, ended, created_at)
+    VALUES (?, ?, NULL, ?, ?, ?, ?, 0, ?)
+  `).run(gv.guild_id, gv.channel_id, gv.prize, gv.winners_count ?? 1, gv.ends_at, gv.host_id || null, gv.created_at);
+  return Number(info.lastInsertRowid);
+}
+
+function setGiveawayMessage(id, messageId) {
+  db.prepare("UPDATE giveaways SET message_id = ? WHERE id = ?").run(messageId, id);
+}
+
+function getGiveaway(id) {
+  return get("SELECT * FROM giveaways WHERE id = ?", [id]);
+}
+
+// Remove a giveaway and its entries (used when the announcement fails to post).
+function deleteGiveaway(id) {
+  db.prepare("DELETE FROM giveaway_entries WHERE giveaway_id = ?").run(id);
+  db.prepare("DELETE FROM giveaways WHERE id = ?").run(id);
+}
+
+// Active giveaways for a guild, each with a live entrant count for the dashboard.
+function getActiveGiveaways(guildId) {
+  return query(`
+    SELECT g.*, (SELECT COUNT(*) FROM giveaway_entries e WHERE e.giveaway_id = g.id) AS entry_count
+    FROM giveaways g
+    WHERE g.guild_id = ? AND g.ended = 0
+    ORDER BY g.ends_at ASC
+  `, [guildId]);
+}
+
+// Giveaways past their deadline that haven't been drawn yet (for the tick).
+function getDueGiveaways(now) {
+  return query("SELECT * FROM giveaways WHERE ended = 0 AND ends_at <= ?", [now]);
+}
+
+function markGiveawayEnded(id) {
+  db.prepare("UPDATE giveaways SET ended = 1 WHERE id = ?").run(id);
+}
+
+// Returns true only when a new entry was recorded (false = already entered).
+function addGiveawayEntry(giveawayId, userId) {
+  const info = db.prepare("INSERT OR IGNORE INTO giveaway_entries (giveaway_id, user_id) VALUES (?, ?)").run(giveawayId, userId);
+  return info.changes > 0;
+}
+
+function getGiveawayEntries(giveawayId) {
+  return query("SELECT user_id FROM giveaway_entries WHERE giveaway_id = ?", [giveawayId]);
+}
+
+// ── Suggestions ─────────────────────────────────────────────────────────
+async function getAllSuggestionConfigs() {
+  return query("SELECT * FROM suggestion_config");
+}
+
+async function setSuggestionConfig(guildId, cfg) {
+  db.prepare(`
+    INSERT INTO suggestion_config (guild_id, enabled, channel_id, anonymous)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(guild_id) DO UPDATE SET
+      enabled = excluded.enabled,
+      channel_id = excluded.channel_id,
+      anonymous = excluded.anonymous
+  `).run(
+    guildId,
+    cfg.enabled ? 1 : 0,
+    cfg.channel_id || null,
+    cfg.anonymous ? 1 : 0,
+  );
+}
+
+// Insert first (status pending) so the caller has the id for the vote button customIds.
+function insertSuggestion(guildId, userId, content, createdAt) {
+  const info = db.prepare(
+    "INSERT INTO suggestions (guild_id, user_id, content, status, created_at) VALUES (?, ?, ?, 'pending', ?)"
+  ).run(guildId, userId, content, createdAt);
+  return info.lastInsertRowid;
+}
+
+function setSuggestionMessageId(id, messageId) {
+  db.prepare("UPDATE suggestions SET message_id = ? WHERE id = ?").run(messageId, id);
+}
+
+function getSuggestion(id) {
+  return get("SELECT * FROM suggestions WHERE id = ?", [id]);
+}
+
+function getSuggestionsByGuild(guildId, limit = 25) {
+  return query("SELECT * FROM suggestions WHERE guild_id = ? ORDER BY id DESC LIMIT ?", [guildId, limit]);
+}
+
+function setSuggestionStatus(id, status, note) {
+  db.prepare("UPDATE suggestions SET status = ?, staff_note = ? WHERE id = ?").run(status, note ?? null, id);
+}
+
+// Toggle/switch a vote and recompute counts from the votes table (last-write-wins,
+// so counts stay correct under concurrency). Returns the fresh {upvotes,downvotes}.
+async function recordSuggestionVote(suggestionId, userId, vote) {
+  return withTransaction(() => {
+    const existing = get("SELECT vote FROM suggestion_votes WHERE suggestion_id = ? AND user_id = ?", [suggestionId, userId]);
+    if (existing && existing.vote === vote) {
+      db.prepare("DELETE FROM suggestion_votes WHERE suggestion_id = ? AND user_id = ?").run(suggestionId, userId);
+    } else {
+      db.prepare(`
+        INSERT INTO suggestion_votes (suggestion_id, user_id, vote) VALUES (?, ?, ?)
+        ON CONFLICT(suggestion_id, user_id) DO UPDATE SET vote = excluded.vote
+      `).run(suggestionId, userId, vote);
+    }
+    const up = get("SELECT COUNT(*) AS c FROM suggestion_votes WHERE suggestion_id = ? AND vote = 1", [suggestionId]).c;
+    const down = get("SELECT COUNT(*) AS c FROM suggestion_votes WHERE suggestion_id = ? AND vote = -1", [suggestionId]).c;
+    db.prepare("UPDATE suggestions SET upvotes = ?, downvotes = ? WHERE id = ?").run(up, down, suggestionId);
+    return { upvotes: up, downvotes: down };
+  });
+}
+
+// ── Invite tracking ───────────────────────────────────────────────────────
+function recordMemberInvite(guildId, userId, inviterId, inviteCode) {
+  // Upsert so a rejoin overwrites the prior attribution rather than erroring.
+  db.prepare(`
+    INSERT INTO member_invites (guild_id, user_id, inviter_id, invite_code, joined_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(guild_id, user_id) DO UPDATE SET
+      inviter_id = excluded.inviter_id,
+      invite_code = excluded.invite_code,
+      joined_at = excluded.joined_at
+  `).run(guildId, userId, inviterId || null, inviteCode || null, Date.now());
+}
+
+function getInviteCountForUser(guildId, userId) {
+  const row = get("SELECT COUNT(*) AS n FROM member_invites WHERE guild_id = ? AND inviter_id = ?", [guildId, userId]);
+  return row ? row.n : 0;
+}
+
+// Leaderboard: inviter_id + attributed join count, most invites first.
+// Unattributed joins (inviter_id NULL) are excluded.
+function getInviteLeaderboard(guildId, limit = 25) {
+  return query(
+    "SELECT inviter_id, COUNT(*) AS count FROM member_invites WHERE guild_id = ? AND inviter_id IS NOT NULL GROUP BY inviter_id ORDER BY count DESC LIMIT ?",
+    [guildId, limit]
+  );
+}
+
+// ── Social connectors ────────────────────────────────────────────────────
+function getAllSocialConnectors() {
+  return query("SELECT * FROM social_connectors ORDER BY id ASC");
+}
+
+function getSocialConnectors(guildId) {
+  return query("SELECT * FROM social_connectors WHERE guild_id = ? ORDER BY id ASC", [guildId]);
+}
+
+function getSocialConnector(id, guildId) {
+  return get("SELECT * FROM social_connectors WHERE id = ? AND guild_id = ?", [id, guildId]);
+}
+
+function createSocialConnector(guildId, platform, target, announceChannelId, messageTemplate) {
+  const res = db.prepare(`
+    INSERT INTO social_connectors (guild_id, platform, target, announce_channel_id, message_template, enabled, created_at)
+    VALUES (?, ?, ?, ?, ?, 1, ?)
+  `).run(guildId, platform, target, announceChannelId, messageTemplate || null, Date.now());
+  return get("SELECT * FROM social_connectors WHERE id = ?", [res.lastInsertRowid]);
+}
+
+// Guild-scoped delete so a dashboard client can only remove its own guild's rows.
+function deleteSocialConnector(id, guildId) {
+  return db.prepare("DELETE FROM social_connectors WHERE id = ? AND guild_id = ?").run(id, guildId).changes > 0;
+}
+
+function setSocialConnectorLastSeen(id, lastSeen) {
+  db.prepare("UPDATE social_connectors SET last_seen = ? WHERE id = ?").run(lastSeen, id);
+}
+
+// ── Moderation Cases (filtered view over moderation_log) ─────────────────
+// Builds a parameterized WHERE from optional filters so the dashboard Cases
+// view can search/slice the existing log without loading everything.
+async function getModerationCases(guildId, filters = {}) {
+  const clauses = ["guild_id = ?"];
+  const params = [guildId];
+  if (filters.action) {
+    clauses.push("LOWER(action) = LOWER(?)");
+    params.push(String(filters.action));
+  }
+  if (filters.modId) {
+    clauses.push("mod_id = ?");
+    params.push(String(filters.modId));
+  }
+  if (filters.userId) {
+    clauses.push("user_id = ?");
+    params.push(String(filters.userId));
+  }
+  if (filters.search) {
+    // Match the free-text box against reason or either party's id.
+    const like = `%${String(filters.search)}%`;
+    clauses.push("(reason LIKE ? OR user_id LIKE ? OR mod_id LIKE ?)");
+    params.push(like, like, like);
+  }
+  if (filters.from != null) {
+    clauses.push("timestamp >= ?");
+    params.push(Number(filters.from));
+  }
+  if (filters.to != null) {
+    clauses.push("timestamp <= ?");
+    params.push(Number(filters.to));
+  }
+  const limit = Math.min(Math.max(parseInt(filters.limit, 10) || 200, 1), 2000);
+  const sql = `SELECT * FROM moderation_log WHERE ${clauses.join(" AND ")} ORDER BY timestamp DESC LIMIT ?`;
+  params.push(limit);
+  return query(sql, params);
 }
 
 // ── Roles ───────────────────────────────────────────────────────────────
@@ -1548,6 +1919,52 @@ module.exports = {
   createTag,
   deleteTag,
   incrementTagUses,
+
+  // ── Tickets ──────────────────────────────────────────────────────────────
+  getAllTicketConfigs,
+  setTicketConfig,
+  createTicket,
+  closeTicket,
+  getOpenTicketByChannel,
+  getOpenTicketCountForUser,
+  getOpenTickets,
+
+  // ── Giveaways ────────────────────────────────────────────────────────────
+  createGiveaway,
+  setGiveawayMessage,
+  getGiveaway,
+  deleteGiveaway,
+  getActiveGiveaways,
+  getDueGiveaways,
+  markGiveawayEnded,
+  addGiveawayEntry,
+  getGiveawayEntries,
+
+  // ── Suggestions ──────────────────────────────────────────────────────────
+  getAllSuggestionConfigs,
+  setSuggestionConfig,
+  insertSuggestion,
+  setSuggestionMessageId,
+  getSuggestion,
+  getSuggestionsByGuild,
+  setSuggestionStatus,
+  recordSuggestionVote,
+
+  // ── Invite tracking ──────────────────────────────────────────────────────
+  recordMemberInvite,
+  getInviteCountForUser,
+  getInviteLeaderboard,
+
+  // ── Social connectors ────────────────────────────────────────────────────
+  getAllSocialConnectors,
+  getSocialConnectors,
+  getSocialConnector,
+  createSocialConnector,
+  deleteSocialConnector,
+  setSocialConnectorLastSeen,
+
+  // ── Moderation Cases ─────────────────────────────────────────────────────
+  getModerationCases,
 
   // ── Roles ───────────────────────────────────────────────────────────────
   getAllRolesConfigs,

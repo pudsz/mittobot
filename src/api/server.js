@@ -1618,6 +1618,231 @@ function startApi(ctx) {
     res.json({ ok: true, tags: dbMod.getTags(guildId) });
   });
 
+  // ─── Tickets ─────────────────────────────────────────────────────────────
+  app.get("/api/tickets", requireAuth, (req, res) => {
+    const tickets = require("../tickets");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (guildInfo.guildId && !userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    res.json({
+      guildId: guildInfo.guildId,
+      hasGuild: guildInfo.hasGuild,
+      channels: guildInfo.channels,
+      roles: guildInfo.roles,
+      config: guildInfo.guildId ? tickets.getConfig(guildInfo.guildId) : tickets.getConfig("_none"),
+    });
+  });
+
+  app.post("/api/tickets", requireAuth, (req, res) => {
+    const tickets = require("../tickets");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    const guildId = guildInfo.guildId;
+    if (!guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    if (!userCanAccessGuild(req.user.sub, guildId, req.user.isOwner)) return res.status(403).json({ error: "You don't have access to this guild" });
+    const b = req.body || {};
+    const okId = v => v === null || /^\d{17,20}$/.test(v || "");
+    const patch = {};
+    if (typeof b.enabled === "boolean") patch.enabled = b.enabled;
+    if (okId(b.categoryId)) patch.categoryId = b.categoryId || null;
+    if (okId(b.supportRoleId)) patch.supportRoleId = b.supportRoleId || null;
+    if (okId(b.panelChannelId)) patch.panelChannelId = b.panelChannelId || null;
+    if (okId(b.transcriptChannelId)) patch.transcriptChannelId = b.transcriptChannelId || null;
+    if (typeof b.openMessage === "string") patch.openMessage = b.openMessage.slice(0, 1000);
+    if (typeof b.buttonLabel === "string") patch.buttonLabel = (b.buttonLabel || "Create Ticket").slice(0, 80);
+    const next = tickets.setConfig(guildId, patch);
+    res.json({ ok: true, config: next });
+  });
+
+  app.get("/api/tickets/list", requireAuth, (req, res) => {
+    const db = require("../db");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    const guildId = guildInfo.guildId;
+    if (guildId && !userCanAccessGuild(req.user.sub, guildId, req.user.isOwner))
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    res.json({ tickets: guildId ? db.getOpenTickets(guildId) : [] });
+  });
+
+  // ─── Giveaways ─────────────────────────────────────────────────────────────
+  app.get("/api/giveaways", requireAuth, (req, res) => {
+    const giveaways = require("../giveaways");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (guildInfo.guildId && !userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    res.json({
+      guildId: guildInfo.guildId,
+      hasGuild: guildInfo.hasGuild,
+      channels: guildInfo.channels,
+      giveaways: guildInfo.guildId ? giveaways.listActive(guildInfo.guildId) : [],
+    });
+  });
+
+  app.post("/api/giveaways/:id/end", requireAuth, async (req, res) => {
+    const giveaways = require("../giveaways");
+    const id = parseInt(req.params.id, 10);
+    const gv = Number.isInteger(id) ? giveaways.getGiveaway(id) : null;
+    if (!gv) return res.status(404).json({ error: "Giveaway not found" });
+    if (!userCanAccessGuild(req.user.sub, gv.guild_id, req.user.isOwner)) return res.status(403).json({ error: "You don't have access to this guild" });
+    const result = await giveaways.endGiveaway(id, ctx.client);
+    if (!result.ok) return res.status(400).json({ error: result.error });
+    res.json({ ok: true, winners: result.winners });
+  });
+
+  app.post("/api/giveaways/:id/reroll", requireAuth, async (req, res) => {
+    const giveaways = require("../giveaways");
+    const id = parseInt(req.params.id, 10);
+    const gv = Number.isInteger(id) ? giveaways.getGiveaway(id) : null;
+    if (!gv) return res.status(404).json({ error: "Giveaway not found" });
+    if (!userCanAccessGuild(req.user.sub, gv.guild_id, req.user.isOwner)) return res.status(403).json({ error: "You don't have access to this guild" });
+    const result = await giveaways.reroll(id, ctx.client);
+    if (!result.ok) return res.status(400).json({ error: result.error });
+    res.json({ ok: true, winners: result.winners });
+  });
+
+  // ─── Suggestions ───────────────────────────────────────────────────────────
+  app.get("/api/suggestions", requireAuth, (req, res) => {
+    const suggestions = require("../suggestions");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (guildInfo.guildId && !userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    res.json({
+      guildId: guildInfo.guildId,
+      hasGuild: guildInfo.hasGuild,
+      channels: guildInfo.channels,
+      config: guildInfo.guildId ? suggestions.getConfig(guildInfo.guildId) : suggestions.getConfig("_none"),
+      recent: guildInfo.guildId ? suggestions.recent(guildInfo.guildId, 25) : [],
+    });
+  });
+
+  app.post("/api/suggestions", requireAuth, (req, res) => {
+    const suggestions = require("../suggestions");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    const guildId = guildInfo.guildId;
+    if (!guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    if (!userCanAccessGuild(req.user.sub, guildId, req.user.isOwner)) return res.status(403).json({ error: "You don't have access to this guild" });
+    const b = req.body || {};
+    const okChan = v => v === null || /^\d{17,20}$/.test(v || "");
+    const patch = {};
+    if (typeof b.enabled === "boolean") patch.enabled = b.enabled;
+    if (okChan(b.channelId)) patch.channelId = b.channelId || null;
+    if (typeof b.anonymous === "boolean") patch.anonymous = b.anonymous;
+    const next = suggestions.setConfig(guildId, patch);
+    res.json({ ok: true, config: next });
+  });
+
+  app.post("/api/suggestions/:id/status", requireAuth, async (req, res) => {
+    const suggestions = require("../suggestions");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    const guildId = guildInfo.guildId;
+    if (!guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    if (!userCanAccessGuild(req.user.sub, guildId, req.user.isOwner)) return res.status(403).json({ error: "You don't have access to this guild" });
+    const id = parseInt(req.params.id, 10);
+    const status = String((req.body || {}).status || "");
+    const note = typeof (req.body || {}).note === "string" ? req.body.note.slice(0, 1024) : null;
+    if (!id || !suggestions.STATUSES.includes(status)) return res.status(400).json({ error: "Invalid id or status" });
+    const updated = await suggestions.setStatus(id, status, note, ctx.client);
+    if (!updated) return res.status(404).json({ error: "Suggestion not found" });
+    res.json({ ok: true, suggestion: updated });
+  });
+
+  // ─── Invites ─────────────────────────────────────────────────────────────
+  app.get("/api/invites", requireAuth, (req, res) => {
+    const invites = require("../invites");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (guildInfo.guildId && !userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    res.json({
+      guildId: guildInfo.guildId,
+      hasGuild: guildInfo.hasGuild,
+      leaderboard: guildInfo.guildId ? invites.getLeaderboard(guildInfo.guildId, 25) : [],
+    });
+  });
+
+  // ─── Social connectors ───────────────────────────────────────────────────
+  app.get("/api/social", requireAuth, (req, res) => {
+    const dbMod = require("../db");
+    const settingsMod = require("../settings");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (guildInfo.guildId && !userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    const twitchReady = !!((settingsMod.get("twitchClientId") || process.env.TWITCH_CLIENT_ID) && (settingsMod.get("twitchClientSecret") || process.env.TWITCH_CLIENT_SECRET));
+    res.json({
+      guildId: guildInfo.guildId,
+      hasGuild: guildInfo.hasGuild,
+      channels: guildInfo.channels,
+      connectors: guildInfo.guildId ? dbMod.getSocialConnectors(guildInfo.guildId) : [],
+      twitchReady,
+    });
+  });
+
+  app.post("/api/social", requireAuth, (req, res) => {
+    const dbMod = require("../db");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    const guildId = guildInfo.guildId;
+    if (!guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    if (!userCanAccessGuild(req.user.sub, guildId, req.user.isOwner)) return res.status(403).json({ error: "You don't have access to this guild" });
+    const b = req.body || {};
+    const platform = String(b.platform || "").toLowerCase();
+    const target = String(b.target || "").trim();
+    const channelId = String(b.announceChannelId || "");
+    const template = b.messageTemplate == null ? null : String(b.messageTemplate).slice(0, 1000);
+    if (!["rss", "youtube", "twitch"].includes(platform)) return res.status(400).json({ error: "platform must be rss, youtube, or twitch" });
+    if (!target || target.length > 500) return res.status(400).json({ error: "target required (max 500 chars)" });
+    if (platform === "rss" && !/^https?:\/\//i.test(target)) return res.status(400).json({ error: "RSS target must be a feed URL" });
+    if (!/^\d{17,20}$/.test(channelId)) return res.status(400).json({ error: "Valid announce channel required" });
+    if (!guildInfo.channels.some(c => c.id === channelId)) return res.status(400).json({ error: "Announce channel not found in this guild" });
+    if (dbMod.getSocialConnectors(guildId).length >= 50) return res.status(400).json({ error: "Connector limit reached (50)" });
+    const created = dbMod.createSocialConnector(guildId, platform, target, channelId, template);
+    res.json({ ok: true, connector: created, connectors: dbMod.getSocialConnectors(guildId) });
+  });
+
+  app.delete("/api/social/:id", requireAuth, (req, res) => {
+    const dbMod = require("../db");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    const guildId = guildInfo.guildId;
+    if (!guildId) return res.status(400).json({ error: "Bot is not in any guild yet" });
+    if (!userCanAccessGuild(req.user.sub, guildId, req.user.isOwner)) return res.status(403).json({ error: "You don't have access to this guild" });
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: "Invalid connector id" });
+    dbMod.deleteSocialConnector(id, guildId);
+    res.json({ ok: true, connectors: dbMod.getSocialConnectors(guildId) });
+  });
+
+  // ─── Music (read-only live playback state) ─────────────────────────────────
+  app.get("/api/music", requireAuth, (req, res) => {
+    const music = require("../music");
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (guildInfo.guildId && !userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner))
+      return res.status(403).json({ error: "You don't have access to this guild" });
+    res.json({
+      guildId: guildInfo.guildId,
+      hasGuild: guildInfo.hasGuild,
+      state: music.getState(guildInfo.guildId || "_none"),
+    });
+  });
+
+  // ─── Moderation Cases (filtered view over moderation_log) ─────────────────
+  app.get("/api/cases", requireAuth, async (req, res) => {
+    const guildInfo = getGuildInfo(reqGuildId(req));
+    if (!guildInfo.guildId) return res.json({ entries: [], prefix: settings.get("prefix") || "$" });
+    if (!userCanAccessGuild(req.user.sub, guildInfo.guildId, req.user.isOwner)) return res.status(403).json({ error: "You don't have access to this guild" });
+    try {
+      const db = require("../db");
+      const filters = {
+        action: req.query.action || undefined,
+        modId: req.query.modId || undefined,
+        userId: req.query.userId || undefined,
+        search: req.query.search || undefined,
+        from: req.query.from ? parseInt(req.query.from, 10) : undefined,
+        to: req.query.to ? parseInt(req.query.to, 10) : undefined,
+        limit: req.query.limit ? parseInt(req.query.limit, 10) : 200,
+      };
+      const entries = await db.getModerationCases(guildInfo.guildId, filters);
+      res.json({ entries, prefix: settings.get("prefix") || "$" });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ─── Theme (per-guild colors / footer / tone pack) ───────────────────────
   app.get("/api/theme", requireAuth, (req, res) => {
     const themeMod = require("../theme");

@@ -185,17 +185,6 @@ module.exports = [
     description: "Join a voice channel (owner only)",
     defaultPermission: "owner",
     prefix: prefixJoin,
-    slash: new SlashCommandBuilder()
-      .setName("join")
-      .setDescription("Join a voice channel (owner only)")
-      .addChannelOption(opt =>
-        opt
-          .setName("channel")
-          .setDescription("The voice channel to join (defaults to your current VC)")
-          .addChannelTypes(ChannelType.GuildVoice, ChannelType.GuildStageVoice)
-          .setRequired(false),
-      ),
-    execute: slashJoin,
   },
   {
     name: "leave",
@@ -203,16 +192,44 @@ module.exports = [
     description: "Leave the current voice channel (owner only)",
     defaultPermission: "owner",
     prefix: prefixLeave,
+  },
+  {
+    // Consolidated slash surface: `/voice join|leave` (keeps us under Discord's
+    // 100 global-command cap; `$join` / `$leave` prefixes are unchanged above).
+    name: "voice",
+    description: "Voice channel controls (owner only)",
+    defaultPermission: "owner",
     slash: new SlashCommandBuilder()
-      .setName("leave")
-      .setDescription("Leave the current voice channel (owner only)")
-      .addChannelOption(opt =>
-        opt
-          .setName("channel")
-          .setDescription("The voice channel to leave (auto-detected if only in one)")
-          .addChannelTypes(ChannelType.GuildVoice, ChannelType.GuildStageVoice)
-          .setRequired(false),
+      .setName("voice")
+      .setDescription("Voice channel controls (owner only)")
+      .addSubcommand(sub =>
+        sub
+          .setName("join")
+          .setDescription("Join a voice channel (defaults to your current VC)")
+          .addChannelOption(opt =>
+            opt
+              .setName("channel")
+              .setDescription("The voice channel to join (defaults to your current VC)")
+              .addChannelTypes(ChannelType.GuildVoice, ChannelType.GuildStageVoice)
+              .setRequired(false),
+          ),
+      )
+      .addSubcommand(sub =>
+        sub
+          .setName("leave")
+          .setDescription("Leave a voice channel (auto-detected if only in one)")
+          .addChannelOption(opt =>
+            opt
+              .setName("channel")
+              .setDescription("The voice channel to leave (auto-detected if only in one)")
+              .addChannelTypes(ChannelType.GuildVoice, ChannelType.GuildStageVoice)
+              .setRequired(false),
+          ),
       ),
-    execute: slashLeave,
+    execute: async (interaction, ctx) => {
+      return interaction.options.getSubcommand() === "join"
+        ? slashJoin(interaction, ctx)
+        : slashLeave(interaction, ctx);
+    },
   },
 ];
